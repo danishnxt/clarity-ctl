@@ -484,6 +484,40 @@ def _install_text(done, scope: str) -> str:
     return f"{head}\n" + "\n".join(lines)
 
 
+def _repos_line(item) -> str:
+    """Which repos an epoch branches and what each follows: `repos: agent (main), web`."""
+    bases = item.bases or {}
+    shown = [f"{Path(r).name} ({bases[r]})" if r in bases else Path(r).name
+             for r in item.repos or []]
+    if not shown and "." in bases:
+        return f"  base: {bases['.']}"
+    return f"  repos: {', '.join(shown) or 'none'}"
+
+
+def _started_text(item, verb: str, warnings: list[str]) -> str:
+    lines = [f"epoch {item.id} {verb} on {item.branch or 'no branch'} — {item.folder}"]
+    if item.branch:
+        lines.append(_repos_line(item))
+    lines += [f"warning: {w}" for w in warnings]
+    return "\n".join(lines)
+
+
+def _refresh_text(item, report: dict) -> str:
+    def where(repo: str) -> str:
+        return "" if repo == "." else f" in {repo}"
+
+    lines = []
+    if report["merged"]:
+        done = ", ".join(
+            f"{m['base']}{where(m['repo'])} ({m['commits']} commit"
+            f"{'s' if m['commits'] != 1 else ''})" for m in report["merged"])
+        lines.append(f"epoch {item.id}: {item.branch} caught up with {done}")
+    if report["up_to_date"]:
+        same = ", ".join(f"{u['base']}{where(u['repo'])}" for u in report["up_to_date"])
+        lines.append(f"epoch {item.id}: already up to date with {same}")
+    return "\n".join(lines)
+
+
 def run(args) -> int:
     if args.command == "init":
         project = Project.init(Path.cwd(), name=args.name, overall=args.objective)
@@ -570,20 +604,14 @@ def run(args) -> int:
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:
-                lines = [f"epoch {item.id} active on {item.branch or 'no branch'} "
-                         f"— {item.folder}"]
-                lines += [f"warning: {w}" for w in warnings]
-                print("\n".join(lines))
+                print(_started_text(item, "active", warnings))
         elif action == "reopen":
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
                                            reopen=True)
             if args.json:
                 print(envelope("epoch.reopen", item.to_dict(), warnings))
             else:
-                lines = [f"epoch {item.id} reopened on {item.branch or 'no branch'} "
-                         f"— {item.folder}"]
-                lines += [f"warning: {w}" for w in warnings]
-                print("\n".join(lines))
+                print(_started_text(item, "reopened", warnings))
         elif action == "add-repo":
             item, added, warnings = project.add_repos(project.resolve_id(args.id), args.repos)
             if args.json:
@@ -591,17 +619,18 @@ def run(args) -> int:
             else:
                 head = (f"epoch {item.id}: added {', '.join(added)} on {item.branch}" if added
                         else f"epoch {item.id} already has {', '.join(args.repos)}")
-                lines = [head, f"  repos: {', '.join(item.repos or [])}"]
+                lines = [head, _repos_line(item)]
                 lines += [f"warning: {w}" for w in warnings]
                 print("\n".join(lines))
         elif action == "drop-repo":
             item, dropped = project.drop_repo(project.resolve_id(args.id), args.repo)
             emit(args, "epoch.drop-repo", {**item.to_dict(), "dropped": dropped},
                  f"epoch {item.id}: dropped {dropped}, its branch kept\n"
-                 f"  repos: {', '.join(item.repos or [])}")
+                 + _repos_line(item))
         elif action == "refresh":
-            item, message = project.refresh(args.id, base=args.base, repos=args.repos)
-            emit(args, "epoch.refresh", item.to_dict(), message)
+            item, report = project.refresh(args.id, base=args.base, repos=args.repos)
+            emit(args, "epoch.refresh", {**item.to_dict(), **report},
+                 _refresh_text(item, report))
         elif action == "block":
             target, reason = _split_id_text(args.id, args.reason)
             reason = reason or _ask("why is it blocked?")

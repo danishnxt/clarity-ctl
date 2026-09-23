@@ -225,11 +225,12 @@ def test_refresh_catches_the_branch_up_without_losing_commits(tmp_path):
     git(["add", "-A"], root)
     git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "later"], root)
 
-    _, message = project.refresh(item.id)
-    assert "caught up with main" in message, message
+    _, report = project.refresh(item.id)
+    assert report["merged"] == [{"repo": ".", "base": "main", "commits": 1}], report
     assert (worktree / "later.txt").exists()       # main's commit arrived
     assert (worktree / "epoch.txt").exists()       # the epoch's own work survived
-    assert project.refresh(item.id)[1].endswith("up to date with main")
+    assert project.refresh(item.id)[1] == {"merged": [],
+                                           "up_to_date": [{"repo": ".", "base": "main"}]}
 
 
 def test_refresh_follows_the_base_recorded_at_start(tmp_path):
@@ -255,14 +256,14 @@ def test_refresh_follows_the_base_recorded_at_start(tmp_path):
 
     notes = " ".join(project.stale_map()[item.id])
     assert "1 behind dev" in notes and "checkout is on feature-x" in notes
-    _, message = project.refresh(item.id)
-    assert "caught up with dev" in message, message
+    _, report = project.refresh(item.id)
+    assert [m["base"] for m in report["merged"]] == ["dev"], report
     assert (worktree / "later.txt").exists()
     assert not (worktree / "unrelated.txt").exists()
 
     # changing the base is deliberate, and recorded
-    _, message = Project.find(root).refresh(item.id, base="feature-x")
-    assert "caught up with feature-x" in message and (worktree / "unrelated.txt").exists()
+    _, report = Project.find(root).refresh(item.id, base="feature-x")
+    assert report["merged"][0]["base"] == "feature-x" and (worktree / "unrelated.txt").exists()
     after = Project.find(root).worklog.by_id(item.id)
     assert after.bases == {".": "feature-x"} and "base set to feature-x" in after.notes[-1].text
     with pytest.raises(ClarityError):

@@ -101,8 +101,8 @@ def test_refresh_catches_up_every_repo(tmp_path):
         git(["commit", "-qm", "later"], repo)
     assert "behind main" in " ".join(Project.find(root).stale_map()[item.id])
 
-    _, message = Project.find(root).refresh(item.id)
-    assert "workspace/agent" in message and "workspace/harness" in message
+    _, report = Project.find(root).refresh(item.id)
+    assert [m["repo"] for m in report["merged"]] == ["workspace/agent", "workspace/harness"]
     for name in ("agent", "harness"):
         assert (root / item.folder / "wt" / name / "later.py").exists()
 
@@ -313,3 +313,22 @@ def test_refresh_base_can_be_set_for_one_repo(tmp_path):
     with pytest.raises(ClarityError) as err:
         Project.find(root).refresh(item.id, base="release")  # agent has no release
     assert "no branch release in workspace/agent" in str(err.value)
+
+
+def test_refresh_json_says_what_came_in(tmp_path, monkeypatch, capsys):
+    import json
+    from clarity.cli import main
+
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+    item, _ = project.start(project.add("x", status="planned").id)
+    git(["commit", "-q", "--allow-empty", "-m", "later"], root / "workspace" / "agent")
+
+    monkeypatch.chdir(root)
+    capsys.readouterr()
+    assert main(["epoch", "refresh", str(item.id), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["merged"] == [{"repo": "workspace/agent", "base": "main", "commits": 1}]
+    assert data["up_to_date"] == [{"repo": "workspace/harness", "base": "main"}]

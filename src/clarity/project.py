@@ -728,7 +728,7 @@ class Project:
         return recorded or gitops.base_branch(repo)
 
     def refresh(self, item_id: int | None = None, base: str | None = None,
-                repos: list[str] | None = None) -> tuple[Item, str]:
+                repos: list[str] | None = None) -> tuple[Item, dict]:
         """Merge each repo's recorded base into an in-flight epoch's branch.
 
         Merges rather than recreating: the branch keeps its identity and its commits,
@@ -738,6 +738,9 @@ class Project:
 
         `base` changes what the named repos (default: all the epoch's) catch up with
         from now on, and is recorded before the merge. `repos` narrows the refresh.
+
+        Returns the item and what happened, per repo: {merged: [{repo, base, commits}],
+        up_to_date: [{repo, base}]} — the only record of what came in.
         """
         item = self.worklog.by_id(self.resolve_id(item_id))
         if item.status not in IN_FLIGHT:
@@ -774,7 +777,7 @@ class Project:
                                            text=f"base set to {base} for {', '.join(changed)}"))
 
         plan: list[tuple[Path, Path, str, int]] = []
-        bases: set[str] = set()
+        up_to_date: list[dict] = []
         for repo, _ in targets:
             where = "" if repo == self.root else f" in {repo.relative_to(self.root)}"
             base = self.base_of(item, repo)
@@ -802,22 +805,21 @@ class Project:
                     f"{len(dirty)} uncommitted change(s) in {worktree} — commit or stash first",
                     code=4,
                 )
-            bases.add(base)
             _, behind = gitops.ahead_behind(repo, item.branch, base)
             if behind:
                 plan.append((repo, worktree, base, behind))
+            else:
+                up_to_date.append({"repo": self._repo_key(repo), "base": base})
 
-        if not plan:
-            return item, f"epoch {item.id} is already up to date with {' / '.join(sorted(bases))}"
-        # Take the lease before moving anyone's tree. claim() already does the right
-        # thing: free, stale or ours goes through, someone else's live one refuses.
-        lease.claim(folder, label=item.name)
-        done = []
+        merged: list[dict] = []
+        if plan:
+            # Take the lease before moving anyone's tree. claim() already does the right
+            # thing: free, stale or ours goes through, someone else's live one refuses.
+            lease.claim(folder, label=item.name)
         for repo, worktree, base, behind in plan:
             gitops.merge_into(worktree, base)
-            where = "" if repo == self.root else f" in {repo.relative_to(self.root)}"
-            done.append(f"{base}{where} ({behind} commit{'s' if behind != 1 else ''})")
-        return item, f"epoch {item.id}: {item.branch} caught up with " + ", ".join(done)
+            merged.append({"repo": self._repo_key(repo), "base": base, "commits": behind})
+        return item, {"merged": merged, "up_to_date": up_to_date}
 
     def _behind(self, item: Item, branch: str,
                 repo: Path | None = None) -> tuple[str, int, int] | None:
