@@ -426,7 +426,8 @@ class Project:
             self.worklog.repos.remove(rel)
         return list(self.worklog.repos)
 
-    def listed_repo(self, raw: str) -> str:
+    def listed_repo(self, raw: str, among: list[str] | None = None,
+                    what: str = "a listed repo") -> str:
         """The one listed repo `raw` names: a listed path or a folder name, exactly,
         or a path that leads to a listed repo. Every command that takes a repo reads
         it here, so a name means the same thing whichever directory the shell is in.
@@ -435,8 +436,8 @@ class Project:
         meant once that repo leaves the list, and then it names a different one
         without a word. Close matches only ever appear in the refusal.
         """
-        listed = self.worklog.repos
-        if not listed:
+        listed = self.worklog.repos if among is None else among
+        if not listed and among is None:
             raise ClarityError(
                 "no repos listed — epochs here branch the project root\n"
                 "  list one with: clarity-ctl repo add <path>", code=4)
@@ -452,6 +453,9 @@ class Project:
             return rel
         close = difflib.get_close_matches(name, [*names, *listed], n=3)
         hint = f" — did you mean {' or '.join(close)}?" if close else ""
+        if among is not None:
+            raise ClarityError(f"{raw!r} is not {what}{hint}\n"
+                               f"  it has: {', '.join(listed) or 'none'}", code=4)
         raise ClarityError(
             f"{raw!r} is not a listed repo{hint}\n"
             f"  listed: {', '.join(listed)}\n"
@@ -502,18 +506,20 @@ class Project:
         than a typo that quietly reanimates something you finished last month.
 
         `repos` narrows which listed repos a new epoch branches; left out, it gets
-        all of them. On an epoch that already has repos it adds to them, on the same
-        branch. It never removes one: that would mean tearing down a worktree
-        someone may be sitting in.
+        all of them. A reopen takes back the repos the epoch had — adding one is
+        add_repos, so no command does two jobs depending on the epoch's state.
         """
         warnings: list[str] = []
         with self._write():
             item = self.worklog.by_id(item_id)
-            chosen = self.pick_repos(repos) if repos else None
-            if chosen and item.repos is None and item.branch is not None:
+            if item.status == "active":
                 raise ClarityError(
-                    f"epoch {item.id} branched the project root before repos were "
-                    f"listed — it has no repo list to add to", code=4)
+                    f"epoch {item.id} is already active — to add a repo:\n"
+                    f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
+            if item.status == "blocked":
+                raise ClarityError(
+                    f"epoch {item.id} is blocked — pick it back up with:\n"
+                    f"  clarity-ctl epoch unblock {item.id}", code=4)
             closed = item.status in CLOSED
             if closed and not reopen:
                 raise ClarityError(
@@ -521,6 +527,11 @@ class Project:
                     f"  clarity-ctl epoch reopen {item_id}",
                     code=4,
                 )
+            if repos and reopen:
+                raise ClarityError(
+                    "a reopen takes back the repos the epoch had — add one after with:\n"
+                    f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
+            chosen = self.pick_repos(repos) if repos else None
             if closed:
                 # the outcome was true when it was written; keep it in the trail
                 if item.outcome:
@@ -538,14 +549,76 @@ class Project:
                 # first time this epoch touches git: the repos asked for, else the
                 # project's whole list as it is now
                 item.repos = chosen or list(self.worklog.repos)
-            elif chosen:
-                item.repos = [*item.repos, *(r for r in chosen if r not in item.repos)]
             targets = self._targets(item, folder)
             if targets:
                 item.branch, warnings = self._attach_all(item, targets, branch)
             item.status = "active"
             item.started = item.started or today()
         return item, warnings
+
+    def _in_flight_with_repos(self, item: Item) -> Path:
+        if item.status not in IN_FLIGHT:
+            hint = (f"start it with: clarity-ctl epoch start {item.id} --repo <repo>"
+                    if item.status in FUTURE
+                    else f"reopen it first: clarity-ctl epoch reopen {item.id}")
+            raise ClarityError(f"epoch {item.id} is {item.status} — {hint}", code=4)
+        if item.repos is None and item.branch is not None:
+            raise ClarityError(
+                f"epoch {item.id} branched the project root before repos were "
+                f"listed — it has no repo list to change", code=4)
+        return self._make_folder(item)
+
+    def add_repos(self, item_id: int, repos: list[str]) -> tuple[Item, list[str], list[str]]:
+        """Branch more listed repos in an epoch in flight, on the branch it already has.
+
+        (item, the repos newly added, warnings). Naming one it already has is not an
+        error — the end state is what was asked for.
+        """
+        with self._write():
+            item = self.worklog.by_id(item_id)
+            folder = self._in_flight_with_repos(item)
+            chosen = self.pick_repos(repos)
+            added = [r for r in chosen if r not in (item.repos or [])]
+            if not added:
+                return item, [], []
+            lease.claim(folder, label=item.name)
+            item.repos = [*(item.repos or []), *added]
+            targets = [(repo, link) for repo, link in self._targets(item, folder)
+                       if repo.relative_to(self.root).as_posix() in added]
+            item.branch, warnings = self._attach_all(item, targets, None)
+        return item, added, warnings
+
+    def drop_repo(self, item_id: int, name: str) -> tuple[Item, str]:
+        """Stop branching one repo in an epoch in flight: its worktree goes, its
+        branch stays. Refuses uncommitted work, and the epoch's last repo — closing
+        is how an epoch lets go of everything."""
+        with self._write():
+            item = self.worklog.by_id(item_id)
+            folder = self._in_flight_with_repos(item)
+            rel = self.listed_repo(name, among=item.repos or [],
+                                   what=f"one of epoch {item.id}'s repos")
+            if len(item.repos) == 1:
+                raise ClarityError(
+                    f"{rel} is epoch {item.id}'s only repo — close the epoch instead:\n"
+                    f"  clarity-ctl epoch close {item.id} \"...\"", code=4)
+            repo, link = self.root / rel, folder / "wt" / Path(rel).name
+            if link.exists() and not link.is_symlink():
+                dirty = gitops.is_dirty(link)
+                if dirty:
+                    raise ClarityError(
+                        f"{len(dirty)} uncommitted change(s) in {link} — commit or stash first",
+                        code=4)
+            lease.claim(folder, label=item.name)
+            if link.is_symlink():
+                link.unlink()  # we only borrowed the path
+            elif link.exists():
+                gitops.remove_worktree(repo, link)  # branch survives
+            sha = gitops.branch_sha(repo, item.branch) if item.branch else None
+            item.repos = [r for r in item.repos if r != rel]
+            at = f" at {sha}" if sha else ""
+            item.notes.append(Note(at=model_now(),
+                                   text=f"dropped {rel} — its branch {item.branch} stays{at}"))
+        return item, rel
 
     def _targets(self, item: Item, folder: Path) -> list[tuple[Path, Path]]:
         """(repo, worktree path) for every repo this epoch branches.

@@ -168,9 +168,11 @@ def test_repo_picks_which_repos_an_epoch_branches(tmp_path):
     assert not gitops.branch_exists(root / "workspace" / "agent", item.branch)
 
     # mid-flight: the same branch in the new repo, the old worktree untouched
-    item, _ = Project.find(root).start(item.id, repos=["workspace/agent"])
+    item, added, _ = Project.find(root).add_repos(item.id, ["workspace/agent"])
+    assert added == ["workspace/agent"]
     assert item.repos == ["workspace/harness", "workspace/agent"]  # in the order added
     assert gitops.current_branch(root / item.folder / "wt" / "agent") == item.branch
+    assert Project.find(root).add_repos(item.id, ["agent"])[1] == []  # already there
 
     closed = Project.find(root).close(item.id, outcome="done")
     assert set(closed.extra["end_shas"]) == {"workspace/agent", "workspace/harness"}
@@ -236,3 +238,59 @@ def test_repo_needs_a_list_to_pick_from(tmp_path):
     with pytest.raises(ClarityError) as err:
         project.start(project.add("x", status="planned").id, repos=["proj"])
     assert "no repos listed" in str(err.value)
+
+
+def test_start_does_one_job(tmp_path):
+    """start begins an epoch; adding a repo mid-flight is add-repo, and reopen takes
+    back the repos the epoch had."""
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+    item, _ = project.start(project.add("x", status="planned").id, repos=["agent"])
+
+    for kwargs, says in (({}, "add-repo"), ({"repos": ["harness"]}, "add-repo")):
+        with pytest.raises(ClarityError) as err:
+            Project.find(root).start(item.id, **kwargs)
+        assert err.value.code == 4 and says in str(err.value)
+    Project.find(root).block(item.id, "waiting")
+    with pytest.raises(ClarityError) as err:
+        Project.find(root).start(item.id)
+    assert "unblock" in str(err.value)
+    Project.find(root).unblock(item.id)
+
+    Project.find(root).close(item.id, "done")
+    with pytest.raises(ClarityError) as err:
+        Project.find(root).start(item.id, reopen=True, repos=["harness"])
+    assert "add-repo" in str(err.value)
+    reopened, _ = Project.find(root).start(item.id, reopen=True)
+    assert reopened.repos == ["workspace/agent"]
+
+
+def test_drop_repo_keeps_the_branch_and_refuses_what_would_lose_work(tmp_path):
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+    item, _ = project.start(project.add("x", status="planned").id)
+    wt = root / item.folder / "wt"
+
+    (wt / "harness" / "wip.py").write_text("w = 1\n")
+    with pytest.raises(ClarityError) as err:
+        Project.find(root).drop_repo(item.id, "harness")
+    assert "uncommitted" in str(err.value)
+    (wt / "harness" / "wip.py").unlink()
+
+    with pytest.raises(ClarityError) as err:
+        Project.find(root).drop_repo(item.id, "duckdb")
+    assert "not one of epoch" in str(err.value)
+
+    item, dropped = Project.find(root).drop_repo(item.id, "harness")
+    assert dropped == "workspace/harness" and item.repos == ["workspace/agent"]
+    assert not (wt / "harness").exists()
+    assert gitops.branch_exists(root / "workspace" / "harness", item.branch)
+    assert "dropped workspace/harness" in item.notes[-1].text
+
+    with pytest.raises(ClarityError) as err:
+        Project.find(root).drop_repo(item.id, "agent")
+    assert "only repo" in str(err.value)

@@ -138,10 +138,9 @@ def _id_arg(node, what: str = "the epoch"):
 
 def _repo_arg(parser) -> None:
     parser.add_argument(
-        "--repo", action="append", metavar="<name>", dest="repos",
+        "--repo", action="append", metavar="<repo>", dest="repos",
         help="branch only this listed repo — its path or folder name, exactly; "
-             "repeat for more. Default: every listed repo. On an "
-             "epoch already in flight, adds the repo on the same branch")
+             "repeat for more. Default: every listed repo")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -293,8 +292,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "Takes an idea or a planned item straight to active. Creates "
                     "epoch/NNN-slug unless --branch names one; if that branch is already "
                     "checked out somewhere, wt/ symlinks to it instead of adding a worktree. "
-                    "Every listed repo is branched unless --repo picks some; run it again "
-                    "with --repo on an epoch in flight to add a repo.")
+                    "Every listed repo is branched unless --repo picks some; to add one "
+                    "later, use epoch add-repo.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
     _repo_arg(p_start)
@@ -316,7 +315,24 @@ def build_parser() -> argparse.ArgumentParser:
                      "when you closed it.")
     _id_arg(p_reopen, "the closed epoch")
     p_reopen.add_argument("--branch", help="use this branch instead of the recorded one")
-    _repo_arg(p_reopen)
+
+    p_add_repo = _leaf(epoch, "add-repo", "branch another listed repo in an epoch in flight",
+                       into=epoch_rows, description=
+                       "Gives each named repo the epoch's branch and a worktree at "
+                       "wt/<folder name>, as start would have. The repo must be listed "
+                       "first: clarity-ctl repo add <path>.")
+    _id_arg(p_add_repo)
+    p_add_repo.add_argument("repos", nargs="+", metavar="<repo>",
+                            help="a listed repo — its path or folder name, exactly")
+
+    p_drop_repo = _leaf(epoch, "drop-repo", "stop branching a repo in an epoch in flight",
+                        into=epoch_rows, description=
+                        "Removes the repo's worktree and keeps its branch, noting where "
+                        "the branch was left. Refuses uncommitted changes, and the "
+                        "epoch's last repo — close the epoch for that.")
+    _id_arg(p_drop_repo)
+    p_drop_repo.add_argument("repo", metavar="<repo>",
+                             help="one of the epoch's repos — its path or folder name")
 
     p_refresh = _leaf(epoch, "refresh", "catch the epoch branch up with its base",
                       into=epoch_rows,
@@ -552,7 +568,7 @@ def run(args) -> int:
                 print("\n".join(lines))
         elif action == "reopen":
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
-                                           reopen=True, repos=args.repos)
+                                           reopen=True)
             if args.json:
                 print(envelope("epoch.reopen", item.to_dict(), warnings))
             else:
@@ -560,6 +576,21 @@ def run(args) -> int:
                          f"— {item.folder}"]
                 lines += [f"warning: {w}" for w in warnings]
                 print("\n".join(lines))
+        elif action == "add-repo":
+            item, added, warnings = project.add_repos(project.resolve_id(args.id), args.repos)
+            if args.json:
+                print(envelope("epoch.add-repo", {**item.to_dict(), "added": added}, warnings))
+            else:
+                head = (f"epoch {item.id}: added {', '.join(added)} on {item.branch}" if added
+                        else f"epoch {item.id} already has {', '.join(args.repos)}")
+                lines = [head, f"  repos: {', '.join(item.repos or [])}"]
+                lines += [f"warning: {w}" for w in warnings]
+                print("\n".join(lines))
+        elif action == "drop-repo":
+            item, dropped = project.drop_repo(project.resolve_id(args.id), args.repo)
+            emit(args, "epoch.drop-repo", {**item.to_dict(), "dropped": dropped},
+                 f"epoch {item.id}: dropped {dropped}, its branch kept\n"
+                 f"  repos: {', '.join(item.repos or [])}")
         elif action == "refresh":
             item, message = project.refresh(args.id)
             emit(args, "epoch.refresh", item.to_dict(), message)
