@@ -383,8 +383,14 @@ class Project:
     # ---------- the repos a workspace changes ----------
 
     def _repo_rel(self, path: str) -> str:
+        """A path to a repo, relative to the root. A relative one is read from the
+        root when it names something there, so `workspace/web` means the same from
+        any directory, and from the shell's directory otherwise."""
         target = Path(path).expanduser()
-        target = (target if target.is_absolute() else Path.cwd() / target).resolve()
+        if not target.is_absolute():
+            from_root = self.root / target
+            target = from_root if from_root.exists() else Path.cwd() / target
+        target = target.resolve()
         root = self.root.resolve()
         if target == root and self.worklog.state_repo:
             raise ClarityError(
@@ -414,49 +420,47 @@ class Project:
             self.worklog.repos.append(rel)
         return list(self.worklog.repos)
 
-    def repo_remove(self, path: str) -> list[str]:
-        rel = self._repo_rel(path)
+    def repo_remove(self, name: str) -> list[str]:
         with self._write():
-            if rel not in self.worklog.repos:
-                raise ClarityError(f"{rel} is not in the list", code=4)
+            rel = self.listed_repo(name)
             self.worklog.repos.remove(rel)
         return list(self.worklog.repos)
 
-    def pick_repos(self, wanted: list[str]) -> list[str]:
-        """The listed repos `wanted` names, in list order.
+    def listed_repo(self, raw: str) -> str:
+        """The one listed repo `raw` names: a listed path or a folder name, exactly,
+        or a path that leads to a listed repo. Every command that takes a repo reads
+        it here, so a name means the same thing whichever directory the shell is in.
 
-        Each name is a listed path or a folder name, exactly — folder names are
-        unique, so that is never ambiguous. Nothing looser picks: a prefix that is
-        unique today stops being the repo you meant once that repo leaves the list,
-        and then it branches a different one without a word. Close matches only
-        ever appear in the refusal.
+        Nothing looser picks: a prefix that is unique today stops being the repo you
+        meant once that repo leaves the list, and then it names a different one
+        without a word. Close matches only ever appear in the refusal.
         """
         listed = self.worklog.repos
         if not listed:
             raise ClarityError(
-                "no repos listed — epochs here branch the project root, so there is "
-                "nothing to pick with --repo", code=4)
+                "no repos listed — epochs here branch the project root\n"
+                "  list one with: clarity-ctl repo add <path>", code=4)
         names = {Path(r).name: r for r in listed}
-        picked: set[str] = set()
-        for raw in wanted:
-            name = raw.strip().rstrip("/")
-            if name in listed or name in names:
-                picked.add(names.get(name, name))
-                continue
-            try:
-                rel = self._repo_rel(name)
-            except ClarityError:
-                rel = None
-            if rel in listed:
-                picked.add(rel)
-                continue
-            close = difflib.get_close_matches(name, [*names, *listed], n=3)
-            hint = f" — did you mean {' or '.join(close)}?" if close else ""
-            raise ClarityError(
-                f"{raw!r} is not a listed repo{hint}\n"
-                f"  listed: {', '.join(listed)}\n"
-                f"  list another with: clarity-ctl repo add <path>", code=4)
-        return [r for r in listed if r in picked]
+        name = raw.strip().rstrip("/")
+        if name in listed or name in names:
+            return names.get(name, name)
+        try:
+            rel = self._repo_rel(name)
+        except ClarityError:
+            rel = None
+        if rel in listed:
+            return rel
+        close = difflib.get_close_matches(name, [*names, *listed], n=3)
+        hint = f" — did you mean {' or '.join(close)}?" if close else ""
+        raise ClarityError(
+            f"{raw!r} is not a listed repo{hint}\n"
+            f"  listed: {', '.join(listed)}\n"
+            f"  list another with: clarity-ctl repo add <path>", code=4)
+
+    def pick_repos(self, wanted: list[str]) -> list[str]:
+        """The listed repos `wanted` names, in list order."""
+        picked = {self.listed_repo(raw) for raw in wanted}
+        return [r for r in self.worklog.repos if r in picked]
 
     # ---------- items ----------
 

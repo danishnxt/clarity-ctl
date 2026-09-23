@@ -247,11 +247,14 @@ def build_parser() -> argparse.ArgumentParser:
                        "single-repo project.\n\n"
                        "List the repos you change. Ones you only use — a tool, a "
                        "dependency — stay off it and live in 3rd_party/.", into=repo_rows)
-    p_repo_add.add_argument("path", metavar="<path>", help="the repo, e.g. workspace/mini-swe-agent")
+    p_repo_add.add_argument("path", metavar="<path>",
+                            help="the repo, e.g. workspace/mini-swe-agent — from the project "
+                                 "root, or from where you are")
     p_repo_rm = _leaf(repo, "remove", "stop branching this repo in new epochs",
                       description="Epochs already started keep the repos they were "
                       "started with, so closing them still cleans up.", into=repo_rows)
-    p_repo_rm.add_argument("path", metavar="<path>", help="the repo, as listed")
+    p_repo_rm.add_argument("path", metavar="<repo>",
+                           help="the repo — its listed path or folder name, e.g. web")
     _leaf(repo, "list", "show the repos epochs branch", into=repo_rows)
 
     # ---- ideas ----

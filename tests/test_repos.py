@@ -213,6 +213,21 @@ def test_repo_never_picks_by_prefix(tmp_path):
     assert "not a listed repo" in str(err.value) and "agent-tools" in str(err.value)
 
 
+def test_a_repo_name_means_the_same_from_any_directory(tmp_path, monkeypatch):
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+
+    monkeypatch.chdir(root / "EPOCHS")
+    assert project.pick_repos(["workspace/agent"]) == ["workspace/agent"]
+    assert project.repo_remove("harness") == ["workspace/agent"]
+    assert project.repo_add("workspace/harness") == ["workspace/agent", "workspace/harness"]
+    monkeypatch.chdir(root / "workspace")
+    assert project.repo_remove("workspace/agent") == ["workspace/harness"]
+    assert project.repo_add("agent") == ["workspace/harness", "workspace/agent"]
+
+
 def test_repo_needs_a_list_to_pick_from(tmp_path):
     root = tmp_path / "proj"
     make_checkout(root)
