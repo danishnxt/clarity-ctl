@@ -117,11 +117,10 @@ def _line(item: Item, leases: dict | None = None, cols: int | None = None,
         # its own line for the same reason the refresh warning gets one: it is about
         # the record, not about where the work lives
         lines += _wrap(f"⚠ {quiet} — clarity-ctl note {item.id} \"...\"", gutter, gutter, cols)
-    trails = (stale or {}).get(item.id)
-    if trails:
-        # its own line, not tacked onto the folder path: main moving under an epoch is
-        # the thing you want to notice, and it must not wrap into the path above it
-        lines += _wrap(f"⚠ {trails} — clarity-ctl epoch refresh {item.id}", gutter, gutter, cols)
+    for trail in (stale or {}).get(item.id, []):
+        # its own line, not tacked onto the folder path: the base moving under an epoch
+        # is the thing you want to notice, and it must not wrap into the path above it
+        lines += _wrap(f"⚠ {trail}", gutter, gutter, cols)
     return "\n".join(lines)
 
 
@@ -188,6 +187,10 @@ def epoch_md(item: Item, existing: str | None = None) -> str:
         lines.append(f"- **branch** {item.branch}")
     if item.repos:
         lines.append(f"- **repos** {', '.join(item.repos)}")
+    if item.bases:
+        shown = sorted(set(item.bases.values()))
+        lines.append(f"- **base** {shown[0]}" if len(shown) == 1 else
+                     f"- **bases** {', '.join(f'{k}: {v}' for k, v in item.bases.items())}")
     if item.description:
         lines.append(f"- **goal** {item.description}")
     if item.blocked_reason:

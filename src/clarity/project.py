@@ -615,6 +615,8 @@ class Project:
                 gitops.remove_worktree(repo, link)  # branch survives
             sha = gitops.branch_sha(repo, item.branch) if item.branch else None
             item.repos = [r for r in item.repos if r != rel]
+            if item.bases:
+                item.bases = {k: v for k, v in item.bases.items() if k != rel} or None
             at = f" at {sha}" if sha else ""
             item.notes.append(Note(at=model_now(),
                                    text=f"dropped {rel} — its branch {item.branch} stays{at}"))
@@ -686,9 +688,16 @@ class Project:
                 )
             return None
 
+        key = self._repo_key(repo)
+        if key not in (item.bases or {}):
+            base = gitops.base_branch(repo)
+            if base == name:  # the checkout is on the epoch's own branch
+                base = gitops.default_branch(repo)
+            if base and base != name:
+                item.bases = {**(item.bases or {}), key: base}
         exists = gitops.branch_exists(repo, name)
         if exists:
-            warnings += self._staleness(name, repo)
+            warnings += self._staleness(item, name, repo)
         checked_out = gitops.worktree_path_for(repo, name) if exists else None
         if checked_out:
             # already checked out somewhere (often the main checkout) — point at it
@@ -707,13 +716,28 @@ class Project:
             gitops.add_worktree(repo, link, name, create=not exists)
         return not exists, warnings
 
-    def refresh(self, item_id: int | None = None) -> tuple[Item, str]:
-        """Bring each repo's checked-out branch into an in-flight epoch's branch.
+    def _repo_key(self, repo: Path) -> str:
+        """How `repos` and `bases` name a repo: relative to the root, "." for the root."""
+        return repo.relative_to(self.root).as_posix()
+
+    def base_of(self, item: Item, repo: Path) -> str | None:
+        """What `item`'s branch catches up with in `repo`: the base recorded when the
+        epoch first branched it. An epoch from before bases were recorded follows the
+        checkout, as it did then."""
+        recorded = (item.bases or {}).get(self._repo_key(repo))
+        return recorded or gitops.base_branch(repo)
+
+    def refresh(self, item_id: int | None = None, base: str | None = None,
+                repos: list[str] | None = None) -> tuple[Item, str]:
+        """Merge each repo's recorded base into an in-flight epoch's branch.
 
         Merges rather than recreating: the branch keeps its identity and its commits,
         so a refresh can never lose work. Deleting branches is a separate question.
         Every repo is checked before any is merged, so a dirty third repo refuses the
         whole refresh instead of leaving two caught up and one not.
+
+        `base` changes what the named repos (default: all the epoch's) catch up with
+        from now on, and is recorded before the merge. `repos` narrows the refresh.
         """
         item = self.worklog.by_id(self.resolve_id(item_id))
         if item.status not in IN_FLIGHT:
@@ -725,15 +749,40 @@ class Project:
         targets = self._targets(item, folder) if folder else []
         if not targets or not item.branch:
             raise ClarityError("not a git repo — nothing to refresh from", code=4)
+        if repos:
+            wanted = {self.listed_repo(r, among=item.repos or [],
+                                       what=f"one of epoch {item.id}'s repos")
+                      for r in repos}
+            targets = [(repo, wt) for repo, wt in targets if self._repo_key(repo) in wanted]
+
+        if base:
+            for repo, _ in targets:
+                where = "" if repo == self.root else f" in {self._repo_key(repo)}"
+                if base == item.branch:
+                    raise ClarityError(
+                        f"{base} is epoch {item.id}'s own branch — a base is what it "
+                        f"catches up with", code=4)
+                if not gitops.branch_exists(repo, base):
+                    raise ClarityError(f"no branch {base}{where}", code=4)
+            with self._write():
+                item = self.worklog.by_id(item.id)
+                changed = [self._repo_key(repo) for repo, _ in targets
+                           if (item.bases or {}).get(self._repo_key(repo)) != base]
+                if changed:
+                    item.bases = {**(item.bases or {}), **{k: base for k in changed}}
+                    item.notes.append(Note(at=model_now(),
+                                           text=f"base set to {base} for {', '.join(changed)}"))
 
         plan: list[tuple[Path, Path, str, int]] = []
         bases: set[str] = set()
         for repo, _ in targets:
             where = "" if repo == self.root else f" in {repo.relative_to(self.root)}"
-            base = gitops.base_branch(repo)
+            base = self.base_of(item, repo)
             if not base:
                 raise ClarityError(
-                    f"no branch checked out, and no main or master, to refresh from{where}",
+                    f"no base recorded, no branch checked out, and no main or master, "
+                    f"to refresh from{where}\n"
+                    f"  name one with: clarity-ctl epoch refresh {item.id} --base <branch>",
                     code=4,
                 )
             if item.branch == base:
@@ -770,10 +819,11 @@ class Project:
             done.append(f"{base}{where} ({behind} commit{'s' if behind != 1 else ''})")
         return item, f"epoch {item.id}: {item.branch} caught up with " + ", ".join(done)
 
-    def _behind(self, branch: str, repo: Path | None = None) -> tuple[str, int, int] | None:
+    def _behind(self, item: Item, branch: str,
+                repo: Path | None = None) -> tuple[str, int, int] | None:
         """(base, ahead, behind) when `branch` trails its base, else None."""
         repo = repo or self.root
-        base = gitops.base_branch(repo)
+        base = self.base_of(item, repo)
         if not base or base == branch:
             return None
         try:
@@ -782,9 +832,9 @@ class Project:
             return None
         return (base, ahead, behind) if behind else None
 
-    def _staleness(self, branch: str, repo: Path | None = None) -> list[str]:
+    def _staleness(self, item: Item, branch: str, repo: Path | None = None) -> list[str]:
         """Reopening gives you the branch as you left it — say so before work resumes."""
-        found = self._behind(branch, repo)
+        found = self._behind(item, branch, repo)
         if not found:
             return []
         base, ahead, behind = found
@@ -794,26 +844,38 @@ class Project:
             note += f" and {ahead} ahead"
         return [note]
 
-    def stale_map(self) -> dict[int, str]:
-        """Short 'behind' notes for in-flight epochs, for the status page.
+    def stale_map(self) -> dict[int, list[str]]:
+        """Short notes on how in-flight epochs sit against their bases, for status.
 
         The start-time warning fires once, when the worktree is created; the base moves on
-        afterwards and nothing said so. This is what keeps saying it.
+        afterwards and nothing said so. This is what keeps saying it. It also says when
+        a repo's checkout has moved off the recorded base, since that is the one
+        thing that could make "behind" read as the wrong number.
         """
-        out: dict[int, str] = {}
+        out: dict[int, list[str]] = {}
         for item in self.worklog.items:
             if item.status not in IN_FLIGHT or not item.branch:
                 continue
             folder = self.folder_of(item)
-            parts = []
+            behind_parts, drift = [], []
             for repo, _ in (self._targets(item, folder) if folder else []):
-                found = self._behind(item.branch, repo)
+                where = "" if repo == self.root else f" ({repo.name})"
+                found = self._behind(item, item.branch, repo)
                 if found:
                     base, _, behind = found
-                    where = "" if repo == self.root else f" ({repo.name})"
-                    parts.append(f"{behind} behind {base}{where}")
-            if parts:
-                out[item.id] = ", ".join(parts)
+                    behind_parts.append(f"{behind} behind {base}{where}")
+                recorded = (item.bases or {}).get(self._repo_key(repo))
+                checkout = gitops.current_branch(repo)
+                if (recorded and checkout and checkout not in ("HEAD", recorded, item.branch)):
+                    name = repo.name if repo != self.root else "the"
+                    drift.append(f"{name} checkout is on {checkout}; epoch {item.id} "
+                                 f"follows {recorded}")
+            lines = []
+            if behind_parts:
+                lines.append(f"{', '.join(behind_parts)} — clarity-ctl epoch refresh {item.id}")
+            lines += drift
+            if lines:
+                out[item.id] = lines
         return out
 
     def note(self, item_id: int | None, text: str) -> Item:

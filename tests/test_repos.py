@@ -99,7 +99,7 @@ def test_refresh_catches_up_every_repo(tmp_path):
         (repo / "later.py").write_text("z = 3\n")
         git(["add", "-A"], repo)
         git(["commit", "-qm", "later"], repo)
-    assert "behind main" in Project.find(root).stale_map()[item.id]
+    assert "behind main" in " ".join(Project.find(root).stale_map()[item.id])
 
     _, message = Project.find(root).refresh(item.id)
     assert "workspace/agent" in message and "workspace/harness" in message
@@ -290,7 +290,26 @@ def test_drop_repo_keeps_the_branch_and_refuses_what_would_lose_work(tmp_path):
     assert not (wt / "harness").exists()
     assert gitops.branch_exists(root / "workspace" / "harness", item.branch)
     assert "dropped workspace/harness" in item.notes[-1].text
+    assert item.bases == {"workspace/agent": "main"}
 
     with pytest.raises(ClarityError) as err:
         Project.find(root).drop_repo(item.id, "agent")
     assert "only repo" in str(err.value)
+
+
+def test_refresh_base_can_be_set_for_one_repo(tmp_path):
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+    item, _ = project.start(project.add("x", status="planned").id)
+    assert item.bases == {"workspace/agent": "main", "workspace/harness": "main"}
+
+    harness = root / "workspace" / "harness"
+    git(["branch", "release"], harness)
+    Project.find(root).refresh(item.id, base="release", repos=["harness"])
+    after = Project.find(root).worklog.by_id(item.id)
+    assert after.bases == {"workspace/agent": "main", "workspace/harness": "release"}
+    with pytest.raises(ClarityError) as err:
+        Project.find(root).refresh(item.id, base="release")  # agent has no release
+    assert "no branch release in workspace/agent" in str(err.value)

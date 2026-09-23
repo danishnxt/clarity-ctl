@@ -336,12 +336,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_refresh = _leaf(epoch, "refresh", "catch the epoch branch up with its base",
                       into=epoch_rows,
-                      description="Merges the branch each repo's own checkout is on (main or "
-                      "master if it is detached) into the epoch's branch, in its "
-                      "own worktree. Nothing is deleted and no commit is discarded, so a "
+                      description="Merges each repo's base into the epoch's branch, in its "
+                      "own worktree. The base is the branch that repo's checkout was on when "
+                      "the epoch first branched it (main or master if it was detached), "
+                      "recorded then — switching the checkout later changes nothing. "
+                      "Nothing is deleted and no commit is discarded, so a "
                       "refresh cannot lose work. Refuses on a dirty worktree, and aborts "
                       "the merge on conflict rather than leaving it half-done.")
     _id_arg(p_refresh)
+    p_refresh.add_argument("--base", metavar="<branch>",
+                           help="catch up with this branch from now on, instead of the "
+                                "recorded one; recorded before merging")
+    p_refresh.add_argument("--repo", action="append", metavar="<repo>", dest="repos",
+                           help="refresh only this one of the epoch's repos, and set "
+                                "--base only for it; repeat for more")
 
     p_close = _leaf(epoch, "close", "finish it: asks for the outcome in one line",
                     into=epoch_rows, description=
@@ -592,7 +600,7 @@ def run(args) -> int:
                  f"epoch {item.id}: dropped {dropped}, its branch kept\n"
                  f"  repos: {', '.join(item.repos or [])}")
         elif action == "refresh":
-            item, message = project.refresh(args.id)
+            item, message = project.refresh(args.id, base=args.base, repos=args.repos)
             emit(args, "epoch.refresh", item.to_dict(), message)
         elif action == "block":
             target, reason = _split_id_text(args.id, args.reason)

@@ -103,11 +103,12 @@ def default_branch(root: Path) -> str | None:
 
 
 def base_branch(root: Path) -> str | None:
-    """The branch an epoch catches up with: whatever the repo's own checkout is on.
+    """The branch a new epoch is cut from: whatever the repo's own checkout is on.
 
     Work often lives on a long-running branch rather than main, and the checkout
     is where that choice is visible. A detached HEAD names no branch, so it falls
-    back to main or master.
+    back to main or master. Read once, when an epoch first branches the repo, and
+    recorded — see Item.bases.
     """
     current = current_branch(root)
     if current and current != "HEAD":

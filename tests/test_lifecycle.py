@@ -232,24 +232,41 @@ def test_refresh_catches_the_branch_up_without_losing_commits(tmp_path):
     assert project.refresh(item.id)[1].endswith("up to date with main")
 
 
-def test_refresh_follows_the_branch_the_checkout_is_on(tmp_path):
+def test_refresh_follows_the_base_recorded_at_start(tmp_path):
+    """Cut from dev, the epoch keeps following dev after the checkout moves on."""
     root = make_repo(tmp_path)
     git(["checkout", "-qb", "dev"], root)  # the work lives on a long-running branch
     Project.create(root, name="proj")
     project = Project.find(root)
     item = project.add("cache warmup", status="planned")
-    project.start(item.id)
-
-    # dev moves on; main never does
+    item, _ = project.start(item.id)
+    assert item.bases == {".": "dev"}
     worktree = project.folder_of(item) / "wt" / root.name
+
+    commit = ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm"]
     (root / "later.txt").write_text("more\n")
     git(["add", "later.txt"], root)
-    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "later"], root)
+    git([*commit, "later"], root)
+    # someone switches the checkout for unrelated work, which moves on too
+    git(["checkout", "-qb", "feature-x"], root)
+    (root / "unrelated.txt").write_text("x\n")
+    git(["add", "unrelated.txt"], root)
+    git([*commit, "unrelated"], root)
 
-    assert "behind dev" in project.stale_map()[item.id]
+    notes = " ".join(project.stale_map()[item.id])
+    assert "1 behind dev" in notes and "checkout is on feature-x" in notes
     _, message = project.refresh(item.id)
     assert "caught up with dev" in message, message
     assert (worktree / "later.txt").exists()
+    assert not (worktree / "unrelated.txt").exists()
+
+    # changing the base is deliberate, and recorded
+    _, message = Project.find(root).refresh(item.id, base="feature-x")
+    assert "caught up with feature-x" in message and (worktree / "unrelated.txt").exists()
+    after = Project.find(root).worklog.by_id(item.id)
+    assert after.bases == {".": "feature-x"} and "base set to feature-x" in after.notes[-1].text
+    with pytest.raises(ClarityError):
+        Project.find(root).refresh(item.id, base="no-such-branch")
 
 
 def test_refresh_refuses_a_dirty_worktree(tmp_path):

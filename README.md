@@ -92,10 +92,12 @@ idea ──start──► active ──close──► done
              block  unblock └─reopen─┘
 ```
 
-`block` parks an epoch with a reason. `refresh` merges into its branch whatever branch
-the repo's own checkout is on — the branch the epoch was cut from, unless you have
-switched it since; `main` if the checkout is detached (not with uncommitted work). `close` records a one-line outcome, removes the worktree and keeps
-the branch; `--abandon` records it as dropped.
+`block` parks an epoch with a reason. `refresh` merges each repo's **base** into the
+epoch's branch: the branch that repo's checkout was on when the epoch started (`main` if
+it was detached), recorded then, so switching the checkout later for other work changes
+nothing. `refresh 7 --base release --repo web` changes it on purpose. `close` records a
+one-line outcome, removes the worktree and keeps the branch; `--abandon` records it as
+dropped.
 
 ## Notes and sessions
 
