@@ -967,15 +967,18 @@ class Project:
 
     # ---------- reading ----------
 
+    # Named views for `show`. `current` is what `clarity-ctl status` prints — both
+    # in-flight and next — and is reached through `status --json`, not by name.
+    VIEWS = {
+        "active": IN_FLIGHT,
+        "next": FUTURE,
+        "closed": CLOSED,
+        "all": set(STATUSES),
+    }
+    SHOW_NAMES = [*VIEWS, "objective", "leases"]
+
     def query(self, name: str, arg: str | None = None) -> dict:
-        views = {
-            "active": IN_FLIGHT,
-            "future": FUTURE,
-            # what `clarity-ctl status` prints: both groups, so the two surfaces agree
-            "current": IN_FLIGHT | FUTURE,
-            "inactive": CLOSED,
-            "all": set(STATUSES),
-        }
+        views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
         if name == "item":
             item = self.worklog.by_id(self.resolve_id(arg))
             data = item.to_dict()
@@ -988,14 +991,13 @@ class Project:
                 if plans:
                     data["plans"] = plans
             return data
-        if name == "objectives":
+        if name == "objective":
             return self.worklog.objectives.to_dict()
         if name == "leases":
             return {"leases": self.leases()}
         if name not in views:
             raise ClarityError(
-                f"unknown query {name!r}; try: "
-                f"{', '.join([*views, 'item', 'objectives', 'leases'])}",
+                f"unknown view {name!r}; try: {', '.join(self.SHOW_NAMES)}, or an id",
                 code=4,
             )
         return {"items": [i.to_dict() for i in self.worklog.with_status(views[name])]}

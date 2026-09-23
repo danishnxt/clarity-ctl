@@ -26,7 +26,7 @@ EPILOG = """examples:
   clarity-ctl epoch start 3                               idea or planned -> active
   clarity-ctl note 3 "ring buffer was 2x slower"          record what you tried
   clarity-ctl epoch close 3 --outcome "bumped timeout"    -> done
-  clarity-ctl q active --json                             what an agent calls
+  clarity-ctl show active --json                          what an agent calls
 
 ids:
   Every command that acts on an epoch takes its id. Clarity never infers which epoch
@@ -37,7 +37,10 @@ exit codes:
   0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
 """
 
-QUERY_NAMES = "active | future | current | inactive | all | item <id> | objectives | leases"
+SHOW_NAMES = "active | next | closed | all | objective | leases | <id>"
+# `q` was `show` before it had a name that says what it does. Kept, unlisted, because
+# agent instruction files in other projects still say `q`; its old view names too.
+Q_ALIASES = {"future": "next", "inactive": "closed", "objectives": "objective"}
 
 
 def envelope(command: str, data, warnings=None) -> str:
@@ -212,11 +215,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
 
-    p_q = _leaf(sub, "q", "named read-only query, for you or an agent",
-                f"Named queries: {QUERY_NAMES}", section=look)
-    p_q.add_argument("name", metavar="<name>", help=QUERY_NAMES)
-    p_q.add_argument("arg", nargs="?", metavar="<arg>",
-                     help="the item id, for `q item`")
+    p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
+                   f"Read-only. Views: {SHOW_NAMES}.\n\n"
+                   "  active     epochs in flight, blocked ones included\n"
+                   "  next       ideas and planned epochs, not started\n"
+                   "  closed     done and dropped\n"
+                   "  all        everything\n"
+                   "  objective  what the project is for\n"
+                   "  leases     who holds which epoch\n"
+                   "  <id>       one item: status, branch, repos, notes, lease, plans\n\n"
+                   "What `status` prints, as data, is `clarity-ctl status --json`.",
+                   section=look)
+    p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
+
+    p_q = sub.add_parser("q", formatter_class=argparse.RawDescriptionHelpFormatter,
+                         description="the old name of `show` — use that")
+    p_q.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    p_q.add_argument("name", metavar="<name>")
+    p_q.add_argument("arg", nargs="?", metavar="<arg>")
 
     p_path = _leaf(sub, "path", "print an epoch's folder — cd $(clarity-ctl path 7)", section=look)
     _id_arg(p_path)
@@ -484,6 +500,34 @@ def _install_text(done, scope: str) -> str:
     return f"{head}\n" + "\n".join(lines)
 
 
+def _show_items_text(data: dict) -> str:
+    return "\n".join(
+        f"{i['id']:>3}  {i['status']:<8} {i['name']}" for i in data["items"]) or "nothing here"
+
+
+def _show_item_text(data: dict) -> str:
+    """One item for a person: the fields that are set, then its notes."""
+    lines = [f"{data['id']:>3}  {data['status']:<8} {data['name']}"]
+    for key in ("type", "folder", "branch", "blocked_reason", "outcome", "evidence",
+                "created", "started", "ended"):
+        if data.get(key):
+            lines.append(f"     {key.replace('_', ' '):<10} {data[key]}")
+    bases = data.get("bases") or {}
+    for repo in data.get("repos") or []:
+        lines.append(f"     {'repo':<10} {repo}" + (f" (base {bases[repo]})" if repo in bases else ""))
+    if "." in bases:
+        lines.append(f"     {'base':<10} {bases['.']}")
+    held = data.get("lease")
+    if held:
+        lines.append(f"     {'lease':<10} {held.get('owner', '?')}@{held.get('host', '?')}, "
+                     f"{held.get('age', '?')}")
+    for plan in data.get("plans") or []:
+        lines.append(f"     {'plan':<10} {plan}")
+    for note in data.get("notes") or []:
+        lines.append(f"     · {note['at']}  {note['text']}")
+    return "\n".join(lines)
+
+
 def _repos_line(item) -> str:
     """Which repos an epoch branches and what each follows: `repos: agent (main), web`."""
     bases = item.bases or {}
@@ -551,9 +595,33 @@ def run(args) -> int:
         emit(args, "status", project.query("all" if args.all else "current"),
              project.status_text(show_all=args.all))
 
-    elif args.command == "q":
-        data = project.query(args.name, args.arg)
-        emit(args, f"q.{args.name}", data, json.dumps(data, indent=2))
+    elif args.command in ("show", "q"):
+        name = args.name
+        if args.command == "q":
+            name = args.arg if name == "item" and args.arg else Q_ALIASES.get(name, name)
+        if name == "item":
+            name = None  # `q item` with no id: resolve_id says which ids there are
+        if name is None or name.isdigit():
+            data = project.query("item", name)
+            emit(args, "show.item", data, _show_item_text(data))
+        elif name == "current":
+            data = project.query("current")  # only `q current` reaches this
+            emit(args, "show.current", data, _show_items_text(data))
+        else:
+            if name not in Project.SHOW_NAMES:
+                raise ClarityError(
+                    f"unknown view {name!r}; try: {', '.join(Project.SHOW_NAMES)}, or an id",
+                    code=4)
+            data = project.query(name)
+            if name == "objective":
+                human = f"OBJECTIVE  {data['overall'] or '— not set —'}"
+            elif name == "leases":
+                human = "\n".join(
+                    f"{i:>3}  {h.get('owner', '?')}@{h.get('host', '?')}, {h.get('age', '?')}"
+                    for i, h in data["leases"].items()) or "no leases held"
+            else:
+                human = _show_items_text(data)
+            emit(args, f"show.{name}", data, human)
 
     elif args.command == "path":
         folder = project.path_of(args.id)
@@ -562,9 +630,9 @@ def run(args) -> int:
     elif args.command == "objective":
         if action == "set":
             project.set_objective(args.text)
-            emit(args, "objective.set", project.query("objectives"), project.status_text())
+            emit(args, "objective.set", project.query("objective"), project.status_text())
         else:
-            data = project.query("objectives")
+            data = project.query("objective")
             emit(args, "objective.show", data,
                  f"OBJECTIVE  {data['overall'] or '— not set —'}")
 
@@ -589,7 +657,7 @@ def run(args) -> int:
             human = "\n".join(
                 _item_line(i) for i in project.worklog.with_status({"idea", "planned"})
             ) or "no ideas yet — clarity-ctl idea add \"...\""
-            emit(args, "idea.list", project.query("future"), human)
+            emit(args, "idea.list", project.query("next"), human)
 
     elif args.command == "epoch":
         if action == "new":

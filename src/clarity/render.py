@@ -174,7 +174,7 @@ def epoch_md(item: Item, existing: str | None = None) -> str:
 
     Deliberately does not index PLANS/. That directory is one anyone can drop a file
     into, so no command can know when it changed — caching the listing here is what
-    forced every epoch to be re-rendered on every write. `clarity-ctl q item` lists it live.
+    forced every epoch to be re-rendered on every write. `clarity-ctl show <id>` lists it live.
     """
     lines = [
         MARK,

@@ -69,7 +69,7 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
   what it says. It ends by telling you to delete it.
 - `clarity-ctl status` — objective, what's in flight, what's next.
   `clarity-ctl --help` — every command.
-- `clarity-ctl q active --json`, `clarity-ctl q item <id> --json` — for you. Every read
+- `clarity-ctl show active --json`, `clarity-ctl show <id> --json` — for you. Every read
   takes `--json` and answers `{ok, command, data, warnings, version}`.
 - Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity project · 4 refused.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md` — both are

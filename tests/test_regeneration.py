@@ -117,7 +117,7 @@ def test_a_word_where_an_id_belongs_is_refused_not_crashed(tmp_path, monkeypatch
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     monkeypatch.chdir(root)
-    for argv in (["path", "nope"], ["q", "item", "nope"], ["epoch", "start", "nope"]):
+    for argv in (["path", "nope"], ["show", "nope"], ["q", "item", "nope"], ["epoch", "start", "nope"]):
         assert main(argv) == 4
 
 

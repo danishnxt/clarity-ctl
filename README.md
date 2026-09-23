@@ -117,7 +117,7 @@ at a time, so a new session starts from "epoch 7, these notes", not the whole pr
 Longer handoffs go in the epoch's `PLANS/` folder.
 
 The record is only as good as the notes written, and a fast agent can forget. Glance at
-`clarity-ctl q item <id>` before you close an epoch.
+`clarity-ctl show <id>` before you close an epoch.
 
 ## What's on disk
 
@@ -155,7 +155,7 @@ clarity-ctl install --remove   # take the block back out
 
 The global block does nothing in folders without a `worklog.yaml`.
 
-Every read takes `--json` (`clarity-ctl q active --json`, `clarity-ctl q item 2 --json`)
+Every read takes `--json` (`clarity-ctl show active --json`, `clarity-ctl show 2 --json`)
 and answers `{ok, command, data, warnings, version}`. Exit codes: `0` ok · `1` error ·
 `2` validation failed · `3` not a clarity project · `4` refused. The envelope and exit
 codes are stable.
