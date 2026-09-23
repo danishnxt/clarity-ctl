@@ -161,7 +161,7 @@ def test_repo_picks_which_repos_an_epoch_branches(tmp_path):
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
 
-    item, _ = project.start(project.add("x", status="planned").id, repos=["harn"])
+    item, _ = project.start(project.add("x", status="planned").id, repos=["harness"])
     assert item.repos == ["workspace/harness"]
     assert (root / item.folder / "wt" / "harness").is_dir()
     assert not (root / item.folder / "wt" / "agent").exists()
@@ -183,9 +183,9 @@ def test_repo_refuses_what_it_cannot_pin_down(tmp_path):
     for name in ("agent", "agent-tools", "harness"):
         project.repo_add(str(root / "workspace" / name))
 
-    # a full folder name wins over being the prefix of a longer one
     assert project.pick_repos(["agent"]) == ["workspace/agent"]
-    for bad, says in ((["ag"], "could be any of"),
+    assert project.pick_repos(["workspace/harness/"]) == ["workspace/harness"]
+    for bad, says in ((["ag"], "not a listed repo"),
                       (["harnss"], "did you mean harness"),
                       (["duckdb"], "not a listed repo")):
         with pytest.raises(ClarityError) as err:
@@ -197,6 +197,20 @@ def test_repo_refuses_what_it_cannot_pin_down(tmp_path):
         project.start(item.id, repos=["nope"])
     after = Project.find(root).worklog.by_id(item.id)
     assert after.status == "planned" and after.repos is None
+
+
+def test_repo_never_picks_by_prefix(tmp_path):
+    """Once `agent` leaves the list, `--repo agent` must not quietly mean agent-tools."""
+    root = make_workspace(tmp_path)
+    make_checkout(root / "workspace" / "agent-tools")
+    project = Project.find(root)
+    for name in ("agent", "agent-tools"):
+        project.repo_add(str(root / "workspace" / name))
+    project.repo_remove(str(root / "workspace" / "agent"))
+
+    with pytest.raises(ClarityError) as err:
+        project.pick_repos(["agent"])
+    assert "not a listed repo" in str(err.value) and "agent-tools" in str(err.value)
 
 
 def test_repo_needs_a_list_to_pick_from(tmp_path):

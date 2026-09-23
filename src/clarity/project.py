@@ -425,10 +425,11 @@ class Project:
     def pick_repos(self, wanted: list[str]) -> list[str]:
         """The listed repos `wanted` names, in list order.
 
-        Each name is a listed path, a folder name, or a prefix of exactly one folder
-        name — folder names are unique, so that is never ambiguous. Nothing looser
-        picks: a fuzzy guess that is wrong would branch the wrong repo, silently.
-        Close matches only ever appear in the refusal.
+        Each name is a listed path or a folder name, exactly — folder names are
+        unique, so that is never ambiguous. Nothing looser picks: a prefix that is
+        unique today stops being the repo you meant once that repo leaves the list,
+        and then it branches a different one without a word. Close matches only
+        ever appear in the refusal.
         """
         listed = self.worklog.repos
         if not listed:
@@ -449,14 +450,6 @@ class Project:
             if rel in listed:
                 picked.add(rel)
                 continue
-            prefixed = [r for n, r in names.items() if n.startswith(name)] if name else []
-            if len(prefixed) == 1:
-                picked.add(prefixed[0])
-                continue
-            if prefixed:
-                raise ClarityError(
-                    f"{raw!r} could be any of: {', '.join(prefixed)} — say more of it",
-                    code=4)
             close = difflib.get_close_matches(name, [*names, *listed], n=3)
             hint = f" — did you mean {' or '.join(close)}?" if close else ""
             raise ClarityError(

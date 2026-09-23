@@ -139,8 +139,8 @@ def _id_arg(node, what: str = "the epoch"):
 def _repo_arg(parser) -> None:
     parser.add_argument(
         "--repo", action="append", metavar="<name>", dest="repos",
-        help="branch only this listed repo — its path, folder name, or a unique "
-             "prefix of it; repeat for more. Default: every listed repo. On an "
+        help="branch only this listed repo — its path or folder name, exactly; "
+             "repeat for more. Default: every listed repo. On an "
              "epoch already in flight, adds the repo on the same branch")
 
 

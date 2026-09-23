@@ -82,8 +82,8 @@ later nobody knows which change came from which attempt.
 An **idea** is one line in the worklog, so writing one down costs nothing. An **epoch**
 is an idea you've started. `epoch start` gives it a folder and a branch `epoch/NNN-slug`
 in every listed repo, checked out as a worktree inside that folder. `--repo` narrows
-that to the repos the work touches (`--repo agent --repo harness`; a unique prefix of
-the folder name will do), and a later `epoch start 7 --repo other` adds one mid-flight.
+that to the repos the work touches (`--repo agent --repo harness`, by folder name),
+and a later `epoch start 7 --repo other` adds one mid-flight.
 
 ```
 idea ──start──► active ──close──► done
