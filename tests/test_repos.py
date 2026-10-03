@@ -332,3 +332,19 @@ def test_refresh_json_says_what_came_in(tmp_path, monkeypatch, capsys):
     data = json.loads(capsys.readouterr().out)["data"]
     assert data["merged"] == [{"repo": "workspace/agent", "base": "main", "commits": 1}]
     assert data["up_to_date"] == [{"repo": "workspace/harness", "base": "main"}]
+
+
+def test_show_item_reports_each_repos_git_state(tmp_path):
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+    item, _ = project.start(project.add("x", status="planned").id)
+    git(["commit", "-q", "--allow-empty", "-m", "later"], root / "workspace" / "agent")
+    (root / item.folder / "wt" / "harness" / "wip.py").write_text("w = 1\n")
+
+    state = {g["repo"]: g for g in Project.find(root).query("item", str(item.id))["git"]}
+    agent, harness = state["workspace/agent"], state["workspace/harness"]
+    assert agent["base"] == "main" and agent["behind"] == 1 and agent["dirty"] == 0
+    assert agent["worktree"].endswith("wt/agent") and not agent["shared"]
+    assert harness["dirty"] == 1 and harness["checkout"] == "main"

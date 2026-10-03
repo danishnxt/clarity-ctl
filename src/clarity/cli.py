@@ -512,11 +512,18 @@ def _show_item_text(data: dict) -> str:
                 "created", "started", "ended"):
         if data.get(key):
             lines.append(f"     {key.replace('_', ' '):<10} {data[key]}")
-    bases = data.get("bases") or {}
-    for repo in data.get("repos") or []:
-        lines.append(f"     {'repo':<10} {repo}" + (f" (base {bases[repo]})" if repo in bases else ""))
-    if "." in bases:
-        lines.append(f"     {'base':<10} {bases['.']}")
+    for git in data.get("git") or []:
+        facts = [f"base {git['base']}" if git.get("base") else "no base"]
+        if git.get("behind") or git.get("ahead"):
+            facts.append(f"{git.get('ahead', 0)} ahead, {git.get('behind', 0)} behind")
+        if git.get("dirty"):
+            facts.append(f"{git['dirty']} uncommitted")
+        if git.get("shared"):
+            facts.append("shares the main checkout")
+        lines.append(f"     {'repo':<10} {git['repo']} — {', '.join(facts)}")
+    if not data.get("git"):
+        for repo in data.get("repos") or []:
+            lines.append(f"     {'repo':<10} {repo}")
     held = data.get("lease")
     if held:
         lines.append(f"     {'lease':<10} {held.get('owner', '?')}@{held.get('host', '?')}, "
@@ -592,8 +599,10 @@ def run(args) -> int:
         emit(args, "install", _install_data(done, "local"), _install_text(done, "local"))
 
     elif args.command == "status":
-        emit(args, "status", project.query("all" if args.all else "current"),
-             project.status_text(show_all=args.all))
+        data = project.query("all" if args.all else "current")
+        # the ⚠ lines status prints about bases, as data — keyed by id, like leases
+        data["stale"] = project.stale_map()
+        emit(args, "status", data, project.status_text(show_all=args.all))
 
     elif args.command in ("show", "q"):
         name = args.name

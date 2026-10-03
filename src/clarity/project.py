@@ -990,6 +990,9 @@ class Project:
                 plans = self._plans(folder)
                 if plans:
                     data["plans"] = plans
+                git = self.git_state(item, folder)
+                if git:
+                    data["git"] = git
             return data
         if name == "objective":
             return self.worklog.objectives.to_dict()
@@ -1001,6 +1004,35 @@ class Project:
                 code=4,
             )
         return {"items": [i.to_dict() for i in self.worklog.with_status(views[name])]}
+
+    def git_state(self, item: Item, folder: Path) -> list[dict]:
+        """Per repo, what an agent would otherwise shell out to git for: where the
+        worktree is, whether it is its own or a link to the repo's main checkout
+        (`shared` — edits there land in that checkout), what the branch follows, how
+        far it sits from it, and how much is uncommitted. Live, never stored."""
+        if not item.branch:
+            return []
+        out = []
+        for repo, link in self._targets(item, folder):
+            base = self.base_of(item, repo)
+            entry: dict = {
+                "repo": self._repo_key(repo),
+                "worktree": str(link),
+                "exists": link.exists(),
+                "shared": link.is_symlink(),
+                "base": base,
+                "checkout": gitops.current_branch(repo),
+            }
+            if base and base != item.branch and gitops.branch_exists(repo, item.branch):
+                try:
+                    entry["ahead"], entry["behind"] = gitops.ahead_behind(
+                        repo, item.branch, base)
+                except ClarityError:
+                    pass
+            if entry["exists"]:
+                entry["dirty"] = len(gitops.is_dirty(link))
+            out.append(entry)
+        return out
 
     def branches_root(self) -> bool:
         """The root is a repo, and one of code rather than clarity's state."""
