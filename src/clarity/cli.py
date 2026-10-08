@@ -560,12 +560,11 @@ def run(args) -> int:
 
     project = Project.find()
     action = getattr(args, "action", None)
-    # A worklog from a newer clarity-ctl still reads; every write refuses on its own.
+    # A worklog from a newer clarity-ctl still reads; every write refuses on its own,
+    # and main prints this after a read only, so a refusal does not say it twice.
     warning = project.worklog.newer_warning()
     if warning:
         args.worklog_warnings = [warning]
-        if not getattr(args, "json", False):
-            print(f"warning: {warning}", file=sys.stderr)
 
     if args.command == "install":
         done = project.install_agents(remove=args.remove)
@@ -718,7 +717,11 @@ def run(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return run(args)
+        code = run(args)
+        if not getattr(args, "json", False):
+            for warning in getattr(args, "worklog_warnings", []):
+                print(f"warning: {warning}", file=sys.stderr)
+        return code
     except ClarityError as err:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(err), "code": err.code,
