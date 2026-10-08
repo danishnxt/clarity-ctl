@@ -19,7 +19,15 @@ CONFIG = "config.yaml"
 
 
 class ClarityError(Exception):
-    """Refused or invalid — carries the exit code the CLI should use."""
+    """Refused or invalid — carries the exit code the CLI should use.
+
+    For a new error, pick by what the caller should do next:
+      2  the input is wrong — a bad id, type, view or missing text. Fix the command.
+      4  the input is fine but the project's state says no — already closed, lease
+         held, newer worklog. Look at `status` before retrying.
+      3  not a clarity project. 1 only for what fits neither.
+    Older errors still use 4 for some input mistakes; they are left as they are.
+    """
 
     def __init__(self, message: str, code: int = 1):
         super().__init__(message)
