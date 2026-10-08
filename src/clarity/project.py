@@ -499,14 +499,16 @@ class Project:
 
     def start(self, item_id: int, branch: str | None = None,
               take_lease: bool = True, reopen: bool = False,
-              repos: list[str] | None = None) -> tuple[Item, list[str]]:
-        """planned -> active: resolve a branch to a worktree or a symlink, then lease it.
+              repos: list[str] | None = None,
+              no_repos: bool = False) -> tuple[Item, list[str]]:
+        """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
 
         A closed epoch needs `reopen`, so picking work back up is deliberate rather
         than a typo that quietly reanimates something you finished last month.
 
         `repos` narrows which listed repos a new epoch branches; left out, it gets
-        all of them. A reopen takes back the repos the epoch had — adding one is
+        all of them. `no_repos` branches none — a folder and a lease, for planning or
+        analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
         add_repos, so no command does two jobs depending on the epoch's state.
         """
         warnings: list[str] = []
@@ -532,6 +534,10 @@ class Project:
                     "a reopen takes back the repos the epoch had — add one after with:\n"
                     f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
             chosen = self.pick_repos(repos) if repos else None
+            if no_repos and self.branches_root():
+                raise ClarityError(
+                    "this project branches its root, not a list of repos — there would be "
+                    "nothing to add later. Start it without --no-repos", code=4)
             if closed:
                 # the outcome was true when it was written; keep it in the trail
                 if item.outcome:
@@ -545,7 +551,9 @@ class Project:
             # refused lease leaves no half-started epoch and no worktree we may not use.
             if take_lease:
                 lease.claim(folder, label=item.name)
-            if item.repos is None and item.branch is None and self.worklog.repos:
+            if no_repos and item.repos is None and item.branch is None:
+                item.repos = []
+            elif item.repos is None and item.branch is None and self.worklog.repos:
                 # first time this epoch touches git: the repos asked for, else the
                 # project's whole list as it is now
                 item.repos = chosen or list(self.worklog.repos)

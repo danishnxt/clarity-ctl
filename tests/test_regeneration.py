@@ -43,7 +43,7 @@ def test_a_write_renders_only_the_epoch_that_changed(tmp_path, monkeypatch):
     Project.create(root, name="proj")
     project = Project.find(root)
     for n in range(5):
-        project.add(f"epoch {n}", status="planned")
+        project.start(project.add(f"epoch {n}").id)
 
     touched = writes_during(monkeypatch, lambda: project.note(2, "only this one"))
     assert touched.count("EPOCH.md") == 1
@@ -55,7 +55,7 @@ def test_no_status_file_is_written(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    project.add("something", status="planned")
+    project.add("something")
     assert not (root / "STATUS.md").exists()
     assert "something" in project.status_text(show_all=True)
 
@@ -65,7 +65,8 @@ def test_claiming_leaves_nothing_to_go_stale(tmp_path, monkeypatch):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("work", status="planned")
+    item, _ = project.start(project.add("work").id)
+    project.release(item.id)
 
     touched = writes_during(monkeypatch, lambda: project.claim(item.id))
     assert touched == []
@@ -77,8 +78,8 @@ def test_an_unchanged_render_does_not_touch_the_file(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("work", status="planned")
-    path = root / project.worklog.by_id(item.id).folder / "EPOCH.md"
+    item, _ = project.start(project.add("work").id)
+    path = root / item.folder / "EPOCH.md"
 
     before = path.stat().st_mtime_ns
     project.render_views()  # full rebuild, nothing changed
@@ -90,7 +91,7 @@ def test_close_records_the_epochs_own_sha(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("work", status="planned")
+    item = project.add("work")
     project.start(item.id)
 
     worktree = root / project.worklog.by_id(item.id).folder / "wt" / root.name
@@ -126,7 +127,7 @@ def test_claim_prints_without_crashing(tmp_path, monkeypatch, capsys):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("work", status="planned")
+    item, _ = project.start(project.add("work").id)
     monkeypatch.chdir(root)
 
     assert main(["claim", str(item.id)]) == 0
@@ -138,8 +139,8 @@ def test_plans_are_listed_when_asked_not_cached(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("work", status="planned")
-    folder = root / project.worklog.by_id(item.id).folder
+    item, _ = project.start(project.add("work").id)
+    folder = root / item.folder
 
     (folder / "PLANS" / "late.md").write_text("# dropped in by hand\n")
     assert project.query("item", str(item.id))["plans"] == ["late.md"]
@@ -152,7 +153,7 @@ def test_status_json_shows_what_status_prints(tmp_path):
     Project.create(root, name="proj")
     project = Project.find(root)
     idea = project.add("something later")
-    started = project.add("in progress", status="planned")
+    started = project.add("in progress")
     project.start(started.id)
 
     ids = {i["id"] for i in project.query("current")["items"]}
@@ -164,7 +165,7 @@ def test_rebranching_an_attached_epoch_is_refused(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("work", status="planned")
+    item = project.add("work")
     project.start(item.id)
     was = project.worklog.by_id(item.id).branch
 
@@ -180,15 +181,14 @@ def test_every_status_is_reachable(tmp_path):
     Project.create(root, name="proj")
     project = Project.find(root)
 
-    reached = {"idea"}
-    reached.add(project.add("planned one", status="planned").status)
-    started = project.add("active one", status="planned")
+    reached = {project.add("an idea").status}
+    started = project.add("active one")
     reached.add(project.start(started.id)[0].status)
     reached.add(project.block(started.id, "waiting").status)
-    done = project.add("done one", status="planned")
+    done = project.add("done one")
     project.start(done.id)
     reached.add(project.close(done.id, "shipped").status)
-    dropped = project.add("dropped one", status="planned")
+    dropped = project.add("dropped one")
     project.start(dropped.id)
     reached.add(project.close(dropped.id, "gave up", dropped=True).status)
 

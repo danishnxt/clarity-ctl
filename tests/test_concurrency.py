@@ -20,8 +20,8 @@ from test_lifecycle import make_repo  # noqa: E402
 
 def two_epochs(root: Path) -> tuple[Project, list[int]]:
     project = Project.find(root)
-    first = project.add("cache warmup", type_="experiment", status="planned")
-    second = project.add("lto build", type_="experiment", status="planned")
+    first = project.add("cache warmup", type_="experiment")
+    second = project.add("lto build", type_="experiment")
     project.start(first.id)
     project.start(second.id)
     return Project.find(root), [first.id, second.id]
@@ -52,7 +52,7 @@ def test_lease_refuses_a_second_holder(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item, _ = project.start(project.add("cache warmup").id)
     folder = root / item.folder
 
     # someone else's live lease
@@ -76,7 +76,7 @@ def test_an_old_lease_still_stands(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item, _ = project.start(project.add("cache warmup").id)
     folder = root / item.folder
 
     lease.path_for(folder).write_text(yaml.safe_dump({
@@ -98,8 +98,7 @@ def test_close_releases_the_lease(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
     assert lease.read(root / item.folder) is not None
 
     project.close(item.id, outcome="done with it")
@@ -136,7 +135,7 @@ def test_one_active_epoch_is_still_not_a_default(tmp_path, monkeypatch):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item = project.add("cache warmup")
     project.start(item.id)
 
     monkeypatch.chdir(root)
@@ -151,7 +150,7 @@ def test_our_own_lease_is_not_a_refusal(tmp_path, monkeypatch):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item, _ = project.start(project.add("cache warmup").id)
     folder = root / item.folder
 
     project.claim(item.id)                       # one command claims it
@@ -170,7 +169,7 @@ def test_find_skips_a_worktree_copy_of_the_state(tmp_path, monkeypatch):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item = project.add("cache warmup")
     project.start(item.id)
 
     worktree = root / project.worklog.by_id(item.id).folder / "wt" / root.name
@@ -189,8 +188,11 @@ def test_a_refused_lease_leaves_nothing_half_started(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    folder = root / item.folder
+    # an idea that already has a folder — one that was `planned` before worklog v2
+    item = project.add("cache warmup")
+    with project._write():
+        project._make_folder(project.worklog.by_id(item.id))
+    folder = root / Project.find(root).worklog.by_id(item.id).folder
 
     lease.path_for(folder).write_text(yaml.safe_dump({
         "owner": "someone", "host": "otherbox",
@@ -202,6 +204,6 @@ def test_a_refused_lease_leaves_nothing_half_started(tmp_path):
     assert err.value.code == 4
 
     fresh = Project.find(root).worklog.by_id(item.id)
-    assert fresh.status == "planned"          # not active
+    assert fresh.status == "idea"             # not active
     assert fresh.started is None
     assert not (folder / "wt").exists()       # and no worktree it may not use

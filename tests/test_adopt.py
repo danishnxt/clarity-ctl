@@ -70,7 +70,7 @@ def test_adopt_makes_a_non_repo_root_a_repo_for_clarity_only(tmp_path):
 
     project = Project.find(root)
     assert project.worklog.state_repo
-    epoch = project.add("first", status="planned")
+    epoch = project.add("first")
     started, _ = project.start(epoch.id)
     assert started.branch is None  # nothing listed, and the root is state
     assert not (root / started.folder / "wt").exists()
@@ -98,7 +98,7 @@ def test_adopt_moves_a_code_repo_aside_whole(tmp_path):
     assert subprocess.run(["git", "ls-files"], cwd=str(root),
                           capture_output=True, text=True).stdout == ""
 
-    epoch = project.add("first", status="planned")
+    epoch = project.add("first")
     started, _ = project.start(epoch.id)
     assert (root / started.folder / "wt" / "proj" / "src" / "main.py").exists()
 
@@ -217,11 +217,10 @@ def test_adoption_does_not_inventory_in_flight_work():
 
 def test_the_baseline_epoch_is_created_closed():
     """The one item adoption creates describes work already done, so it starts done."""
-    assert "clarity-ctl epoch new" in adopt.ADOPT_MD
-    assert "clarity-ctl epoch close" in adopt.ADOPT_MD
+    assert "clarity-ctl epoch start <id> --no-repos" in adopt.ADOPT_MD
+    start_at = adopt.ADOPT_MD.index("clarity-ctl epoch start <id> --no-repos")
     close_at = adopt.ADOPT_MD.index("clarity-ctl epoch close")
-    new_at = adopt.ADOPT_MD.index("clarity-ctl epoch new")
-    assert new_at < close_at, "close must follow new — the epoch is never left in flight"
+    assert start_at < close_at, "close must follow start — the epoch is never left active"
     assert "Do not create an empty epoch" in adopt.ADOPT_MD
 
 

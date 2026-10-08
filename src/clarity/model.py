@@ -5,20 +5,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-STATUSES = ["idea", "planned", "active", "blocked", "done", "dropped"]
+STATUSES = ["idea", "active", "blocked", "done", "dropped"]
 TYPES = ["feature", "fix", "improvement", "experiment", "chore"]
 
-OPEN = {"idea", "planned", "active", "blocked"}
+OPEN = {"idea", "active", "blocked"}
 IN_FLIGHT = {"active", "blocked"}
-FUTURE = {"idea", "planned"}
+FUTURE = {"idea"}
 # Every closed state. There is no third: `dropped` is what `close --drop` sets. It was
 # stored as `abandoned` while printing as DROPPED — two words for one state, until
 # worklog version 2. An `archived` status existed for a while with nothing to reach
 # it, which made the vocabulary bigger than the behaviour.
 CLOSED = {"done", "dropped"}
 
-# A folder on disk is required from `planned` onwards.
-NEEDS_FOLDER = {"planned", "active", "blocked", "done", "dropped"}
+# A folder on disk is required once an epoch starts. There used to be a `planned`
+# status for a folder without a branch; `epoch start --no-repos` is that now, and
+# an idea that was planned reads as an idea that keeps its folder.
+NEEDS_FOLDER = {"active", "blocked", "done", "dropped"}
 
 def today() -> str:
     return date.today().isoformat()

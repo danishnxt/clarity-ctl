@@ -143,7 +143,7 @@ def test_a_write_leaves_a_removed_block_removed(tmp_path):
 def test_close_drop_records_dropped(tmp_path, monkeypatch):
     root = _project(tmp_path)
     project = Project.find(root)
-    item = project.add("try it", status="planned")
+    item = project.add("try it")
     project.start(item.id)
     monkeypatch.chdir(root)
 
@@ -178,3 +178,66 @@ def test_a_typo_with_json_gets_an_envelope_not_usage_text(tmp_path, monkeypatch,
     failed = json.loads(capsys.readouterr().out)
     assert failed["ok"] is False and failed["code"] == 2 and failed["command"] == "show"
     assert "--bogus" in failed["error"]
+
+
+# `planned` is gone: --no-repos is a folder without a branch now.
+
+
+def test_a_version_1_planned_item_reads_as_an_idea_that_keeps_its_folder(tmp_path):
+    root, project = _workspace(tmp_path)
+    item = project.add("was planned")
+    folder = project.start(item.id, no_repos=True)[0].folder
+
+    def to_v1_planned(raw):
+        raw["version"] = 1
+        entry = raw["items"][0]
+        entry["status"] = "planned"
+        for key in ("started", "repos"):
+            entry.pop(key, None)
+    _rewrite(root, to_v1_planned)
+    (root / folder / ".lease").unlink(missing_ok=True)
+
+    project = Project.find(root)
+    assert project.worklog.by_id(item.id).status == "idea"
+    started, _ = project.start(item.id)
+    assert started.folder == folder                # the planned folder, picked back up
+
+
+def _workspace(tmp_path) -> tuple[Path, Project]:
+    from test_repos import make_workspace
+    root = make_workspace(tmp_path)
+    project = Project.find(root)
+    for name in ("agent", "harness"):
+        project.repo_add(str(root / "workspace" / name))
+    return root, project
+
+
+def test_no_repos_starts_a_folder_and_add_repo_brings_code_in_later(tmp_path):
+    root, project = _workspace(tmp_path)
+    item, _ = project.start(project.add("plan the rewrite").id, no_repos=True)
+
+    assert item.status == "active" and item.branch is None and item.repos == []
+    assert (root / item.folder).is_dir()
+    assert not (root / item.folder / "wt").exists() or not any((root / item.folder / "wt").iterdir())
+
+    item, added, _ = Project.find(root).add_repos(item.id, ["agent"])
+    assert added == ["workspace/agent"] and item.branch
+    assert (root / item.folder / "wt" / "agent").is_dir()
+    assert not (root / item.folder / "wt" / "harness").exists()
+
+
+def test_no_repos_closes_cleanly(tmp_path):
+    root, project = _workspace(tmp_path)
+    item, _ = project.start(project.add("just analysis").id, no_repos=True)
+    assert Project.find(root).close(item.id, "wrote it up").status == "done"
+
+
+def test_no_repos_with_repo_or_branch_is_an_argument_mistake(tmp_path, monkeypatch):
+    root, project = _workspace(tmp_path)
+    item = project.add("x")
+    monkeypatch.chdir(root)
+
+    with pytest.raises(SystemExit) as stop:
+        main(["epoch", "start", str(item.id), "--no-repos", "--repo", "agent"])
+    assert stop.value.code == 2
+    assert main(["epoch", "start", str(item.id), "--no-repos", "--branch", "b"]) == 2

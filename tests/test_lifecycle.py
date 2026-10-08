@@ -85,14 +85,14 @@ def test_only_work_in_flight_can_be_blocked(tmp_path):
     assert err.value.code == 4 and "epoch start" in str(err.value)
     assert project.worklog.by_id(idea.id).status == "idea"
 
-    done = project.add("shipped", status="planned")
+    done = project.add("shipped")
     project.start(done.id, branch="main")
     project.close(done.id, "done")
     with pytest.raises(ClarityError):
         project.block(done.id, "waiting")
     assert project.worklog.by_id(done.id).status == "done"
 
-    live = project.add("live", status="planned")
+    live = project.add("live")
     project.start(live.id, branch="main")
     project.block(live.id, "waiting upstream")
     project.block(live.id, "waiting on review")  # a second block just updates the reason
@@ -105,7 +105,7 @@ def test_existing_branch_is_symlinked(tmp_path):
     Project.create(root, name="proj")
     project = Project.find(root)
 
-    item = project.add("bench baseline", type_="experiment", status="planned")
+    item = project.add("bench baseline", type_="experiment")
     project.start(item.id, branch="main")  # main is checked out at the root
 
     link = root / project.worklog.by_id(item.id).folder / "wt" / root.name
@@ -117,9 +117,9 @@ def test_human_notes_survive_regeneration(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("write docs", status="planned")
+    item, _ = project.start(project.add("write docs").id)
 
-    epoch_md = root / project.worklog.by_id(item.id).folder / "EPOCH.md"
+    epoch_md = root / item.folder / "EPOCH.md"
     epoch_md.write_text(epoch_md.read_text() + "my own scratch notes\n")
 
     project.note(item.id, "started drafting")
@@ -154,9 +154,9 @@ def test_plans_live_in_the_epoch_and_are_listed(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item, _ = project.start(project.add("cache warmup").id)
 
-    folder = root / project.worklog.by_id(item.id).folder
+    folder = root / item.folder
     assert (folder / "PLANS").is_dir()
 
     (folder / "PLANS" / "approach.md").write_text("# how we'll do it\n")
@@ -173,8 +173,7 @@ def test_reopen_returns_a_closed_epoch_to_active(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
     project.close(item.id, outcome="2x slower, dropped")
 
     try:
@@ -196,8 +195,7 @@ def test_reopen_warns_when_the_branch_is_behind(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
     project.close(item.id, outcome="parked")
 
     # main moves on while the epoch is closed
@@ -213,8 +211,7 @@ def test_refresh_catches_the_branch_up_without_losing_commits(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
 
     # the epoch commits something of its own, then main moves on underneath it
     worktree = project.folder_of(item) / "wt" / root.name
@@ -239,7 +236,7 @@ def test_refresh_follows_the_base_recorded_at_start(tmp_path):
     git(["checkout", "-qb", "dev"], root)  # the work lives on a long-running branch
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
+    item = project.add("cache warmup")
     item, _ = project.start(item.id)
     assert item.bases == {".": "dev"}
     worktree = project.folder_of(item) / "wt" / root.name
@@ -274,8 +271,7 @@ def test_refresh_refuses_a_dirty_worktree(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
     (root / "later.txt").write_text("more\n")
     git(["add", "-A"], root)
     git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "later"], root)
@@ -294,8 +290,8 @@ def test_closed_seq_orders_same_day_closes(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    first = project.add("first", status="planned")
-    second = project.add("second", status="planned")
+    first = project.add("first")
+    second = project.add("second")
     project.start(first.id)
     project.start(second.id)
 
@@ -317,8 +313,8 @@ def test_reclosing_after_reopen_takes_a_fresh_seq(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    old = project.add("old", status="planned")
-    recent = project.add("recent", status="planned")
+    old = project.add("old")
+    recent = project.add("recent")
     project.start(old.id)
     project.close(old.id, outcome="done once")
     project.start(recent.id)
@@ -337,8 +333,7 @@ def test_a_non_conflict_git_failure_is_not_called_a_conflict(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
     worktree = project.folder_of(item) / "wt" / root.name
 
     from clarity import gitops
@@ -361,7 +356,7 @@ def test_a_note_records_the_time_not_just_the_day(tmp_path):
 
     root = make_repo(tmp_path)
     project = Project.create(root)
-    item = project.add("a thing", status="planned")
+    item = project.add("a thing")
     project.note(item.id, "tried the obvious thing")
 
     at = Project.find(root).worklog.by_id(item.id).notes[0].at
@@ -428,8 +423,7 @@ def test_rename_changes_the_name_and_nothing_it_points_at(tmp_path):
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item = project.add("cache warmup", status="planned")
-    project.start(item.id)
+    item, _ = project.start(project.add("cache warmup").id)
     before = project.worklog.by_id(item.id)
     folder, branch = before.folder, before.branch
 

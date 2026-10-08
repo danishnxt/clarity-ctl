@@ -35,7 +35,6 @@ EPOCH_MARK_END = "<!-- /GENERATED — write your own notes below this line -->"
 
 _LABEL = {
     "idea": "IDEA",
-    "planned": "PLANNED",
     "active": "EPOCH",
     "blocked": "BLOCKED",
     "done": "DONE",
@@ -46,7 +45,6 @@ _LABEL = {
 # push the id column out of true, differently per font.
 _GLYPH = {
     "idea": "·",
-    "planned": "○",
     "active": "▸",
     "blocked": "⏸",
     "done": "✓",

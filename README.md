@@ -84,7 +84,9 @@ is an idea you've started. `epoch start` gives it a folder and a branch `epoch/N
 in every listed repo, checked out as a worktree inside that folder. `--repo` narrows
 that to the repos the work touches (`--repo agent --repo harness`, by folder name),
 and `epoch add-repo 7 other` adds one mid-flight; `epoch drop-repo 7 other` removes
-its worktree and keeps its branch.
+its worktree and keeps its branch. Just planning, or analysis with no code expected
+yet? `epoch start 7 --no-repos` gives it the folder and branches nothing until you
+`add-repo`.
 
 ```
 idea ──start──► active ──close──► done

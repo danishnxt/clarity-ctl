@@ -25,7 +25,7 @@ VERSION = "0.1.0"
 EPILOG = """examples:
   clarity-ctl init --objective "Compare parser A and B"   set up here, answer two questions
   clarity-ctl idea add "flaky test on macOS" --type fix   capture it, no folder yet
-  clarity-ctl epoch start 3                               idea or planned -> active
+  clarity-ctl epoch start 3                               idea -> active
   clarity-ctl note 3 "ring buffer was 2x slower"          record what you tried
   clarity-ctl epoch close 3 "bumped timeout"              -> done
   clarity-ctl show active --json                          what an agent calls
@@ -224,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
                    "  active     epochs started and not closed, blocked ones included\n"
-                   "  next       ideas and planned epochs, not started\n"
+                   "  next       ideas, not started\n"
                    "  closed     done and dropped\n"
                    "  all        everything\n"
                    "  objective  what the project is for\n"
@@ -286,7 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
                             help="where this came from, for an item you did not think "
                                  "up yourself — a branch, a file and line, a PR")
 
-    _leaf(idea, "list", "show ideas and anything planned but not started", into=idea_rows)
+    _leaf(idea, "list", "show the ideas not started yet", into=idea_rows)
 
     # ---- epochs ----
     epoch_rows: list = []
@@ -294,25 +294,23 @@ def build_parser() -> argparse.ArgumentParser:
                     section=work)
     epoch = p_epoch.add_subparsers(dest="action", required=True, metavar="<action>")
 
-    p_new = _leaf(epoch, "new", "set one up without starting it — skips the idea stage",
-                  into=epoch_rows)
-    p_new.add_argument("text", metavar="<text>", help="what the work is, in one line")
-    p_new.add_argument("--type", default="feature", choices=TYPES,
-                       help="kind of work (default: feature)")
-    p_new.add_argument("--evidence",
-                       help="where this came from, for an item you did not think "
-                            "up yourself — a branch, a file and line, a PR")
-
     p_start = _leaf(epoch, "start", "begin work: branch, worktree and lease", into=epoch_rows,
                     description=
-                    "Takes an idea or a planned item straight to active. Creates "
+                    "Takes an idea straight to active. Creates "
                     "epoch/NNN-slug unless --branch names one; if that branch is already "
                     "checked out somewhere, wt/ symlinks to it instead of adding a worktree. "
                     "Every listed repo is branched unless --repo picks some; to add one "
-                    "later, use epoch add-repo.")
+                    "later, use epoch add-repo.\n\n"
+                    "Just planning, or analysis with no code expected yet? --no-repos "
+                    "gives the epoch its folder and lease and branches nothing; "
+                    "epoch add-repo brings repos in when the code starts.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
-    _repo_arg(p_start)
+    which = p_start.add_mutually_exclusive_group()
+    _repo_arg(which)
+    which.add_argument("--no-repos", action="store_true",
+                       help="branch nothing yet — for planning or analysis; "
+                            "add repos later with epoch add-repo")
 
     p_block = _leaf(epoch, "block", "park it, recording what you're waiting on",
                     into=epoch_rows)
@@ -536,6 +534,9 @@ def _started_text(item, verb: str, warnings: list[str]) -> str:
     lines = [f"epoch {item.id} {verb} on {item.branch or 'no branch'} — {item.folder}"]
     if item.branch:
         lines.append(_repos_line(item))
+    elif item.repos == []:
+        lines.append(f"  no repos yet — when code starts: "
+                     f"clarity-ctl epoch add-repo {item.id} <repo>")
     lines += [f"warning: {w}" for w in warnings]
     return "\n".join(lines)
 
@@ -641,20 +642,17 @@ def run(args) -> int:
                  f"  start it with: clarity-ctl epoch start {item.id}")
         else:
             human = "\n".join(
-                _item_line(i) for i in project.worklog.with_status({"idea", "planned"})
+                _item_line(i) for i in project.worklog.with_status({"idea"})
             ) or "no ideas yet — clarity-ctl idea add \"...\""
             emit(args, "idea.list", project.query("next"), human)
 
     elif args.command == "epoch":
-        if action == "new":
-            item = project.add(args.text, type_=args.type, status="planned",
-                               evidence=args.evidence)
-            emit(args, "epoch.new", item.to_dict(),
-                 f"epoch {item.id} — {item.folder}\n"
-                 f"  begin work with: clarity-ctl epoch start {item.id}")
-        elif action == "start":
+        if action == "start":
+            if args.no_repos and args.branch:
+                raise ClarityError("--branch names the branch to make, and --no-repos "
+                                   "makes none — pass one", code=2)
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
-                                           repos=args.repos)
+                                           repos=args.repos, no_repos=args.no_repos)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:

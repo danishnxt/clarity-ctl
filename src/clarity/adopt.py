@@ -247,7 +247,8 @@ list` shows it. Nothing more to add unless another repo went to `workspace/`.
 If pass two found anything, give it an epoch of its own. It is created and
 immediately closed, because it describes work that already happened:
 
-    clarity-ctl epoch new "baseline: work before clarity" --type chore
+    clarity-ctl idea add "baseline: work before clarity" --type chore
+    clarity-ctl epoch start <id> --no-repos
     clarity-ctl epoch close <id> "existing logs and results, moved in at adoption"
 
 `clarity-ctl path <id>` prints its folder. Put the records under its `LOGS/`, and

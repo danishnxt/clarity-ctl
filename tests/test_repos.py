@@ -45,7 +45,7 @@ def test_listed_repos_each_get_the_branch_and_the_root_is_left_alone(tmp_path):
     project.repo_add(str(root / "workspace" / "agent"))
     project.repo_add(str(root / "workspace" / "harness"))
 
-    item = project.add("teach the agent to bisect", status="planned")
+    item = project.add("teach the agent to bisect")
     item, _ = project.start(item.id)
     folder = root / item.folder
 
@@ -76,15 +76,15 @@ def test_a_start_that_fails_partway_leaves_nothing_behind(tmp_path):
     project.repo_add(str(root / "workspace" / "agent"))
     project.repo_add(str(root / "workspace" / "harness"))
 
-    item = project.add("half a start", status="planned")
+    item = project.add("half a start")
     with pytest.raises(ClarityError):
         project.start(item.id)
 
     after = Project.find(root).worklog.by_id(item.id)
-    assert after.status == "planned" and after.branch is None and after.repos is None
+    assert after.status == "idea" and after.branch is None and after.repos is None
     branch = f"epoch/{item.id:03d}-{item.slug}"
     assert not gitops.branch_exists(root / "workspace" / "agent", branch)
-    assert not (root / item.folder / "wt" / "agent").exists()
+    assert not list((root / "EPOCHS").glob("*/wt/agent"))
 
 
 def test_refresh_catches_up_every_repo(tmp_path):
@@ -92,7 +92,7 @@ def test_refresh_catches_up_every_repo(tmp_path):
     project = Project.find(root)
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
-    item, _ = project.start(project.add("x", status="planned").id)
+    item, _ = project.start(project.add("x").id)
 
     for name in ("agent", "harness"):
         repo = root / "workspace" / name
@@ -133,7 +133,7 @@ def test_a_single_repo_worklog_does_not_grow_a_repos_key(tmp_path):
     make_checkout(root)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item, _ = project.start(project.add("x", status="planned").id)
+    item, _ = project.start(project.add("x").id)
     assert item.repos is None
     assert "repos" not in load_yaml(root / "worklog.yaml")
     assert (root / item.folder / "wt" / "proj").is_dir()
@@ -145,7 +145,7 @@ def test_reopen_after_rename_finds_the_branch_it_had(tmp_path):
     make_checkout(root)
     Project.create(root, name="proj")
     project = Project.find(root)
-    item, _ = project.start(project.add("cache warmup", status="planned").id)
+    item, _ = project.start(project.add("cache warmup").id)
     branch = item.branch
     Project.find(root).close(item.id, outcome="done")
     Project.find(root).rename(item.id, "cache warmup and eviction")
@@ -161,7 +161,7 @@ def test_repo_picks_which_repos_an_epoch_branches(tmp_path):
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
 
-    item, _ = project.start(project.add("x", status="planned").id, repos=["harness"])
+    item, _ = project.start(project.add("x").id, repos=["harness"])
     assert item.repos == ["workspace/harness"]
     assert (root / item.folder / "wt" / "harness").is_dir()
     assert not (root / item.folder / "wt" / "agent").exists()
@@ -194,11 +194,11 @@ def test_repo_refuses_what_it_cannot_pin_down(tmp_path):
             project.pick_repos(bad)
         assert err.value.code == 4 and says in str(err.value)
 
-    item = project.add("x", status="planned")
+    item = project.add("x")
     with pytest.raises(ClarityError):
         project.start(item.id, repos=["nope"])
     after = Project.find(root).worklog.by_id(item.id)
-    assert after.status == "planned" and after.repos is None
+    assert after.status == "idea" and after.repos is None
 
 
 def test_repo_never_picks_by_prefix(tmp_path):
@@ -236,7 +236,7 @@ def test_repo_needs_a_list_to_pick_from(tmp_path):
     Project.create(root, name="proj")
     project = Project.find(root)
     with pytest.raises(ClarityError) as err:
-        project.start(project.add("x", status="planned").id, repos=["proj"])
+        project.start(project.add("x").id, repos=["proj"])
     assert "no repos listed" in str(err.value)
 
 
@@ -247,7 +247,7 @@ def test_start_does_one_job(tmp_path):
     project = Project.find(root)
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
-    item, _ = project.start(project.add("x", status="planned").id, repos=["agent"])
+    item, _ = project.start(project.add("x").id, repos=["agent"])
 
     for kwargs, says in (({}, "add-repo"), ({"repos": ["harness"]}, "add-repo")):
         with pytest.raises(ClarityError) as err:
@@ -272,7 +272,7 @@ def test_drop_repo_keeps_the_branch_and_refuses_what_would_lose_work(tmp_path):
     project = Project.find(root)
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
-    item, _ = project.start(project.add("x", status="planned").id)
+    item, _ = project.start(project.add("x").id)
     wt = root / item.folder / "wt"
 
     (wt / "harness" / "wip.py").write_text("w = 1\n")
@@ -302,7 +302,7 @@ def test_refresh_base_can_be_set_for_one_repo(tmp_path):
     project = Project.find(root)
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
-    item, _ = project.start(project.add("x", status="planned").id)
+    item, _ = project.start(project.add("x").id)
     assert item.bases == {"workspace/agent": "main", "workspace/harness": "main"}
 
     harness = root / "workspace" / "harness"
@@ -323,7 +323,7 @@ def test_refresh_json_says_what_came_in(tmp_path, monkeypatch, capsys):
     project = Project.find(root)
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
-    item, _ = project.start(project.add("x", status="planned").id)
+    item, _ = project.start(project.add("x").id)
     git(["commit", "-q", "--allow-empty", "-m", "later"], root / "workspace" / "agent")
 
     monkeypatch.chdir(root)
@@ -339,7 +339,7 @@ def test_show_item_reports_each_repos_git_state(tmp_path):
     project = Project.find(root)
     for name in ("agent", "harness"):
         project.repo_add(str(root / "workspace" / name))
-    item, _ = project.start(project.add("x", status="planned").id)
+    item, _ = project.start(project.add("x").id)
     git(["commit", "-q", "--allow-empty", "-m", "later"], root / "workspace" / "agent")
     (root / item.folder / "wt" / "harness" / "wip.py").write_text("w = 1\n")
 

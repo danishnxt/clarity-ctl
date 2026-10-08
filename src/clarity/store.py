@@ -122,10 +122,14 @@ def _migrate(raw: dict) -> dict:
     """
     version = raw.get("version") or 1
     if version < 2:
-        # `abandoned` printed as DROPPED everywhere; the stored word now matches
         for item in raw.get("items") or []:
+            # `abandoned` printed as DROPPED everywhere; the stored word now matches
             if item.get("status") == "abandoned":
                 item["status"] = "dropped"
+            # `planned` was a folder without a branch. Its folder stays; starting
+            # the idea picks it back up.
+            elif item.get("status") == "planned":
+                item["status"] = "idea"
     raw["version"] = WORKLOG_VERSION
     return raw
 
