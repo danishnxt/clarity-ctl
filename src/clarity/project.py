@@ -244,13 +244,19 @@ class Project:
 
         Re-reading under the lock is what makes concurrent writers safe — whatever
         another process committed since this one started is picked up first.
+
+        The agent block is refreshed here too, so the first write after an upgrade
+        brings the project's instructions up to what this binary does.
         """
         with file_lock(self.lock_path):
             self.worklog = Worklog.load(self.root / WORKLOG)
+            if self.worklog.newer:
+                raise ClarityError(self.worklog.newer_warning(), code=4)
             before = self._snapshot()
             yield
             self.worklog.save()
             self.render_views(since=before)
+            agents.refresh(agents.local_paths(self.root))
 
     # ---------- which epoch does a command mean ----------
 
@@ -307,15 +313,9 @@ class Project:
                 existing = path.read_text(encoding="utf-8") if path.exists() else None
                 write_if_changed(path, render.epoch_md(item, existing))
 
-    def install_agents(self, scope: str = "local", remove: bool = False) -> list[tuple[Path, str]]:
-        """Put the clarity block in this repo's agent files, or in the user's own.
-
-        Global covers the agents a user actually runs — see agents.global_paths —
-        so one install serves every project they open; the block carries its own
-        precondition, so it stays quiet in projects that never adopted clarity.
-        """
-        paths = agents.global_paths() if scope == "global" else agents.local_paths(self.root)
-        return agents.install(paths, remove_instead=remove, scope=scope)
+    def install_agents(self, remove: bool = False) -> list[tuple[Path, str]]:
+        """Put the clarity block in this project's agent files, or take it out."""
+        return agents.install(agents.local_paths(self.root), remove_instead=remove)
 
     @staticmethod
     def _plans(folder: Path) -> list[str]:
@@ -931,7 +931,7 @@ class Project:
             item.blocked_reason = None
         return item
 
-    def close(self, item_id: int | None, outcome: str, abandoned: bool = False) -> Item:
+    def close(self, item_id: int | None, outcome: str, dropped: bool = False) -> Item:
         with self._write():
             item = self.worklog.by_id(self.resolve_id(item_id))
             if item.status in CLOSED:
@@ -955,7 +955,7 @@ class Project:
                 # out — the work being closed lives on the former
                 item.extra["end_sha"] = (gitops.branch_sha(self.root, item.branch)
                                          or item.extra.get("end_sha"))
-            item.status = "abandoned" if abandoned else "done"
+            item.status = "dropped" if dropped else "done"
             item.outcome = outcome
             item.ended = today()
             # Derived, not a stored counter: a counter is a second source of truth that

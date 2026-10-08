@@ -164,8 +164,6 @@ def test_the_agent_block_points_at_the_document(tmp_path):
 
     block = (root / "AGENTS.md").read_text()
     assert ".clarity/adopt.md" in block
-    # Both blocks carry it: a global install lands where adoption has not happened yet.
-    assert ".clarity/adopt.md" in agents.GLOBAL_BLOCK
 
 
 def test_the_block_stays_short():

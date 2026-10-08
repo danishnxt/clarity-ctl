@@ -47,13 +47,23 @@ arrives, because the work keeps moving. The rule now names the trigger instead:
 a decision changed. That is a thing an agent can notice happening, and it is
 also exactly the content the next session cannot reconstruct from the code.
 
-## Why the wording is conditional
+## Why there is no global install
 
-A global install writes this into ~/.claude/CLAUDE.md, which loads in every
-project the user ever opens — nearly all of which have no worklog.yaml. An
-unconditional "state lives in clarity" would send agents into failing commands
-in projects that never adopted it. The block therefore states its own
-precondition and tells the reader to ignore it when it does not hold.
+There was one: the same block, written into ~/.claude/CLAUDE.md and the like, so
+every project was covered. It went stale on every upgrade that renamed a
+command, and nothing could refresh it — a write in one project has no business
+editing files in the user's home. Where a project had both, the agent read two
+blocks that disagreed. The project's own block is refreshed on every write, so
+it is the only one.
+
+## Why every write refreshes the block
+
+An agent re-reads this file each session and remembers nothing else, so the
+block is the whole of what it knows about clarity. After an upgrade it has to
+say what the new binary does — `refresh` rewrites a block that differs and
+leaves one that matches alone, so this costs a read on every write and a write
+once per upgrade. It never adds a block: a file without one is the user's
+choice, made with `install --remove` or by never installing.
 """
 
 from __future__ import annotations
@@ -96,21 +106,6 @@ don't write its files by hand.
 {_BODY}
 {END}"""
 
-# Written into the user's own files, which load in every project they open —
-# nearly all of which have no worklog.yaml. Hence the precondition: without it,
-# this block would send agents into failing commands everywhere else.
-GLOBAL_BLOCK = f"""{START}
-## clarity
-
-In a project with a `worklog.yaml` at its root, state lives in clarity. Query it
-— don't crawl the tree, and don't write its files by hand.
-
-{_BODY}
-
-No `worklog.yaml` at the root means the project does not use clarity — ignore
-this section entirely there.
-{END}"""
-
 # CLAUDE.md gets this instead of a copy. One body of text, imported rather than
 # duplicated — two copies would be two things to keep in step, which is the whole
 # problem this epoch removed.
@@ -122,7 +117,7 @@ This project's agent instructions live in AGENTS.md.
 @AGENTS.md
 {END}"""
 
-BLOCK = LOCAL_BLOCK  # the common case, and what callers without a scope mean
+BLOCK = LOCAL_BLOCK  # what AGENTS.md and every file but CLAUDE.md gets
 
 
 # Local targets, relative to the project root. `always` files are created if
@@ -138,35 +133,20 @@ LOCAL_TARGETS: list[tuple[str, bool]] = [
     (".github/copilot-instructions.md", False),
 ]
 
-# Global targets, relative to the user's home. Each is written only when its
-# parent directory already exists — that a user has ~/.codex is the signal that
-# they run Codex, and it is the only detection worth doing here.
-GLOBAL_TARGETS: list[str] = [
-    ".claude/CLAUDE.md",
-    ".codex/AGENTS.md",
-    ".gemini/GEMINI.md",
-    ".qwen/QWEN.md",
-    ".config/opencode/AGENTS.md",
-    ".github/copilot-instructions.md",
-]
-
-
-def block_for(scope: str = "local", path: Path | None = None) -> str:
-    """What a given file gets. Locally, CLAUDE.md imports AGENTS.md instead of copying it."""
-    if scope == "global":
-        return GLOBAL_BLOCK
+def block_for(path: Path | None = None) -> str:
+    """What a given file gets. CLAUDE.md imports AGENTS.md instead of copying it."""
     if path is not None and path.name == "CLAUDE.md":
         return SHIM_BLOCK
     return LOCAL_BLOCK
 
 
-def upsert(path: Path, scope: str = "local") -> str:
+def upsert(path: Path) -> str:
     """Put the block in `path`, preserving everything outside the markers.
 
     Returns created · updated · unchanged · skipped, so a caller can report
     honestly and a re-run of install is quiet rather than claiming work it did not do.
     """
-    body = block_for(scope, path)
+    body = block_for(path)
     if path.is_symlink():
         # Someone pointed this file somewhere deliberately. Writing would replace
         # their link with our file, so we don't — there is nothing here we own.
@@ -218,15 +198,25 @@ def local_paths(root: Path) -> list[Path]:
             if always or (root / name).exists()]
 
 
-def global_paths(home: Path | None = None) -> list[Path]:
-    """Which files a machine-scoped install touches, for agents this user runs."""
-    home = home or Path.home()
-    return [home / name for name in GLOBAL_TARGETS if (home / name).parent.is_dir()]
-
-
-def install(paths: list[Path], remove_instead: bool = False,
-            scope: str = "local") -> list[tuple[Path, str]]:
+def install(paths: list[Path], remove_instead: bool = False) -> list[tuple[Path, str]]:
     """Write (or strip) the block across `paths`, reporting what each one did."""
     if remove_instead:
         return [(path, remove(path)) for path in paths]
-    return [(path, upsert(path, scope)) for path in paths]
+    return [(path, upsert(path)) for path in paths]
+
+
+def refresh(paths: list[Path]) -> list[Path]:
+    """Bring existing blocks up to this version's text. Returns the files it rewrote.
+
+    Only a file that already has a block is touched — this keeps a block current,
+    it never adds one — and upsert leaves an identical block alone.
+    """
+    out = []
+    for path in paths:
+        if path.is_symlink() or not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        start, end = text.find(START), text.find(END)
+        if start != -1 and end > start and upsert(path) == "updated":
+            out.append(path)
+    return out

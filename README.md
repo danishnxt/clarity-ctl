@@ -54,7 +54,7 @@ clarity-ctl idea add "try a ring buffer for the tokenizer" --type experiment
 
 clarity-ctl epoch start 2
 clarity-ctl note 2 "ring buffer 2x slower than the deque on small inputs — keeping the deque below 64KB"
-clarity-ctl epoch close 2 --outcome "kept the deque; ring buffer only above 64KB"
+clarity-ctl epoch close 2 "kept the deque; ring buffer only above 64KB"
 ```
 
 `clarity-ctl status` tells you, and your agent, where things stand:
@@ -96,7 +96,7 @@ idea ──start──► active ──close──► done
 epoch's branch: the branch that repo's checkout was on when the epoch started (`main` if
 it was detached), recorded then, so switching the checkout later for other work changes
 nothing. `refresh 7 --base release --repo web` changes it on purpose. `close` records a
-one-line outcome, removes the worktree and keeps the branch; `--abandon` records it as
+one-line outcome, removes the worktree and keeps the branch; `--drop` records it as
 dropped.
 
 ## Notes and sessions
@@ -149,11 +149,14 @@ rules into `AGENTS.md`, imported by `CLAUDE.md`: query clarity, claim an epoch b
 working on it, note decisions. The rest of those files is left alone.
 
 ```sh
-clarity-ctl install --global   # your own agents: ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ...
+clarity-ctl install            # put the block back, in a project that lost it
 clarity-ctl install --remove   # take the block back out
 ```
 
-The global block does nothing in folders without a `worklog.yaml`.
+Every command that writes keeps the block current, so after you upgrade clarity-ctl
+the next write in each project updates what its agents read. A worklog written by a
+newer clarity-ctl than yours still reads, with a warning, but refuses every write
+until you upgrade.
 
 Every read takes `--json` (`clarity-ctl show active --json`, `clarity-ctl show 2 --json`)
 and answers `{ok, command, data, warnings, version}`. Exit codes: `0` ok · `1` error ·

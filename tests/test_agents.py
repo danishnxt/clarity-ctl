@@ -104,44 +104,29 @@ def test_local_targets_skip_agents_nobody_here_runs(tmp_path):
     assert "GEMINI.md" in {p.name for p in agents.local_paths(root)}
 
 
-def test_global_targets_follow_the_agents_a_user_has(tmp_path):
-    (tmp_path / ".claude").mkdir()
-    (tmp_path / ".codex").mkdir()
-
-    paths = agents.global_paths(home=tmp_path)
-    assert paths == [tmp_path / ".claude" / "CLAUDE.md",
-                     tmp_path / ".codex" / "AGENTS.md"]
-
-
-def test_the_global_block_disarms_itself(tmp_path):
-    """It lands in ~/.claude/CLAUDE.md and loads everywhere, so it must state a test."""
-    assert "worklog.yaml" in agents.GLOBAL_BLOCK
-    assert "ignore" in agents.GLOBAL_BLOCK
-
-
-def test_the_local_block_does_not_hedge(tmp_path):
+def test_the_block_does_not_hedge(tmp_path):
     """It sits next to the worklog — doubting the repo it's in would be nonsense."""
     assert "ignore" not in agents.LOCAL_BLOCK
     assert "This project's state lives in clarity" in agents.LOCAL_BLOCK
 
 
-def test_each_scope_writes_its_own_wording(tmp_path):
-    local, global_ = tmp_path / "CLAUDE.md", tmp_path / "global.md"
-    agents.upsert(local, scope="local")
-    agents.upsert(global_, scope="global")
+def test_refresh_rewrites_a_stale_block_and_keeps_the_rest(tmp_path):
+    path = tmp_path / "AGENTS.md"
+    path.write_text(f"{MINE}\n{agents.START}\nclarity-ctl q active\n{agents.END}\n")
 
-    assert "ignore" not in local.read_text()
-    assert "ignore" in global_.read_text()
+    assert agents.refresh([path]) == [path]
+    text = path.read_text()
+    assert "clarity-ctl q " not in text and MINE.rstrip() in text
+    assert agents.refresh([path]) == []          # current now: nothing to write
 
 
-def test_a_scope_change_is_rewritten_not_duplicated(tmp_path):
-    """Same markers, so switching scope swaps the body instead of stacking blocks."""
-    path = tmp_path / "CLAUDE.md"
-    agents.upsert(path, scope="global")
+def test_refresh_never_adds_a_block(tmp_path):
+    """A file without one is the user's choice — removed, or never installed."""
+    mine, missing = tmp_path / "AGENTS.md", tmp_path / "CLAUDE.md"
+    mine.write_text(MINE)
 
-    assert agents.upsert(path, scope="local") == "updated"
-    assert path.read_text().count(agents.START) == 1
-    assert "ignore" not in path.read_text()
+    assert agents.refresh([mine, missing]) == []
+    assert mine.read_text() == MINE and not missing.exists()
 
 
 def test_install_refreshes_a_stale_block(tmp_path):

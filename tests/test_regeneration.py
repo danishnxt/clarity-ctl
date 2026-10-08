@@ -117,7 +117,7 @@ def test_a_word_where_an_id_belongs_is_refused_not_crashed(tmp_path, monkeypatch
     root = make_repo(tmp_path)
     Project.create(root, name="proj")
     monkeypatch.chdir(root)
-    for argv in (["path", "nope"], ["show", "nope"], ["q", "item", "nope"], ["epoch", "start", "nope"]):
+    for argv in (["path", "nope"], ["show", "nope"], ["epoch", "start", "nope"]):
         assert main(argv) == 4
 
 
@@ -190,6 +190,6 @@ def test_every_status_is_reachable(tmp_path):
     reached.add(project.close(done.id, "shipped").status)
     dropped = project.add("dropped one", status="planned")
     project.start(dropped.id)
-    reached.add(project.close(dropped.id, "gave up", abandoned=True).status)
+    reached.add(project.close(dropped.id, "gave up", dropped=True).status)
 
     assert reached == set(STATUSES)

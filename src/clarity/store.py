@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from .model import DEFAULT_CONFIG, Item, Objectives
+from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives
 
 WORKLOG = "worklog.yaml"
 CONFIG_DIR = ".clarity"
@@ -100,6 +100,28 @@ def load_yaml(path: Path) -> dict:
     return data
 
 
+# The shape of worklog.yaml this code reads and writes. Bump it when an older
+# clarity-ctl would misread the file — a renamed field or status, not an added
+# field, which older code already carries through untouched in `extra`.
+WORKLOG_VERSION = 2
+
+
+def _migrate(raw: dict) -> dict:
+    """An older worklog, brought up to WORKLOG_VERSION in memory. Saved on the next write.
+
+    One step per version, in order, so a worklog several versions behind takes
+    every step it missed. No version at all is version 1: it was always written.
+    """
+    version = raw.get("version") or 1
+    if version < 2:
+        # `abandoned` printed as DROPPED everywhere; the stored word now matches
+        for item in raw.get("items") or []:
+            if item.get("status") == "abandoned":
+                item["status"] = "dropped"
+    raw["version"] = WORKLOG_VERSION
+    return raw
+
+
 class Worklog:
     """objectives + the repos the project changes + every item, idea through closed.
 
@@ -107,34 +129,63 @@ class Worklog:
     A workspace holding several checkouts lists the ones its epochs branch instead.
     `state_repo` marks a root that is a repo only to hold clarity's own files — adopt
     makes one when the root was not a repo — so epochs never branch it.
+
+    `newer` is set when the file was written by a newer clarity-ctl than this one.
+    It still reads — what it knows it shows — but never saves: a write would put
+    this version's idea of the file over one it does not fully understand.
     """
 
     OWN = ("version", "objectives", "repos", "state_repo", "items")
 
     def __init__(self, path: Path, objectives: Objectives, items: list[Item], extra: dict,
-                 repos: list[str] | None = None, state_repo: bool = False):
+                 repos: list[str] | None = None, state_repo: bool = False,
+                 newer: int | None = None):
         self.path = path
         self.objectives = objectives
         self.repos = repos or []
         self.state_repo = state_repo
         self.items = items
         self.extra = extra
+        self.newer = newer
 
     @classmethod
     def load(cls, path: Path) -> "Worklog":
         raw = load_yaml(path)
+        version = raw.get("version") or 1
+        if not isinstance(version, int):
+            raise ClarityError(f"{path.name}: version {version!r} is not a number", code=2)
+        newer = version if version > WORKLOG_VERSION else None
+        if not newer:
+            raw = _migrate(raw)
         items = [Item.from_dict(d) for d in (raw.get("items") or [])]
+        if not newer:
+            # A status this code does not know would match no view and the item
+            # would vanish from every listing — say so instead.
+            for item in items:
+                if item.status not in STATUSES:
+                    raise ClarityError(
+                        f"{path.name}: item {item.id} has status {item.status!r}; "
+                        f"known: {', '.join(STATUSES)}", code=2)
         extra = {k: v for k, v in raw.items() if k not in cls.OWN}
         return cls(path, Objectives.from_dict(raw.get("objectives")), items, extra,
                    repos=list(raw.get("repos") or []),
-                   state_repo=bool(raw.get("state_repo")))
+                   state_repo=bool(raw.get("state_repo")), newer=newer)
 
     @classmethod
     def empty(cls, path: Path) -> "Worklog":
         return cls(path, Objectives(), [], {})
 
+    def newer_warning(self) -> str | None:
+        if not self.newer:
+            return None
+        return (f"{self.path.name} is version {self.newer}, from a newer clarity-ctl than "
+                f"this one (reads up to {WORKLOG_VERSION}) — showing what it can, "
+                f"refusing writes; upgrade clarity-ctl")
+
     def save(self) -> None:
-        data = {"version": 1, "objectives": self.objectives.to_dict()}
+        if self.newer:
+            raise ClarityError(self.newer_warning(), code=4)
+        data = {"version": WORKLOG_VERSION, "objectives": self.objectives.to_dict()}
         if self.repos:
             # absent rather than `repos: []`, so a single-repo worklog reads as it did
             data["repos"] = list(self.repos)

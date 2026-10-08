@@ -25,7 +25,7 @@ EPILOG = """examples:
   clarity-ctl idea add "flaky test on macOS" --type fix   capture it, no folder yet
   clarity-ctl epoch start 3                               idea or planned -> active
   clarity-ctl note 3 "ring buffer was 2x slower"          record what you tried
-  clarity-ctl epoch close 3 --outcome "bumped timeout"    -> done
+  clarity-ctl epoch close 3 "bumped timeout"              -> done
   clarity-ctl show active --json                          what an agent calls
 
 ids:
@@ -38,9 +38,6 @@ exit codes:
 """
 
 SHOW_NAMES = "active | next | closed | all | objective | leases | <id>"
-# `q` was `show` before it had a name that says what it does. Kept, unlisted, because
-# agent instruction files in other projects still say `q`; its old view names too.
-Q_ALIASES = {"future": "next", "inactive": "closed", "objectives": "objective"}
 
 
 def envelope(command: str, data, warnings=None) -> str:
@@ -52,7 +49,8 @@ def envelope(command: str, data, warnings=None) -> str:
 
 
 def emit(args, command: str, data, human: str) -> None:
-    print(envelope(command, data) if getattr(args, "json", False) else human)
+    warnings = getattr(args, "worklog_warnings", [])
+    print(envelope(command, data, warnings) if getattr(args, "json", False) else human)
 
 
 SECTIONS: list[tuple[str, list[tuple[str, str]]]] = []
@@ -196,13 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
                       "CLAUDE.md at it with a one-line import rather than a second copy. "
                       "Everything outside the markers is left exactly as it was, and "
                       "re-running is idempotent.\n\n"
-                      "--global writes it once into your own files (~/.claude/CLAUDE.md, "
-                      "~/.codex/AGENTS.md, ...) for every agent you already run, so every "
-                      "project is covered. The block states its own precondition — no "
-                      "worklog.yaml, no clarity — so it stays quiet elsewhere.",
+                      "Every command that writes keeps an installed block current, so "
+                      "after an upgrade the next write updates it. It never adds one.",
                       section=setup)
-    p_install.add_argument("--global", dest="global_scope", action="store_true",
-                           help="write to your own agent files instead of this repo's")
     p_install.add_argument("--remove", action="store_true",
                            help="take the block back out, leaving the rest of the file")
 
@@ -227,12 +221,6 @@ def build_parser() -> argparse.ArgumentParser:
                    "What `status` prints, as data, is `clarity-ctl status --json`.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
-
-    p_q = sub.add_parser("q", formatter_class=argparse.RawDescriptionHelpFormatter,
-                         description="the old name of `show` — use that")
-    p_q.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
-    p_q.add_argument("name", metavar="<name>")
-    p_q.add_argument("arg", nargs="?", metavar="<arg>")
 
     p_path = _leaf(sub, "path", "print an epoch's folder — cd $(clarity-ctl path 7)", section=look)
     _id_arg(p_path)
@@ -325,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_reopen = _leaf(epoch, "reopen", "pick a closed epoch back up — straight to active",
                      into=epoch_rows,
-                     description="Sets a done or abandoned epoch active again, recreating "
+                     description="Sets a done or dropped epoch active again, recreating "
                      "its worktree and taking the lease. The old outcome is kept as a note "
                      "rather than overwritten, so the trail still shows what you thought "
                      "when you closed it.")
@@ -374,10 +362,8 @@ def build_parser() -> argparse.ArgumentParser:
     _id_arg(p_close)
     p_close.add_argument("outcome", nargs="?", metavar="<outcome>",
                          help="what happened, in one line (asked for if omitted)")
-    p_close.add_argument("--outcome", dest="outcome_flag",
-                         help="same, as a flag — for scripts and agents")
-    p_close.add_argument("--abandon", action="store_true",
-                         help="close as abandoned rather than done")
+    p_close.add_argument("--drop", action="store_true",
+                         help="close as dropped rather than done")
 
     # ---- notes and leases ----
     p_note = _leaf(sub, "note", "record what you tried, on an epoch",
@@ -471,25 +457,14 @@ def _adopt_text(project, doc: Path, moved: str | None) -> str:
     )
 
 
-def _install_data(done, scope: str) -> dict:
-    return {"scope": scope,
-            "files": [{"path": str(path), "action": action} for path, action in done]}
+def _install_data(done) -> dict:
+    return {"files": [{"path": str(path), "action": action} for path, action in done]}
 
 
-def _install_text(done, scope: str) -> str:
+def _install_text(done) -> str:
     if not done:
-        return ("no agent instructions files found for a global install — clarity looks "
-                "for ~/.claude, ~/.codex, ~/.gemini and the like, and writes only to "
-                "agents you already run" if scope == "global"
-                else "nothing to write")
-    home = Path.home()
-    lines = []
-    for path, action in done:
-        try:  # a global install prints ~/… ; a local one prints the bare name
-            shown = f"~/{path.relative_to(home)}" if scope == "global" else path.name
-        except ValueError:
-            shown = str(path)
-        lines.append(f"  {action:<10} {shown}")
+        return "nothing to write"
+    lines = [f"  {action:<10} {path.name}" for path, action in done]
     touched = sum(1 for _, action in done if action not in ("unchanged", "absent"))
     removing = any(action == "removed" for _, action in done)
     if not touched:
@@ -583,20 +558,18 @@ def run(args) -> int:
              _adopt_text(project, doc, moved))
         return 0
 
-    # A global install is about the user's own agent files, not about any one
-    # project — so it must work from a directory that is not a clarity project.
-    if args.command == "install" and args.global_scope:
-        from . import agents
-        done = agents.install(agents.global_paths(), remove_instead=args.remove, scope="global")
-        emit(args, "install", _install_data(done, "global"), _install_text(done, "global"))
-        return 0
-
     project = Project.find()
     action = getattr(args, "action", None)
+    # A worklog from a newer clarity-ctl still reads; every write refuses on its own.
+    warning = project.worklog.newer_warning()
+    if warning:
+        args.worklog_warnings = [warning]
+        if not getattr(args, "json", False):
+            print(f"warning: {warning}", file=sys.stderr)
 
     if args.command == "install":
         done = project.install_agents(remove=args.remove)
-        emit(args, "install", _install_data(done, "local"), _install_text(done, "local"))
+        emit(args, "install", _install_data(done), _install_text(done))
 
     elif args.command == "status":
         data = project.query("all" if args.all else "current")
@@ -604,18 +577,11 @@ def run(args) -> int:
         data["stale"] = project.stale_map()
         emit(args, "status", data, project.status_text(show_all=args.all))
 
-    elif args.command in ("show", "q"):
+    elif args.command == "show":
         name = args.name
-        if args.command == "q":
-            name = args.arg if name == "item" and args.arg else Q_ALIASES.get(name, name)
-        if name == "item":
-            name = None  # `q item` with no id: resolve_id says which ids there are
-        if name is None or name.isdigit():
+        if name.isdigit():
             data = project.query("item", name)
             emit(args, "show.item", data, _show_item_text(data))
-        elif name == "current":
-            data = project.query("current")  # only `q current` reaches this
-            emit(args, "show.current", data, _show_items_text(data))
         else:
             if name not in Project.SHOW_NAMES:
                 raise ClarityError(
@@ -718,8 +684,8 @@ def run(args) -> int:
             emit(args, "epoch.unblock", item.to_dict(), f"epoch {item.id} active again")
         else:
             target, text = _split_id_text(args.id, args.outcome)
-            outcome = args.outcome_flag or text or _ask("outcome, in one line?")
-            item = project.close(target, outcome, abandoned=args.abandon)
+            outcome = text or _ask("outcome, in one line?")
+            item = project.close(target, outcome, dropped=args.drop)
             emit(args, "epoch.close", item.to_dict(),
                  f"epoch {item.id} {item.status}: {outcome}")
 

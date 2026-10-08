@@ -39,7 +39,7 @@ _LABEL = {
     "active": "EPOCH",
     "blocked": "BLOCKED",
     "done": "DONE",
-    "abandoned": "DROPPED",
+    "dropped": "DROPPED",
 }
 
 # Single-width glyphs on purpose: emoji are double-width in most terminals and would
@@ -50,7 +50,7 @@ _GLYPH = {
     "active": "▸",
     "blocked": "⏸",
     "done": "✓",
-    "abandoned": "✗",
+    "dropped": "✗",
 }
 
 
@@ -139,7 +139,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
     if show_all:
         # Closed is what you finished; dropped work gets its own group, so scanning
         # what shipped is never interleaved with what you gave up on.
-        groups += [("Closed", {"done"}, True), ("Dropped", {"abandoned"}, True)]
+        groups += [("Closed", {"done"}, True), ("Dropped", {"dropped"}, True)]
 
     for title, statuses, newest_first in groups:
         chosen = [i for i in items if i.status in statuses]
