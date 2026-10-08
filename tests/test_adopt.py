@@ -186,6 +186,22 @@ def test_the_procedure_only_names_commands_that_exist():
     assert named <= commands, f"adopt.md names commands that do not exist: {named - commands}"
 
 
+def test_the_procedure_only_uses_flags_that_exist():
+    """A removed flag is as broken as a removed command — parse every line it says to run."""
+    import shlex
+
+    from clarity.cli import build_parser
+
+    lines = re.findall(r"^ {4}clarity-ctl (.+?)(?:\s+#.*)?$", adopt.ADOPT_MD, re.M)
+    assert lines
+    for line in lines:
+        argv = shlex.split(line.replace("<id>", "1"))
+        try:
+            build_parser().parse_args(argv)
+        except SystemExit:
+            pytest.fail(f"adopt.md says to run something the CLI rejects: clarity-ctl {line}")
+
+
 # The rest of this file guards the scope of adoption. It is a tidying job with
 # two destinations: working material to workspace/, existing records to a
 # baseline epoch that is born closed. An earlier draft inventoried branches and

@@ -248,7 +248,7 @@ If pass two found anything, give it an epoch of its own. It is created and
 immediately closed, because it describes work that already happened:
 
     clarity-ctl epoch new "baseline: work before clarity" --type chore
-    clarity-ctl epoch close <id> --outcome "existing logs and results, moved in at adoption"
+    clarity-ctl epoch close <id> "existing logs and results, moved in at adoption"
 
 `clarity-ctl path <id>` prints its folder. Put the records under its `LOGS/`, and
 analysis or plots under `ANALYSIS/` and `VIZ/` if the split is obvious — if it
