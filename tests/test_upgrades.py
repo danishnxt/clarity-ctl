@@ -149,3 +149,32 @@ def test_close_drop_records_dropped(tmp_path, monkeypatch):
 
     assert main(["epoch", "close", str(item.id), "--drop", "not worth it"]) == 0
     assert Project.find(root).worklog.by_id(item.id).status == "dropped"
+
+
+# The JSON envelope: a failure has every field a success has but `data`.
+
+
+def test_a_refusal_answers_in_the_success_envelope_shape(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    assert main(["status", "--json"]) == 0
+    ok = json.loads(capsys.readouterr().out)
+    assert main(["epoch", "close", "99", "x", "--json"]) == 4
+    failed = json.loads(capsys.readouterr().out)
+
+    assert set(ok) - {"data"} <= set(failed)
+    assert failed["ok"] is False and failed["command"] == "epoch.close"
+    assert failed["code"] == 4 and "99" in failed["error"]
+
+
+def test_a_typo_with_json_gets_an_envelope_not_usage_text(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    with pytest.raises(SystemExit) as stop:
+        main(["show", "all", "--json", "--bogus"])
+    assert stop.value.code == 2
+    failed = json.loads(capsys.readouterr().out)
+    assert failed["ok"] is False and failed["code"] == 2 and failed["command"] == "show"
+    assert "--bogus" in failed["error"]

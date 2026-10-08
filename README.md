@@ -159,7 +159,8 @@ newer clarity-ctl than yours still reads, with a warning, but refuses every writ
 until you upgrade.
 
 Every read takes `--json` (`clarity-ctl show active --json`, `clarity-ctl show 2 --json`)
-and answers `{ok, command, data, warnings, version}`. Exit codes: `0` ok · `1` error ·
+and answers `{ok, command, data, warnings, version}`; a failure has the same fields with
+`error` and `code` in place of `data`, a mistyped command included. Exit codes: `0` ok · `1` error ·
 `2` validation failed · `3` not a clarity project · `4` refused. The envelope and exit
 codes are stable.
 

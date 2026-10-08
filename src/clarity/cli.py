@@ -10,6 +10,8 @@ Exit codes: 0 ok · 1 error · 2 validation failed · 3 not a clarity project ·
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -44,6 +46,16 @@ def envelope(command: str, data, warnings=None) -> str:
     return json.dumps(
         {"ok": True, "command": command, "data": data, "warnings": warnings or [],
          "version": VERSION},
+        indent=2,
+    )
+
+
+def error_envelope(command: str | None, message: str, code: int, warnings=None) -> str:
+    """A failure, in the same shape as a success: every field a success has but
+    `data`, plus `error` and `code`. Additive — nothing a reader relied on moved."""
+    return json.dumps(
+        {"ok": False, "command": command, "error": message, "code": code,
+         "warnings": warnings or [], "version": VERSION},
         indent=2,
     )
 
@@ -714,8 +726,32 @@ def run(args) -> int:
     return 0
 
 
+def _parse(argv: list[str]):
+    """parse_args, except that a caller who asked for --json gets an envelope for
+    a typo too, rather than usage text it cannot parse. Exit 2, as argparse's own."""
+    if "--json" not in argv:
+        return build_parser().parse_args(argv)
+    caught = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(caught):
+            return build_parser().parse_args(argv)
+    except SystemExit as stop:
+        if stop.code in (0, None):
+            raise  # --help asked for, and printed
+        message = caught.getvalue().strip().splitlines()[-1]
+        message = message.split(": error: ", 1)[-1]
+        named = next((a for a in argv if not a.startswith("-")), None)
+        print(error_envelope(named, message, 2))
+        raise SystemExit(2) from None
+
+
+def _command_name(args) -> str:
+    action = getattr(args, "action", None)
+    return f"{args.command}.{action}" if action else args.command
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = _parse(sys.argv[1:] if argv is None else argv)
     try:
         code = run(args)
         if not getattr(args, "json", False):
@@ -724,8 +760,8 @@ def main(argv: list[str] | None = None) -> int:
         return code
     except ClarityError as err:
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": str(err), "code": err.code,
-                              "version": VERSION}, indent=2))
+            print(error_envelope(_command_name(args), str(err), err.code,
+                                 getattr(args, "worklog_warnings", [])))
         else:
             print(f"clarity-ctl: {err}", file=sys.stderr)
         return err.code
