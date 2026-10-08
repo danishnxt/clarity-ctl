@@ -117,7 +117,7 @@ class Objectives:
     """What the project is for — one line, and the only objective there is.
 
     There used to be a second, `current`: what's being worked on now. It was a
-    hand-kept copy of what "In flight" already shows, and with several epochs in
+    hand-kept copy of what "Active" already shows, and with several epochs in
     flight at once no single line could be true. An old worklog's `current` is
     read and dropped on the next write.
     """

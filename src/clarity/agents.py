@@ -77,7 +77,7 @@ END = "<!-- CLARITY:END -->"
 
 _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it first and do
   what it says. It ends by telling you to delete it.
-- `clarity-ctl status` — objective, what's in flight, what's next.
+- `clarity-ctl status` — objective, what's active, what's next.
   `clarity-ctl --help` — every command.
 - `clarity-ctl show active --json`, `clarity-ctl show <id> --json` — for you. Every read
   takes `--json` and answers `{ok, command, data, warnings, version}`.

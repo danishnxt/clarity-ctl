@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
                            help="take the block back out, leaving the rest of the file")
 
     # ---- reading ----
-    p_status = _leaf(sub, "status", "print what's in flight and what's next",
+    p_status = _leaf(sub, "status", "print what's active and what's next",
                      "Prints only; it never writes. The view is composed on every run "
                      "from the worklog plus what is true on this machine right now — "
                      "who holds a lease, and how far each branch trails its base. None of "
@@ -223,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
-                   "  active     epochs in flight, blocked ones included\n"
+                   "  active     epochs started and not closed, blocked ones included\n"
                    "  next       ideas and planned epochs, not started\n"
                    "  closed     done and dropped\n"
                    "  all        everything\n"
@@ -245,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_obj_set = _leaf(obj, "set", "say what the project is for, in one line",
                       description="Printed at the top of clarity-ctl status; no file keeps a "
                       "copy. What is being worked on right now is not an objective — "
-                      "that is what `In flight` shows.", into=obj_rows)
+                      "that is what `Active` shows.", into=obj_rows)
     p_obj_set.add_argument("text", metavar="<text>", help="the objective, in one line")
     _leaf(obj, "show", "print the objective", into=obj_rows)
 

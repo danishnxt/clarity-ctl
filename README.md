@@ -62,7 +62,7 @@ clarity-ctl epoch close 2 "kept the deque; ring buffer only above 64KB"
 ```
 OBJECTIVE  Make the parser fast enough for 1GB inputs
 
-In flight (1)
+Active (1)
 ────────────────────────────────────────────────────────────────────────
   ▸ EPOCH      2  try a ring buffer for the tokenizer
                   EPOCHS/002_2026-09-21__try-a-ring-buffer-for-the-tokenizer   [held by you@laptop, just now]

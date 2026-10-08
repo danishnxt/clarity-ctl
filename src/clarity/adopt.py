@@ -261,7 +261,7 @@ If pass two found nothing, skip this step. Do not create an empty epoch.
 
 ## 8 · Finish
 
-    clarity-ctl status          # objectives, the baseline epoch closed, nothing in flight
+    clarity-ctl status          # objectives, the baseline epoch closed, nothing active
     clarity-ctl repo list       # the repos epochs will branch
     rm .clarity/adopt.md    # adoption is over; this file is the only marker
 

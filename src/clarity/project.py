@@ -283,7 +283,7 @@ class Project:
         targetable = [i for i in self.worklog.items if i.status in IN_FLIGHT]
         if not targetable:
             raise ClarityError(
-                "this command needs an epoch id, and no epoch is in flight — "
+                "this command needs an epoch id, and no epoch is active — "
                 "start one with `clarity-ctl epoch start <id>`",
                 code=4,
             )
@@ -907,7 +907,7 @@ class Project:
         """active -> blocked. Blocking again just replaces the reason.
 
         Only an in-flight epoch can wait on something. Anything else would land in
-        "In flight" without the folder, branch or start date that status implies,
+        "Active" without the folder, branch or start date that status implies,
         and `unblock` would then make it active without ever having been started.
         """
         with self._write():

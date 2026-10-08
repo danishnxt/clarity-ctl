@@ -135,7 +135,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
     out.append("")
     # What's ahead is a queue, oldest first — the top of the list is what to pick up.
     # What's finished is a stack, newest on top — recent work is what you look back for.
-    groups = [("In flight", IN_FLIGHT, False), ("Up next", FUTURE, False)]
+    groups = [("Active", IN_FLIGHT, False), ("Up next", FUTURE, False)]
     if show_all:
         # Closed is what you finished; dropped work gets its own group, so scanning
         # what shipped is never interleaved with what you gave up on.
