@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-STATUSES = ["idea", "active", "blocked", "done", "dropped"]
+STATUSES = ["idea", "active", "done", "dropped"]
 TYPES = ["feature", "fix", "improvement", "experiment", "chore"]
 
-OPEN = {"idea", "active", "blocked"}
-IN_FLIGHT = {"active", "blocked"}
+OPEN = {"idea", "active"}
+# There was a `blocked` too, for an epoch waiting on something. Nothing used it,
+# and a note says the same without a status of its own.
+IN_FLIGHT = {"active"}
 FUTURE = {"idea"}
 # Every closed state. There is no third: `dropped` is what `close --drop` sets. It was
 # stored as `abandoned` while printing as DROPPED — two words for one state, until
@@ -20,7 +22,7 @@ CLOSED = {"done", "dropped"}
 # A folder on disk is required once an epoch starts. There used to be a `planned`
 # status for a folder without a branch; `epoch start --no-repos` is that now, and
 # an idea that was planned reads as an idea that keeps its folder.
-NEEDS_FOLDER = {"active", "blocked", "done", "dropped"}
+NEEDS_FOLDER = {"active", "done", "dropped"}
 
 def today() -> str:
     return date.today().isoformat()
@@ -63,7 +65,6 @@ class Item:
     # for the root). Taken from the repo's checkout when the epoch first branches
     # it, so switching that checkout later for unrelated work changes nothing.
     bases: dict[str, str] | None = None
-    blocked_reason: str | None = None
     evidence: str | None = None  # where adopt found it
     notes: list[Note] = field(default_factory=list)
     created: str = field(default_factory=today)
@@ -76,7 +77,7 @@ class Item:
     extra: dict = field(default_factory=dict)  # preserves hand-added keys
 
     KNOWN = (
-        "id name type status description outcome folder branch repos bases blocked_reason "
+        "id name type status description outcome folder branch repos bases "
         "evidence notes created started ended closed_seq"
     ).split()
 

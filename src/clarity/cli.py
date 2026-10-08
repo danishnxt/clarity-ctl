@@ -223,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
-                   "  active     epochs started and not closed, blocked ones included\n"
+                   "  active     epochs started and not closed\n"
                    "  next       ideas, not started\n"
                    "  closed     done and dropped\n"
                    "  all        everything\n"
@@ -311,15 +311,6 @@ def build_parser() -> argparse.ArgumentParser:
     which.add_argument("--no-repos", action="store_true",
                        help="branch nothing yet — for planning or analysis; "
                             "add repos later with epoch add-repo")
-
-    p_block = _leaf(epoch, "block", "park it, recording what you're waiting on",
-                    into=epoch_rows)
-    _id_arg(p_block)
-    p_block.add_argument("reason", nargs="?", metavar="<reason>",
-                         help="what you're waiting on (asked for if omitted)")
-
-    p_unblock = _leaf(epoch, "unblock", "pick it back up", into=epoch_rows)
-    _id_arg(p_unblock)
 
     p_reopen = _leaf(epoch, "reopen", "pick a closed epoch back up — straight to active",
                      into=epoch_rows,
@@ -493,7 +484,7 @@ def _show_items_text(data: dict) -> str:
 def _show_item_text(data: dict) -> str:
     """One item for a person: the fields that are set, then its notes."""
     lines = [f"{data['id']:>3}  {data['status']:<8} {data['name']}"]
-    for key in ("type", "folder", "branch", "blocked_reason", "outcome", "evidence",
+    for key in ("type", "folder", "branch", "outcome", "evidence",
                 "created", "started", "ended"):
         if data.get(key):
             lines.append(f"     {key.replace('_', ' '):<10} {data[key]}")
@@ -683,20 +674,17 @@ def run(args) -> int:
             item, report = project.refresh(args.id, base=args.base, repos=args.repos)
             emit(args, "epoch.refresh", {**item.to_dict(), **report},
                  _refresh_text(item, report))
-        elif action == "block":
-            target, reason = _split_id_text(args.id, args.reason)
-            reason = reason or _ask("why is it blocked?")
-            item = project.block(target, reason)
-            emit(args, "epoch.block", item.to_dict(), f"epoch {item.id} blocked: {reason}")
-        elif action == "unblock":
-            item = project.unblock(args.id)
-            emit(args, "epoch.unblock", item.to_dict(), f"epoch {item.id} active again")
         else:
             target, text = _split_id_text(args.id, args.outcome)
             outcome = text or _ask("outcome, in one line?")
+            # a dropped epoch's work is not meant to land, so only done asks
+            warnings = [] if args.drop else project.unmerged(project.resolve_id(target))
             item = project.close(target, outcome, dropped=args.drop)
-            emit(args, "epoch.close", item.to_dict(),
-                 f"epoch {item.id} {item.status}: {outcome}")
+            if args.json:
+                print(envelope("epoch.close", item.to_dict(), warnings))
+            else:
+                print("\n".join([f"epoch {item.id} {item.status}: {outcome}",
+                                  *(f"warning: {w}" for w in warnings)]))
 
     elif args.command == "rename":
         item = project.rename(args.id, args.name)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives
+from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives, today
 
 WORKLOG = "worklog.yaml"
 CONFIG_DIR = ".clarity"
@@ -130,6 +130,13 @@ def _migrate(raw: dict) -> dict:
             # the idea picks it back up.
             elif item.get("status") == "planned":
                 item["status"] = "idea"
+            # `blocked` was an active epoch with a reason; the reason becomes a note
+            elif item.get("status") == "blocked":
+                item["status"] = "active"
+            reason = item.pop("blocked_reason", None)
+            if reason:
+                item.setdefault("notes", []).append(
+                    {"at": item.get("started") or today(), "text": f"was blocked: {reason}"})
     raw["version"] = WORKLOG_VERSION
     return raw
 

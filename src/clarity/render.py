@@ -36,7 +36,6 @@ EPOCH_MARK_END = "<!-- /GENERATED — write your own notes below this line -->"
 _LABEL = {
     "idea": "IDEA",
     "active": "EPOCH",
-    "blocked": "BLOCKED",
     "done": "DONE",
     "dropped": "DROPPED",
 }
@@ -46,7 +45,6 @@ _LABEL = {
 _GLYPH = {
     "idea": "·",
     "active": "▸",
-    "blocked": "⏸",
     "done": "✓",
     "dropped": "✗",
 }
@@ -97,9 +95,7 @@ def _line(item: Item, leases: dict | None = None, cols: int | None = None,
     lines = _wrap(item.name, head, gutter, cols)
 
     detail = ""
-    if item.status == "blocked" and item.blocked_reason:
-        detail = f"blocked: {item.blocked_reason}"
-    elif item.status in CLOSED and item.outcome:
+    if item.status in CLOSED and item.outcome:
         detail = f"outcome: {item.outcome}"
     elif item.folder:
         detail = item.folder
@@ -191,8 +187,6 @@ def epoch_md(item: Item, existing: str | None = None) -> str:
                      f"- **bases** {', '.join(f'{k}: {v}' for k, v in item.bases.items())}")
     if item.description:
         lines.append(f"- **goal** {item.description}")
-    if item.blocked_reason:
-        lines.append(f"- **blocked** {item.blocked_reason}")
     if item.outcome:
         lines.append(f"- **outcome** {item.outcome}")
     lines.append(f"- **started** {item.started or '—'}    **ended** {item.ended or '—'}")

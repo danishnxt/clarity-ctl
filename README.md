@@ -89,17 +89,18 @@ yet? `epoch start 7 --no-repos` gives it the folder and branches nothing until y
 `add-repo`.
 
 ```
-idea ──start──► active ──close──► done
-                 │  ▲      ▲        │
-             block  unblock └─reopen─┘
+idea ──start──► active ──close──► done / dropped
+                   ▲                  │
+                   └──────reopen──────┘
 ```
 
-`block` parks an epoch with a reason. `refresh` merges each repo's **base** into the
+`refresh` merges each repo's **base** into the
 epoch's branch: the branch that repo's checkout was on when the epoch started (`main` if
 it was detached), recorded then, so switching the checkout later for other work changes
 nothing. `refresh 7 --base release --repo web` changes it on purpose. `close` records a
 one-line outcome, removes the worktree and keeps the branch; `--drop` records it as
-dropped.
+dropped. It never merges: merge first, and it warns if the branch has commits its
+base doesn't.
 
 ## Notes and sessions
 

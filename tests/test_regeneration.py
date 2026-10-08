@@ -184,7 +184,6 @@ def test_every_status_is_reachable(tmp_path):
     reached = {project.add("an idea").status}
     started = project.add("active one")
     reached.add(project.start(started.id)[0].status)
-    reached.add(project.block(started.id, "waiting").status)
     done = project.add("done one")
     project.start(done.id)
     reached.add(project.close(done.id, "shipped").status)

@@ -253,11 +253,6 @@ def test_start_does_one_job(tmp_path):
         with pytest.raises(ClarityError) as err:
             Project.find(root).start(item.id, **kwargs)
         assert err.value.code == 4 and says in str(err.value)
-    Project.find(root).block(item.id, "waiting")
-    with pytest.raises(ClarityError) as err:
-        Project.find(root).start(item.id)
-    assert "unblock" in str(err.value)
-    Project.find(root).unblock(item.id)
 
     Project.find(root).close(item.id, "done")
     with pytest.raises(ClarityError) as err:

@@ -241,3 +241,47 @@ def test_no_repos_with_repo_or_branch_is_an_argument_mistake(tmp_path, monkeypat
         main(["epoch", "start", str(item.id), "--no-repos", "--repo", "agent"])
     assert stop.value.code == 2
     assert main(["epoch", "start", str(item.id), "--no-repos", "--branch", "b"]) == 2
+
+
+def test_a_version_1_blocked_epoch_reads_as_active_with_its_reason_noted(tmp_path):
+    root = _project(tmp_path)
+    Project.find(root).add("waiting on it")
+
+    def to_v1_blocked(raw):
+        raw["version"] = 1
+        raw["items"][0].update(status="blocked", blocked_reason="upstream fix", started="2026-01-01")
+    _rewrite(root, to_v1_blocked)
+
+    item = Project.find(root).worklog.items[0]
+    assert item.status == "active" and "blocked_reason" not in item.extra
+    assert item.notes[-1].text == "was blocked: upstream fix"
+
+
+# close never merges; it says when the work has not landed.
+
+
+def test_close_warns_when_the_branch_is_not_merged(tmp_path, monkeypatch, capsys):
+    from test_lifecycle import git
+    root, project = _workspace(tmp_path)
+    item, _ = project.start(project.add("x").id, repos=["agent"])
+    worktree = root / item.folder / "wt" / "agent"
+    (worktree / "new.txt").write_text("work\n")
+    git(["add", "-A"], worktree)
+    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "work"], worktree)
+    monkeypatch.chdir(root)
+
+    assert main(["epoch", "close", str(item.id), "shipped", "--json"]) == 0
+    warnings = json.loads(capsys.readouterr().out)["warnings"]
+    assert len(warnings) == 1 and "1 commit not in main" in warnings[0]
+
+
+def test_close_is_quiet_once_merged_and_for_a_drop(tmp_path, monkeypatch, capsys):
+    root, project = _workspace(tmp_path)
+    merged, _ = project.start(project.add("nothing new").id, repos=["agent"])
+    dropped, _ = project.start(project.add("gave up").id, repos=["agent"])
+    monkeypatch.chdir(root)
+
+    assert main(["epoch", "close", str(merged.id), "done", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["warnings"] == []
+    assert main(["epoch", "close", str(dropped.id), "--drop", "no", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["warnings"] == []

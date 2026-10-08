@@ -58,9 +58,6 @@ def test_idea_to_done(tmp_path):
     assert (root / started.folder / "wt" / root.name).is_dir()
 
     project.note(item.id, "tried a bigger timeout")
-    project.block(item.id, "waiting upstream")
-    assert project.worklog.by_id(item.id).blocked_reason == "waiting upstream"
-    project.unblock(item.id)
 
     project.close(item.id, outcome="bumped the timeout")
     closed = project.worklog.by_id(item.id)
@@ -71,33 +68,6 @@ def test_idea_to_done(tmp_path):
         capture_output=True, text=True,
     ).stdout
     assert closed.branch in branches  # branch survives
-
-
-def test_only_work_in_flight_can_be_blocked(tmp_path):
-    """Blocking an idea used to put it in flight with no folder or branch."""
-    root = make_repo(tmp_path)
-    Project.create(root, name="proj")
-    project = Project.find(root)
-
-    idea = project.add("someday")
-    with pytest.raises(ClarityError) as err:
-        project.block(idea.id, "waiting")
-    assert err.value.code == 4 and "epoch start" in str(err.value)
-    assert project.worklog.by_id(idea.id).status == "idea"
-
-    done = project.add("shipped")
-    project.start(done.id, branch="main")
-    project.close(done.id, "done")
-    with pytest.raises(ClarityError):
-        project.block(done.id, "waiting")
-    assert project.worklog.by_id(done.id).status == "done"
-
-    live = project.add("live")
-    project.start(live.id, branch="main")
-    project.block(live.id, "waiting upstream")
-    project.block(live.id, "waiting on review")  # a second block just updates the reason
-    assert project.worklog.by_id(live.id).blocked_reason == "waiting on review"
-    assert project.unblock(live.id).status == "active"
 
 
 def test_existing_branch_is_symlinked(tmp_path):

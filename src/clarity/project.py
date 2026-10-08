@@ -518,10 +518,6 @@ class Project:
                 raise ClarityError(
                     f"epoch {item.id} is already active — to add a repo:\n"
                     f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
-            if item.status == "blocked":
-                raise ClarityError(
-                    f"epoch {item.id} is blocked — pick it back up with:\n"
-                    f"  clarity-ctl epoch unblock {item.id}", code=4)
             closed = item.status in CLOSED
             if closed and not reopen:
                 raise ClarityError(
@@ -911,33 +907,31 @@ class Project:
                 item.name = name
         return item
 
-    def block(self, item_id: int | None, reason: str) -> Item:
-        """active -> blocked. Blocking again just replaces the reason.
+    def unmerged(self, item_id: int) -> list[str]:
+        """One line per repo whose epoch branch has commits its base does not.
 
-        Only an in-flight epoch can wait on something. Anything else would land in
-        "Active" without the folder, branch or start date that status implies,
-        and `unblock` would then make it active without ever having been started.
+        close never merges, so this is what stops finished work from being closed
+        while it still sits only on its branch. A squash merge leaves the branch's
+        own commits unmerged by this measure; the warning says so rather than guess.
         """
-        with self._write():
-            item = self.worklog.by_id(self.resolve_id(item_id))
-            if item.status not in IN_FLIGHT:
-                hint = (f"start it first: clarity-ctl epoch start {item.id}"
-                        if item.status in FUTURE else "it's closed")
-                raise ClarityError(
-                    f"item {item.id} is {item.status} — only an active epoch can be "
-                    f"blocked; {hint}", code=4)
-            item.status = "blocked"
-            item.blocked_reason = reason
-        return item
-
-    def unblock(self, item_id: int | None) -> Item:
-        with self._write():
-            item = self.worklog.by_id(self.resolve_id(item_id))
-            if item.status != "blocked":
-                raise ClarityError(f"item {item.id} is {item.status}, not blocked", code=4)
-            item.status = "active"
-            item.blocked_reason = None
-        return item
+        item = self.worklog.by_id(item_id)
+        folder = self.folder_of(item)
+        if not item.branch or not folder:
+            return []
+        out = []
+        for repo, _ in self._targets(item, folder):
+            base = self.base_of(item, repo)
+            if not base or base == item.branch or not gitops.branch_exists(repo, item.branch):
+                continue
+            try:
+                ahead, _ = gitops.ahead_behind(repo, item.branch, base)
+            except ClarityError:
+                continue
+            if ahead:
+                where = "" if repo == self.root else f" in {self._repo_key(repo)}"
+                out.append(f"{item.branch}{where} has {ahead} commit{'s' if ahead != 1 else ''} "
+                           f"not in {base} — merge before closing, unless it was squash-merged")
+        return out
 
     def close(self, item_id: int | None, outcome: str, dropped: bool = False) -> Item:
         with self._write():
