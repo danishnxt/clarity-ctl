@@ -9,6 +9,8 @@ from .store import ClarityError
 
 
 def _run(args: list[str], cwd: Path) -> str:
+    if not Path(cwd).is_dir():  # else subprocess raises before git even starts
+        raise ClarityError(f"git {' '.join(args)}: no folder at {cwd}", code=4)
     proc = subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False
     )

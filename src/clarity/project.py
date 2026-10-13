@@ -649,6 +649,14 @@ class Project:
             return [(self.root, folder / "wt" / self.root.name)]
         return []
 
+    def _refuse_gone(self, item: Item, targets: list[tuple[Path, Path]], then: str) -> None:
+        """A repo whose folder is gone has nothing git can act on — say which."""
+        gone = [self._repo_key(repo) for repo, _ in targets if not repo.is_dir()]
+        if gone:
+            raise ClarityError(
+                f"epoch {item.id} branches {', '.join(gone)}, and its folder is gone\n"
+                f"  restore it at {self.root / gone[0]}, then {then}", code=4)
+
     def _attach_all(self, item: Item, targets: list[tuple[Path, Path]],
                     branch: str | None) -> tuple[str, list[str]]:
         """The same branch in every repo, or none of them.
@@ -772,6 +780,7 @@ class Project:
                                        what=f"one of epoch {item.id}'s repos")
                       for r in repos}
             targets = [(repo, wt) for repo, wt in targets if self._repo_key(repo) in wanted]
+        self._refuse_gone(item, targets, "refresh")
 
         if base:
             for repo, _ in targets:
@@ -876,6 +885,8 @@ class Project:
             folder = self.folder_of(item)
             behind_parts, drift = [], []
             for repo, _ in (self._targets(item, folder) if folder else []):
+                if not repo.is_dir():
+                    continue  # missing_warnings() says so, once, for every command
                 where = "" if repo == self.root else f" ({repo.name})"
                 found = self._behind(item, item.branch, repo)
                 if found:
@@ -932,7 +943,8 @@ class Project:
         out = []
         for repo, _ in self._targets(item, folder):
             base = self.base_of(item, repo)
-            if not base or base == item.branch or not gitops.branch_exists(repo, item.branch):
+            if (not repo.is_dir() or not base or base == item.branch
+                    or not gitops.branch_exists(repo, item.branch)):
                 continue
             try:
                 ahead, _ = gitops.ahead_behind(repo, item.branch, base)
@@ -950,6 +962,9 @@ class Project:
             if item.status in CLOSED:
                 raise ClarityError(f"item {item.id} is already {item.status}", code=4)
             folder = self.folder_of(item)
+            # its branch and end sha live in that repo: closing now would record
+            # neither, and leave a worktree git can no longer remove
+            self._refuse_gone(item, self._targets(item, folder) if folder else [], "close")
             if folder:
                 for repo, worktree in self._targets(item, folder):
                     if worktree.is_symlink():
@@ -1027,6 +1042,10 @@ class Project:
             return []
         out = []
         for repo, link in self._targets(item, folder):
+            if not repo.is_dir():
+                out.append({"repo": self._repo_key(repo), "worktree": str(link),
+                            "exists": link.exists(), "missing": True})
+                continue
             base = self.base_of(item, repo)
             entry: dict = {
                 "repo": self._repo_key(repo),
@@ -1045,6 +1064,28 @@ class Project:
             if entry["exists"]:
                 entry["dirty"] = len(gitops.is_dirty(link))
             out.append(entry)
+        return out
+
+    def missing_warnings(self) -> list[str]:
+        """One line per repo the worklog points at whose folder is gone — listed, or
+        branched by an epoch in flight. Every git call there would fail, so every
+        command says which one up front instead of tripping over it later."""
+        using: dict[str, list[int]] = {r: [] for r in self.worklog.repos}
+        for item in self.worklog.items:
+            if item.status in IN_FLIGHT:
+                for r in item.repos or []:
+                    using.setdefault(r, []).append(item.id)
+        out = []
+        for rel, ids in using.items():
+            if (self.root / rel).is_dir():
+                continue
+            fixes = ["restore it"]
+            if rel in self.worklog.repos:
+                fixes.append(f"stop branching it in new epochs: clarity-ctl repo remove {rel}")
+            line = f"{rel} is gone from {self.root / rel} — {', or '.join(fixes)}"
+            if ids:
+                line += f" (epoch {', '.join(map(str, ids))} branches it)"
+            out.append(line)
         return out
 
     def branches_root(self) -> bool:

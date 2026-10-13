@@ -567,8 +567,8 @@ def run(args) -> int:
     # A worklog from a newer clarity-ctl still reads; every write refuses on its own,
     # and main prints this after a read only, so a refusal does not say it twice.
     warning = project.worklog.newer_warning()
-    if warning:
-        args.worklog_warnings = [warning]
+    args.worklog_warnings = [warning] if warning else []
+    args.worklog_warnings += project.missing_warnings()
 
     if args.command == "install":
         done = project.install_agents(remove=args.remove)

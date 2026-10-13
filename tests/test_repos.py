@@ -249,3 +249,43 @@ def test_show_item_reports_each_repos_git_state(workspace, ws_root, commit):
     assert agent["base"] == "main" and agent["behind"] == 1 and agent["dirty"] == 0
     assert agent["worktree"].endswith("wt/agent") and not agent["shared"]
     assert harness["dirty"] == 1 and harness["checkout"] == "main"
+
+
+def test_a_repo_whose_folder_is_gone_is_named_not_a_traceback(workspace, ws_root,
+                                                             monkeypatch, capsys):
+    """Moved or deleted by hand: every command says which repo and how to fix it,
+    reads carry on without it, and what needs git there refuses."""
+    import shutil
+
+    root = ws_root
+    item, _ = workspace.start(workspace.add("x").id)
+    workspace.add("later")
+    shutil.rmtree(root / "workspace" / "harness")
+    monkeypatch.chdir(root)
+
+    warnings = Project.find(root).missing_warnings()
+    assert len(warnings) == 1
+    assert "workspace/harness is gone" in warnings[0]
+    assert "clarity-ctl repo remove workspace/harness" in warnings[0]
+    assert f"epoch {item.id} branches it" in warnings[0]
+
+    for argv in (["status"], ["show", str(item.id)]):
+        capsys.readouterr()
+        assert main(argv) == 0, argv
+        assert "workspace/harness is gone" in capsys.readouterr().err
+    assert main(["show", str(item.id), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert any("workspace/harness is gone" in w for w in out["warnings"])
+    git = {g["repo"]: g for g in out["data"]["git"]}
+    assert git["workspace/harness"]["missing"] and "missing" not in git["workspace/agent"]
+
+    for argv in (["epoch", "refresh", str(item.id)], ["epoch", "close", str(item.id), "done"]):
+        capsys.readouterr()
+        assert main(argv) == 4, argv
+        assert "restore it at" in capsys.readouterr().err
+    assert Project.find(root).worklog.by_id(item.id).status == "active"
+
+    # unlisted, it still warns while an epoch branches it — just not to unlist it again
+    assert main(["repo", "remove", "workspace/harness"]) == 0
+    [warning] = Project.find(root).missing_warnings()
+    assert f"epoch {item.id} branches it" in warning and "repo remove" not in warning
