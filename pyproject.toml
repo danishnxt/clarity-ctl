@@ -33,3 +33,7 @@ packages = ["src/clarity"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/clarity", "tests", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
