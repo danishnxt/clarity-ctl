@@ -221,9 +221,10 @@ A nested checkout moves as a whole: its `.git` travels with it and its history
 is untouched. Do not open it, and do not try to merge it into the outer repo.
 
 The root is a git repo now, made by `clarity-ctl adopt` for clarity's own files
-only: its `.gitignore` keeps out `workspace/`, `3rd_party/`
-and every epoch's `LOGS/`, because the nested repos have histories of their own
-and the records can be large. Epochs never branch this repo. Do not commit to
+only: its `.gitignore` keeps out everything at the root that is not
+clarity's — `workspace/`, `3rd_party/`, and anything you have not moved yet —
+and every epoch's `LOGS/`, because the nested repos have histories of their own,
+what is left at the root may hold secrets, and the records can be large. Epochs never branch this repo. Do not commit to
 it — when to snapshot or share the worklog is the human's call.
 
 Afterwards, confirm nothing was left behind: `ls -a` the root again and check it

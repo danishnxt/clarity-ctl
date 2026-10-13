@@ -46,14 +46,25 @@ GITIGNORE_LINES = [
     ".clarity/worklog.lock",
 ]
 
-# Added only when clarity makes the root a repo for its own files. The nested
-# repos have histories of their own, and a baseline epoch's LOGS/ can run to
-# gigabytes — neither belongs in a repo that holds the worklog.
-STATE_REPO_IGNORES = [
-    "workspace/",
-    "3rd_party/",
-    "EPOCHS/*/LOGS/",
-]
+def _state_repo_ignores() -> list[str]:
+    """Added only when clarity makes the root a repo for its own files.
+
+    Everything at the root is ignored unless it is clarity's: a folder adopted
+    with a .env or a build tree still in it must not hand them to `git add .`,
+    and neither must anything dropped there later. That also keeps out the
+    nested repos in workspace/ and 3rd_party/, which have histories of their
+    own. A baseline epoch's LOGS/ can run to gigabytes, so it stays out too.
+    """
+    own = [".gitignore", f"{CONFIG_DIR}/", f"{EPOCHS}/", f"{LEARNINGS}/", WORKLOG]
+    lines = ["# clarity's own files only — the rest of the root stays out", "/*"]
+    lines += [f"!/{name}" for name in own]
+    for name, _ in agents.LOCAL_TARGETS:
+        parent, _, leaf = name.rpartition("/")
+        if parent:  # .github/ holds more than ours: let in the one file
+            lines += [f"!/{parent}/", f"/{parent}/*", f"!/{name}"]
+        else:
+            lines.append(f"!/{leaf}")
+    return lines + ["EPOCHS/*/LOGS/"]
 
 
 WORKSPACE = "workspace"
@@ -185,7 +196,7 @@ class Project:
         project.render_views()
         project.ensure_gitignore()
         if state_repo:
-            project.ensure_gitignore(STATE_REPO_IGNORES)
+            project.ensure_gitignore(_state_repo_ignores())
         return project
 
     @staticmethod

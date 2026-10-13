@@ -54,16 +54,40 @@ def test_a_folder_that_is_not_a_repo_becomes_a_state_repo(tmp_path):
     project = Project.init(fresh)
     assert (fresh / "worklog.yaml").exists()
     assert project.worklog.state_repo and (fresh / ".git").is_dir()
-    assert "workspace/" in (fresh / ".gitignore").read_text().splitlines()
+    assert "/*" in (fresh / ".gitignore").read_text().splitlines()
 
+    # adopted with its working material still at the root, before any of it is
+    # moved: `git add .` must pick up clarity's files and nothing else
     root = tmp_path / "workspace-root"
-    (root / "workspace").mkdir(parents=True)
+    (root / "workspace" / "agent").mkdir(parents=True)
+    (root / "workspace" / "agent" / "code.py").write_text("x = 1\n")
+    (root / "node_modules").mkdir()
+    (root / "node_modules" / "dep.js").write_text("//\n")
+    (root / ".env").write_text("SECRET=1\n")
+    (root / "notes.txt").write_text("mine\n")
+    (root / ".github").mkdir()
+    (root / ".github" / "workflow.yml").write_text("on: push\n")
+    (root / ".github" / "copilot-instructions.md").write_text("theirs\n")
     Project.adopt(root)
     assert (root / ".git").is_dir()
-    ignored = (root / ".gitignore").read_text().splitlines()
-    assert {"workspace/", "3rd_party/", "EPOCHS/*/LOGS/"} <= set(ignored)
     log = subprocess.run(["git", "log"], cwd=str(root), capture_output=True, text=True)
     assert log.returncode != 0  # no commits: that is the human's call
+
+    project = Project.find(root)
+    item, _ = project.start(project.add("baseline", type_="experiment").id, no_repos=True)
+    (root / item.folder / "LOGS" / "run.log").write_text("big\n")
+    (root / item.folder / "PLANS" / "plan.md").write_text("# plan\n")
+    subprocess.run(["git", "add", "."], cwd=str(root), check=True)
+    staged = set(subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=str(root),
+                                check=True, capture_output=True, text=True).stdout.split())
+    assert {".gitignore", "worklog.yaml", "AGENTS.md", "CLAUDE.md", ".clarity/config.yaml",
+            ".github/copilot-instructions.md", f"{item.folder}/EPOCH.md",
+            f"{item.folder}/PLANS/plan.md"} <= staged
+    assert not {p for p in staged if p.split("/")[0] in
+                {".env", "notes.txt", "node_modules", "workspace"}}, staged
+    assert ".github/workflow.yml" not in staged
+    assert not [p for p in staged if "/LOGS/" in p or "/wt/" in p or p.endswith(".lease")]
+    subprocess.run(["git", "reset", "-q"], cwd=str(root), check=True)
 
     project = Project.find(root)
     assert project.worklog.state_repo
