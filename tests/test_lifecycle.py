@@ -376,3 +376,12 @@ def test_status_borders_line_up_at_any_width(project, monkeypatch):
         boxed = [line for line in project.status_text(show_all=True).splitlines()
                  if line and line[0] in "┌├│└"]
         assert boxed and {len(line) for line in boxed} == {cols}, cols
+
+
+def test_a_slug_stops_at_a_word_boundary(project):
+    def slug(name):
+        return project.add(name).slug
+    assert slug("status crash on missing repo") == "status-crash-on-missing-repo"
+    long = slug("status shows whether each closed epoch landed on its base")
+    assert long == "status-shows-whether-each"           # never "...each-cl"
+    assert len(slug("x" * 80)) == 30                     # one long word still fits

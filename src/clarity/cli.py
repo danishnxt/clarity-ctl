@@ -283,7 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     idea = p_idea.add_subparsers(dest="action", required=True, metavar="<action>")
 
     p_idea_add = _leaf(idea, "add", "write down something to do later", into=idea_rows)
-    p_idea_add.add_argument("text", metavar="<text>", help="what the work is, in one line")
+    p_idea_add.add_argument("text", metavar="<text>", help="a short title, a few words — the detail goes in a note")
     p_idea_add.add_argument("--type", default="feature", choices=TYPES,
                             help="kind of work (default: feature)")
     p_idea_add.add_argument("--evidence",
@@ -383,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
                      "things point at, and the id prefix already identifies them. The "
                      "old name is kept as a note.", section=work)
     _id_arg(p_rename, "the item")
-    p_rename.add_argument("name", metavar="<name>", help="the new name, in one line")
+    p_rename.add_argument("name", metavar="<name>", help="the new name, a short title")
 
     p_claim = _leaf(sub, "claim", "take the lease on an epoch",
                     "Says who is working an epoch, and refuses a second claim. It is a "

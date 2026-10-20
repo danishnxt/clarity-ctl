@@ -45,6 +45,11 @@ class Note:
     text: str
 
 
+# Folder and branch names come from the item's name. Short enough to read in a
+# listing; an item named like a title fits whole.
+SLUG_MAX = 30
+
+
 @dataclass
 class Item:
     """One unit of work: idea, feature, fix, experiment."""
@@ -108,7 +113,12 @@ class Item:
         slug = "".join(keep)
         while "--" in slug:
             slug = slug.replace("--", "-")
-        return slug.strip("-")[:40] or f"item-{self.id}"
+        slug = slug.strip("-")
+        if len(slug) > SLUG_MAX:
+            # at a word boundary: a word cut in half reads as a typo in every path
+            cut = slug[:SLUG_MAX + 1]
+            slug = cut[:cut.rindex("-")] if "-" in cut else slug[:SLUG_MAX]
+        return slug or f"item-{self.id}"
 
     @property
     def folder_name(self) -> str:

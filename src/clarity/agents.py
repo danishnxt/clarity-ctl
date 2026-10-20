@@ -84,6 +84,10 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
 - Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity project · 4 refused.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md` — both are
   rewritten from the commands. Below the marker in `EPOCH.md` is yours.
+- Name ideas and epochs like a title, a few words: `clarity-ctl idea add "status
+  crash on missing repo"`. The why, the evidence and the context go in a note
+  right after — the first note is the detail. Folder and branch names come from
+  the name.
 - Start work with `clarity-ctl epoch start <id>`; it takes an idea straight to active.
   Then work in that epoch's folder: `clarity-ctl path <id>`.
 - Every command that acts on an epoch takes its id, always: `clarity-ctl note 7
