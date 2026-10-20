@@ -397,6 +397,7 @@ def test_status_all_shows_the_most_recent_closed_and_says_how_many_are_hidden(pr
     assert "epoch number 3" in text and "epoch number 2" in text
     assert "epoch number 1" not in text
     assert "2 older — clarity-ctl status --all --limit 0" in text
+    assert "Closed (4)" in text
     # oldest first reads the same recent few, the other way up
     text = project.status_text(show_all=True, limit=2, oldest_first=True)
     assert text.index("epoch number 2") < text.index("epoch number 3")

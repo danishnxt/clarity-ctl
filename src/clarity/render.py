@@ -178,14 +178,14 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
         # the date, which is how these read before, so old worklogs keep their order.
         chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", i.id),
                     reverse=True)
-        hidden = 0
+        total, hidden = len(chosen), 0
         if statuses <= CLOSED and limit > 0 and len(chosen) > limit:
             # the most recent, whichever way they are then read
             hidden = len(chosen) - limit
             chosen = chosen[:limit]
         if oldest_first:
             chosen.reverse()
-        out.append(f"{title} ({len(chosen)})")
+        out.append(f"{title} ({total})")  # the whole count, even when the list is cut
         if not chosen:
             out += ["  —", ""]
             continue
