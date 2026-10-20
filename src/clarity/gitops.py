@@ -125,6 +125,21 @@ def ahead_behind(root: Path, branch: str, base: str) -> tuple[int, int]:
     return ahead, behind
 
 
+def committed_on(root: Path, branch: str) -> bool | None:
+    """Whether anyone committed on `branch` itself, from its reflog; None without one.
+
+    Ahead-of-base can't answer this once the branch is fast-forwarded into its base —
+    it is then ahead by nothing, exactly like a branch nobody touched. The reflog still
+    remembers the commits. A refresh's merge is left out: catching up is not work.
+    """
+    proc = subprocess.run(["git", "log", "-g", "--format=%gs", f"refs/heads/{branch}"],
+                          cwd=str(root), capture_output=True, text=True, check=False)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return any(line.startswith("commit") and not line.startswith("commit (merge)")
+               for line in proc.stdout.splitlines())
+
+
 def landed(root: Path, sha: str, base: str) -> bool | None:
     """Whether the work at `sha` is in `base`: True, False, or None for can't tell.
 

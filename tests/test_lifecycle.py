@@ -345,3 +345,18 @@ def test_an_unknown_landing_is_data_not_a_mark():
     assert render._landed({".": "unknown"}) is None
     assert render._landed({"a": "merged", "b": "unknown"}) == "merged"
     assert render._landed({"a": "merged", "b": "unmerged"}) == "a: merged, b: not merged"
+
+
+def test_a_fast_forwarded_epoch_in_flight_still_says_it_can_close(project, repo, git, commit):
+    # after a fast-forward the branch is ahead of main by nothing, like an untouched one
+    untouched = project.add("untouched")
+    shipped = project.add("shipped")
+    project.start(untouched.id)
+    project.start(shipped.id)
+    branch = project.worklog.by_id(shipped.id).branch
+    commit(repo / project.worklog.by_id(shipped.id).folder / "wt" / repo.name, "s.txt")
+    git(["merge", "-q", "--ff-only", branch], repo)
+
+    text = project.status_text()
+    assert f"clarity-ctl epoch close {shipped.id}" in text
+    assert f"clarity-ctl epoch close {untouched.id}" not in text

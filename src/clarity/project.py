@@ -911,7 +911,7 @@ class Project:
 
         merged, unmerged or unknown. A closed epoch is judged by the sha recorded at
         close, falling back to its branch for one closed before shas were recorded. One
-        in flight is judged only once its branch has commits of its own — before that
+        in flight is judged only once someone has committed on its branch — before that
         there is nothing to land, and "merged" would read as finished. Dropped epochs
         get no mark: a drop says the idea failed, whatever happened to its commits.
         """
@@ -934,11 +934,15 @@ class Project:
                 base = self.base_of(item, repo)
                 if item.status in IN_FLIGHT:
                     sha = gitops.branch_sha(repo, item.branch)
-                    try:
-                        if not sha or not base or not gitops.ahead_behind(
-                                repo, item.branch, base)[0]:
+                    if not sha or not base:
+                        continue
+                    worked = gitops.committed_on(repo, item.branch)
+                    if worked is None:  # no reflog: ahead of base is the next best
+                        try:
+                            worked = bool(gitops.ahead_behind(repo, item.branch, base)[0])
+                        except ClarityError:
                             continue
-                    except ClarityError:
+                    if not worked:
                         continue
                 else:
                     sha = (ends.get(key) if item.repos is not None
