@@ -339,3 +339,9 @@ def test_status_marks_what_landed_and_reverse_reads_oldest_first(project, repo, 
     git(["merge", "-q", "--squash", project.worklog.by_id(pending.id).branch], repo)
     git(["commit", "-qm", "land pending"], repo)
     assert f"clarity-ctl epoch close {pending.id}" in project.status_text()
+
+
+def test_an_unknown_landing_is_data_not_a_mark():
+    assert render._landed({".": "unknown"}) is None
+    assert render._landed({"a": "merged", "b": "unknown"}) == "merged"
+    assert render._landed({"a": "merged", "b": "unmerged"}) == "a: merged, b: not merged"

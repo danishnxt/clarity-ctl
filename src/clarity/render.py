@@ -84,10 +84,14 @@ def note_age(item: Item) -> str | None:
 
 
 def _landed(marks: dict[str, str] | None) -> str | None:
-    """One word when every repo agrees, else one per repo — never a summary that hides a repo."""
+    """One word when every repo agrees, else one per repo — never a summary that hides a repo.
+
+    unknown is left to --json: on an old worklog it marks nearly every early epoch,
+    and a mark on everything is a mark on nothing."""
+    marks = {repo: m for repo, m in (marks or {}).items() if m != "unknown"}
     if not marks:
         return None
-    words = {"merged": "merged", "unmerged": "not merged", "unknown": "landed: unknown"}
+    words = {"merged": "merged", "unmerged": "not merged"}
     if len(set(marks.values())) == 1:
         return words[next(iter(marks.values()))]
     return ", ".join(f"{repo}: {words[m]}" for repo, m in marks.items())
