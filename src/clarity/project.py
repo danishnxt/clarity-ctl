@@ -1141,11 +1141,12 @@ class Project:
         return gitops.is_repo(self.root) and not self.worklog.state_repo
 
     def status_text(self, show_all: bool = False, oldest_first: bool = False,
-                    landed: dict | None = None) -> str:
+                    landed: dict | None = None, limit: int = render.CLOSED_LIMIT) -> str:
         return render.status_text(
             self.worklog.objectives, self.worklog.items, show_all, self.leases(),
             branches=self.branches_root() or bool(self.worklog.repos),
             stale=self.stale_map(),
             landed=self.landed_map() if landed is None else landed,
             oldest_first=oldest_first,
+            limit=limit,
         )

@@ -385,3 +385,21 @@ def test_a_slug_stops_at_a_word_boundary(project):
     long = slug("status shows whether each closed epoch landed on its base")
     assert long == "status-shows-whether-each"           # never "...each-cl"
     assert len(slug("x" * 80)) == 30                     # one long word still fits
+
+
+def test_status_all_shows_the_most_recent_closed_and_says_how_many_are_hidden(project):
+    for n in range(4):
+        item = project.add(f"epoch number {n}")
+        project.start(item.id)
+        project.close(item.id, outcome=f"outcome {n}")
+
+    text = project.status_text(show_all=True, limit=2)
+    assert "epoch number 3" in text and "epoch number 2" in text
+    assert "epoch number 1" not in text
+    assert "2 older — clarity-ctl status --all --limit 0" in text
+    # oldest first reads the same recent few, the other way up
+    text = project.status_text(show_all=True, limit=2, oldest_first=True)
+    assert text.index("epoch number 2") < text.index("epoch number 3")
+    assert "epoch number 1" not in text
+    # 0 is no limit
+    assert "epoch number 0" in project.status_text(show_all=True, limit=0)

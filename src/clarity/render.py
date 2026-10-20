@@ -21,6 +21,9 @@ from .model import CLOSED, FUTURE, IN_FLIGHT, Item, Objectives
 # Capped rather than fixed: a terminal narrower than the cap would wrap it again itself,
 # which is the ugliness we're avoiding. Piped output ignores the terminal entirely.
 MAX_WIDTH = 120
+# Closed and Dropped show this many of their most recent; the rest are a flag away.
+# The outcome is the point of a closed row, so the list is cut rather than the rows.
+CLOSED_LIMIT = 15
 
 
 def width() -> int:
@@ -153,7 +156,7 @@ def _fill(paras: list[str], w: int) -> list[str]:
 def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
                 leases: dict | None = None, branches: bool = True,
                 stale: dict | None = None, landed: dict | None = None,
-                oldest_first: bool = False) -> str:
+                oldest_first: bool = False, limit: int = CLOSED_LIMIT) -> str:
     """The one-screen view. Printed, never written down — see the module docstring."""
     cols = width()
     out = []
@@ -174,7 +177,14 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
         # closed_seq is exact where it exists; a project that predates it falls back to
         # the date, which is how these read before, so old worklogs keep their order.
         chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", i.id),
-                    reverse=not oldest_first)
+                    reverse=True)
+        hidden = 0
+        if statuses <= CLOSED and limit > 0 and len(chosen) > limit:
+            # the most recent, whichever way they are then read
+            hidden = len(chosen) - limit
+            chosen = chosen[:limit]
+        if oldest_first:
+            chosen.reverse()
         out.append(f"{title} ({len(chosen)})")
         if not chosen:
             out += ["  —", ""]
@@ -193,6 +203,8 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
             rows.append(cells)
         header = ["", "id", "idea" if title == "Up next" else "epoch"]
         out += _table(header + (["landed"] if landed_col else []), rows, widths, right={1})
+        if hidden:
+            out.append(f"  {hidden} older — clarity-ctl status --all --limit 0")
         out.append("")
 
     if not show_all:

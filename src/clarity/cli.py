@@ -221,6 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
                      "that is written down, so none of it can go stale.", section=look)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
+    p_status.add_argument("--limit", type=int, default=15, metavar="N",
+                          help="with --all, the N most recent closed and dropped (default "
+                               "15; 0 for all). --json is never cut")
     p_status.add_argument("--order", choices=("newest", "oldest"), default="newest",
                           help="newest first (default), or oldest first — finished work "
                                "then reads as a story")
@@ -585,7 +588,7 @@ def run(args) -> int:
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
         data["landed"] = project.landed_map()
         emit(args, "status", data, project.status_text(
-            show_all=args.all, oldest_first=args.order == "oldest", landed=data["landed"]))
+            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit, landed=data["landed"]))
 
     elif args.command == "show":
         name = args.name
