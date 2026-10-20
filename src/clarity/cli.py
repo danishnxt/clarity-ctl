@@ -16,6 +16,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import render
 from .model import TYPES
 from .project import Project
 from .store import ClarityError
@@ -483,41 +484,6 @@ def _install_text(done) -> str:
     return f"{head}\n" + "\n".join(lines)
 
 
-def _show_items_text(data: dict) -> str:
-    return "\n".join(
-        f"{i['id']:>3}  {i['status']:<8} {i['name']}" for i in data["items"]) or "nothing here"
-
-
-def _show_item_text(data: dict) -> str:
-    """One item for a person: the fields that are set, then its notes."""
-    lines = [f"{data['id']:>3}  {data['status']:<8} {data['name']}"]
-    for key in ("type", "folder", "branch", "outcome", "evidence",
-                "created", "started", "ended"):
-        if data.get(key):
-            lines.append(f"     {key.replace('_', ' '):<10} {data[key]}")
-    for git in data.get("git") or []:
-        facts = [f"base {git['base']}" if git.get("base") else "no base"]
-        if git.get("behind") or git.get("ahead"):
-            facts.append(f"{git.get('ahead', 0)} ahead, {git.get('behind', 0)} behind")
-        if git.get("dirty"):
-            facts.append(f"{git['dirty']} uncommitted")
-        if git.get("shared"):
-            facts.append("shares the main checkout")
-        lines.append(f"     {'repo':<10} {git['repo']} — {', '.join(facts)}")
-    if not data.get("git"):
-        for repo in data.get("repos") or []:
-            lines.append(f"     {'repo':<10} {repo}")
-    held = data.get("lease")
-    if held:
-        lines.append(f"     {'lease':<10} {held.get('owner', '?')}@{held.get('host', '?')}, "
-                     f"{held.get('age', '?')}")
-    for plan in data.get("plans") or []:
-        lines.append(f"     {'plan':<10} {plan}")
-    for note in data.get("notes") or []:
-        lines.append(f"     · {note['at']}  {note['text']}")
-    return "\n".join(lines)
-
-
 def _repos_line(item) -> str:
     """Which repos an epoch branches and what each follows: `repos: agent (main), web`."""
     bases = item.bases or {}
@@ -594,7 +560,10 @@ def run(args) -> int:
         name = args.name
         if name.isdigit():
             data = project.query("item", name)
-            emit(args, "show.item", data, _show_item_text(data))
+            marks = project.landed_map(only=data["id"]).get(data["id"])
+            if marks:
+                data["landed"] = marks  # per repo, as status --json carries it
+            emit(args, "show.item", data, render.item_text(data, marks))
         else:
             if name not in Project.SHOW_NAMES:
                 raise ClarityError(
@@ -608,7 +577,7 @@ def run(args) -> int:
                     f"{i:>3}  {h.get('owner', '?')}@{h.get('host', '?')}, {h.get('age', '?')}"
                     for i, h in data["leases"].items()) or "no leases held"
             else:
-                human = _show_items_text(data)
+                human = project.view_text(name)
             emit(args, f"show.{name}", data, human)
 
     elif args.command == "path":

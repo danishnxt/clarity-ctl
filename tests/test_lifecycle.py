@@ -329,7 +329,7 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
     text = project.status_text(show_all=True)
     row = {line.split("│")[3].strip(): line.split("│")[4].strip()
            for line in text.splitlines() if line.count("│") == 5}
-    assert row["shipped"] == "merged" and row["kept off main"] == "not merged"
+    assert row["shipped"] == "✅ merged" and row["kept off main"] == "❌ not merged"
     closed = text.split("Closed")[1].split("Dropped")[0]
     assert closed.index("kept off") < closed.index("shipped")         # newest first
     closed = project.status_text(show_all=True, oldest_first=True).split("Closed")[1]
@@ -345,8 +345,8 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
 
 def test_an_unknown_landing_is_data_not_a_mark():
     assert render._landed({".": "unknown"}) is None
-    assert render._landed({"a": "merged", "b": "unknown"}) == "merged"
-    assert render._landed({"a": "merged", "b": "unmerged"}) == "a: merged, b: not merged"
+    assert render._landed({"a": "merged", "b": "unknown"}) == "✅ merged"
+    assert render._landed({"a": "merged", "b": "unmerged"}) == "a: ✅ merged, b: ❌ not merged"
 
 
 def test_a_fast_forwarded_epoch_in_flight_still_says_it_can_close(project, repo, git, commit):
@@ -375,7 +375,8 @@ def test_status_borders_line_up_at_any_width(project, monkeypatch):
         monkeypatch.setattr(render, "width", lambda cols=cols: cols)
         boxed = [line for line in project.status_text(show_all=True).splitlines()
                  if line and line[0] in "┌├│└"]
-        assert boxed and {len(line) for line in boxed} == {cols}, cols
+        # in terminal columns, not characters: a ✅ is one character and two columns
+        assert boxed and {render._dw(line) for line in boxed} == {cols}, cols
 
 
 def test_a_slug_stops_at_a_word_boundary(project):
@@ -427,3 +428,26 @@ def test_status_cuts_a_long_name_and_outcome_to_a_line_and_nothing_else(project,
 
     # the whole text is one command away
     assert project.query("item", str(idea.id))["name"] == idea.name
+
+
+def test_show_draws_an_item_as_a_card_and_views_as_status_tables(project, repo, git, commit):
+    long = "a name long enough that status would cut it " * 4
+    item = project.add(long)
+    project.start(item.id)
+    project.note(item.id, "first: the detail")
+    project.note(item.id, "second: a reversal")
+    commit(repo / project.worklog.by_id(item.id).folder / "wt" / repo.name, "w.txt")
+    git(["merge", "-q", "--squash", project.worklog.by_id(item.id).branch], repo)
+    git(["commit", "-qm", "land"], repo)
+    project.close(item.id, outcome="it worked")
+
+    card = render.item_text(project.query("item", str(item.id)),
+                            project.landed_map(only=item.id).get(item.id))
+    flat = " ".join(line.split("│")[2].strip() for line in card.splitlines() if "│" in line)
+    assert long.strip() in flat                       # whole, never cut
+    assert "✅ merged" in card and "it worked" in card
+    assert card.index("first: the detail") < card.index("second: a reversal")
+
+    closed = project.view_text("closed")
+    assert "Closed (1)" in closed and "Dropped (0)" in closed and "Up next" not in closed
+    assert "✅ merged" in closed

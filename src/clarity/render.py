@@ -13,6 +13,7 @@ from __future__ import annotations
 import shutil
 import sys
 import textwrap
+import unicodedata
 from datetime import datetime
 
 from .model import CLOSED, FUTURE, IN_FLIGHT, Item, Objectives
@@ -85,7 +86,7 @@ def _landed(marks: dict[str, str] | None) -> str | None:
     marks = {repo: m for repo, m in (marks or {}).items() if m != "unknown"}
     if not marks:
         return None
-    words = {"merged": "merged", "unmerged": "not merged"}
+    words = {"merged": "✅ merged", "unmerged": "❌ not merged"}
     if len(set(marks.values())) == 1:
         return words[next(iter(marks.values()))]
     return ", ".join(f"{repo}: {words[m]}" for repo, m in marks.items())
@@ -126,9 +127,18 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
     return paras
 
 
-def _table(header: list[str], rows: list[list[list[str]]], widths: list[int],
-           right: set[int]) -> list[str]:
-    """Boxed rows, a rule between each, every cell already wrapped to its width.
+def _dw(text: str) -> int:
+    """Columns `text` takes in a terminal: an emoji or CJK character takes two.
+
+    len() counts it as one, which is how a ✅ pushes every border after it out."""
+    return sum(0 if unicodedata.combining(c) or c == "\ufe0f" else
+               2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+
+
+def _table(header: list[list[str]], rows: list[list[list[str]]], widths: list[int],
+           right: set[int] = frozenset(), breaks: set[int] | None = None) -> list[str]:
+    """Boxed rows, every cell already wrapped to its width; a rule before each row,
+    or only before the rows in `breaks`.
 
     Hand-rolled rather than a library: the rest of status wraps by hand already,
     and a dependency for some box-drawing is weight every install would carry.
@@ -142,13 +152,16 @@ def _table(header: list[str], rows: list[list[list[str]]], widths: list[int],
             parts = []
             for col, (cell, w) in enumerate(zip(cells, widths)):
                 text = cell[k] if k < len(cell) else ""
-                parts.append(f" {text:>{w}} " if col in right else f" {text:<{w}} ")
+                pad = " " * max(0, w - _dw(text))
+                parts.append(f" {pad}{text} " if col in right else f" {text}{pad} ")
             out.append("│" + "│".join(parts) + "│")
         return out
 
-    out = [rule("┌", "┬", "┐"), *row([[h] for h in header])]
-    for cells in rows:
-        out += [rule("├", "┼", "┤"), *row(cells)]
+    out = [rule("┌", "┬", "┐"), *row(header)]
+    for n, cells in enumerate(rows):
+        if breaks is None or n in breaks:
+            out.append(rule("├", "┼", "┤"))
+        out += row(cells)
     return out + [rule("└", "┴", "┘")]
 
 
@@ -171,25 +184,21 @@ def _fill(paras: list[str], w: int) -> tuple[list[str], bool]:
     return out, cut
 
 
-def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
-                leases: dict | None = None, branches: bool = True,
-                stale: dict | None = None, landed: dict | None = None,
-                oldest_first: bool = False, limit: int = CLOSED_LIMIT) -> str:
-    """The one-screen view. Printed, never written down — see the module docstring."""
-    cols = width()
-    out = []
-    for label, text in (("OBJECTIVE", objectives.overall),):
-        out += _wrap(text or "— not set —", f"{label:<11}", " " * 11, cols)
-    out.append("")
-    # One order for every group, named, so nobody has to remember which way a group
-    # runs: newest first by default — recent work is what you look for — and oldest
-    # first on request, when the finished work should read as a story.
-    groups = [("Active", IN_FLIGHT), ("Up next", FUTURE)]
-    if show_all:
-        # Closed is what you finished; dropped work gets its own group, so scanning
-        # what shipped is never interleaved with what you gave up on.
-        groups += [("Closed", {"done"}), ("Dropped", {"dropped"})]
+GROUPS = {
+    "Active": IN_FLIGHT,
+    "Up next": FUTURE,
+    # Closed is what you finished; dropped work gets its own group, so scanning
+    # what shipped is never interleaved with what you gave up on.
+    "Closed": {"done"},
+    "Dropped": {"dropped"},
+}
 
+
+def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
+            leases: dict | None, stale: dict | None, landed: dict | None,
+            oldest_first: bool, limit: int) -> tuple[list[str], bool]:
+    """One titled table per group. True as well if any name or outcome was cut."""
+    out: list[str] = []
     cut_any = False
     for title, statuses in groups:
         chosen = [i for i in items if i.status in statuses]
@@ -210,7 +219,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
             continue
         # landed only where something can have landed: a closed epoch's work
         landed_col = title == "Closed"
-        widths = [1, 3, 0] + ([10] if landed_col else [])
+        widths = [1, 3, 0] + ([12] if landed_col else [])
         widths[2] = cols - sum(widths) - 3 * len(widths) - 1  # borders and padding
         rows = []
         for item in chosen:
@@ -223,11 +232,90 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
                 cells.append(_fill(["mixed" if ":" in mark else mark], widths[3])[0])
             rows.append(cells)
         header = ["", "id", "idea" if title == "Up next" else "epoch"]
-        out += _table(header + (["landed"] if landed_col else []), rows, widths, right={1})
+        header += ["landed"] if landed_col else []
+        out += _table([[h] for h in header], rows, widths, right={1})
         if hidden:
             out.append(f"  {hidden} older — clarity-ctl status --all --limit 0")
         out.append("")
 
+    return out, cut_any
+
+
+def view_text(items: list[Item], titles: list[str], leases: dict | None = None,
+              stale: dict | None = None, landed: dict | None = None) -> str:
+    """`show active|next|closed|all`: status's tables for just those groups, uncut by count."""
+    lines, cut = _groups(items, [(t, GROUPS[t]) for t in titles], width(), leases, stale,
+                         landed, oldest_first=False, limit=0)
+    if cut:
+        lines.append("… cut to a line — clarity-ctl show <id> for the whole of it")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def item_text(data: dict, marks: dict | None = None) -> str:
+    """`show <id>`: one item as a card. Nothing is cut here — this is where the
+    whole of a name, an outcome and every note is read."""
+    cols = width()
+    widths = [16, 0]
+    widths[1] = cols - sum(widths) - 7
+    w = widths[1]
+
+    def wrap(text: str) -> list[str]:
+        return textwrap.wrap(text, width=w, break_on_hyphens=False) or [""]
+
+    fields: list[tuple[str, str]] = [("status", data["status"]), ("type", data.get("type", ""))]
+    mark = _landed(marks)
+    if mark:
+        fields.append(("landed", mark))
+    for key in ("outcome", "folder", "branch", "evidence"):
+        if data.get(key):
+            fields.append((key, data[key]))
+    for git in data.get("git") or []:
+        facts = [f"base {git['base']}" if git.get("base") else "no base"]
+        if git.get("behind") or git.get("ahead"):
+            facts.append(f"{git.get('ahead', 0)} ahead, {git.get('behind', 0)} behind")
+        if git.get("dirty"):
+            facts.append(f"{git['dirty']} uncommitted")
+        if git.get("shared"):
+            facts.append("shares the main checkout")
+        fields.append(("repo", f"{git['repo']} — {', '.join(facts)}"))
+    if not data.get("git"):
+        fields += [("repo", r) for r in data.get("repos") or []]
+    held = data.get("lease")
+    if held:
+        fields.append(("lease", f"{held.get('owner', '?')}@{held.get('host', '?')}, "
+                                f"{held.get('age', '?')}"))
+    fields += [("plan", p) for p in data.get("plans") or []]
+    dates = [f"{k} {data[k]}" for k in ("created", "started", "ended") if data.get(k)]
+    if dates:
+        fields.append(("dates", " · ".join(dates)))
+
+    rows = [[[key], wrap(value)] for key, value in fields]
+    breaks = {0}  # fields read as one block; each note is its own row
+    for note in data.get("notes") or []:
+        breaks.add(len(rows))
+        rows.append([[note["at"][:16]], wrap(note["text"])])
+    head = [[f"{_GLYPH.get(data['status'], ' ')} {data['id']}"], wrap(data["name"])]
+    return "\n".join(_table(head, rows, widths, breaks=breaks)) + "\n"
+
+
+def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
+                leases: dict | None = None, branches: bool = True,
+                stale: dict | None = None, landed: dict | None = None,
+                oldest_first: bool = False, limit: int = CLOSED_LIMIT) -> str:
+    """The one-screen view. Printed, never written down — see the module docstring."""
+    cols = width()
+    out = []
+    for label, text in (("OBJECTIVE", objectives.overall),):
+        out += _wrap(text or "— not set —", f"{label:<11}", " " * 11, cols)
+    out.append("")
+    # One order for every group, named, so nobody has to remember which way a group
+    # runs: newest first by default — recent work is what you look for — and oldest
+    # first on request, when the finished work should read as a story.
+    titles = ["Active", "Up next"] + (["Closed", "Dropped"] if show_all else [])
+    groups = [(t, GROUPS[t]) for t in titles]
+
+    lines, cut_any = _groups(items, groups, cols, leases, stale, landed, oldest_first, limit)
+    out += lines
     if cut_any:
         out.append("… cut to a line — clarity-ctl show <id> for the whole of it")
     if not show_all:

@@ -906,7 +906,7 @@ class Project:
                 out[item.id] = lines
         return out
 
-    def landed_map(self) -> dict[int, dict[str, str]]:
+    def landed_map(self, only: int | None = None) -> dict[int, dict[str, str]]:
         """Per epoch, per repo: whether its work reached its base. Live, never stored.
 
         merged, unmerged or unknown. A closed epoch is judged by the sha recorded at
@@ -917,6 +917,8 @@ class Project:
         """
         out: dict[int, dict[str, str]] = {}
         for item in self.worklog.items:
+            if only is not None and item.id != only:
+                continue  # git calls per repo add up; show <id> needs just the one
             if not item.branch or item.status == "dropped" or item.status == "idea":
                 continue
             if item.repos is not None:
@@ -1139,6 +1141,13 @@ class Project:
     def branches_root(self) -> bool:
         """The root is a repo, and one of code rather than clarity's state."""
         return gitops.is_repo(self.root) and not self.worklog.state_repo
+
+    def view_text(self, name: str) -> str:
+        """A `show` view as status draws it: the same tables, for just its groups."""
+        titles = {"active": ["Active"], "next": ["Up next"], "closed": ["Closed", "Dropped"],
+                  "all": list(render.GROUPS)}[name]
+        return render.view_text(self.worklog.items, titles, self.leases(),
+                                self.stale_map(), self.landed_map())
 
     def status_text(self, show_all: bool = False, oldest_first: bool = False,
                     landed: dict | None = None, limit: int = render.CLOSED_LIMIT) -> str:
