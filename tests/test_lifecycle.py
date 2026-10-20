@@ -451,3 +451,21 @@ def test_show_draws_an_item_as_a_card_and_views_as_status_tables(project, repo, 
     closed = project.view_text("closed")
     assert "Closed (1)" in closed and "Dropped (0)" in closed and "Up next" not in closed
     assert "✅ merged" in closed
+
+
+def test_color_only_where_asked_and_borders_still_line_up(project, monkeypatch):
+    item = project.add("an idea")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setattr(render, "width", lambda: 80)
+    text = project.status_text(show_all=True)
+    assert "\x1b[" in text
+    boxed = [line for line in text.splitlines() if render._ANSI.sub("", line)[:1] in "┌├│└"
+             and render._ANSI.sub("", line)]
+    assert {render._dw(line) for line in boxed} == {80}
+
+    monkeypatch.setenv("NO_COLOR", "1")         # no-color.org wins over FORCE_COLOR
+    assert "\x1b[" not in project.status_text()
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.delenv("FORCE_COLOR")           # a pipe, as in every other test
+    assert "\x1b[" not in project.status_text(), item
