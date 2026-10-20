@@ -327,7 +327,9 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
     assert pending.id not in landed   # nothing committed, nothing to land
 
     text = project.status_text(show_all=True)
-    assert "[merged] outcome: in" in text and "[not merged] outcome: tried" in text
+    row = {line.split("│")[3].strip(): line.split("│")[4].strip()
+           for line in text.splitlines() if line.count("│") == 5}
+    assert row["shipped"] == "merged" and row["kept off main"] == "not merged"
     closed = text.split("Closed")[1].split("Dropped")[0]
     assert closed.index("kept off") < closed.index("shipped")         # newest first
     closed = project.status_text(show_all=True, oldest_first=True).split("Closed")[1]
@@ -360,3 +362,17 @@ def test_a_fast_forwarded_epoch_in_flight_still_says_it_can_close(project, repo,
     text = project.status_text()
     assert f"clarity-ctl epoch close {shipped.id}" in text
     assert f"clarity-ctl epoch close {untouched.id}" not in text
+
+
+def test_status_borders_line_up_at_any_width(project, monkeypatch):
+    # a cell that overflows pushes every border after it out of true, so a long path
+    # with no spaces in it has to break too
+    project.add("x" * 200)
+    item = project.add("a short one")
+    project.start(item.id)
+    project.close(item.id, outcome="done, " * 30)
+    for cols in (48, 80, 120):
+        monkeypatch.setattr(render, "width", lambda cols=cols: cols)
+        boxed = [line for line in project.status_text(show_all=True).splitlines()
+                 if line and line[0] in "┌├│└"]
+        assert boxed and {len(line) for line in boxed} == {cols}, cols

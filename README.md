@@ -63,13 +63,20 @@ clarity-ctl epoch close 2 "kept the deque; ring buffer only above 64KB"
 OBJECTIVE  Make the parser fast enough for 1GB inputs
 
 Active (1)
-────────────────────────────────────────────────────────────────────────
-  ▸ EPOCH      2  try a ring buffer for the tokenizer
-                  EPOCHS/002_2026-09-21__try-a-ring-buffer-for-the-tokenizer   [held by you@laptop, just now]
+┌───┬─────┬──────────────────────────────────────────────────────────────┐
+│   │  id │ epoch                                                        │
+├───┼─────┼──────────────────────────────────────────────────────────────┤
+│ ▸ │   2 │ try a ring buffer for the tokenizer                          │
+│   │     │ EPOCHS/002_2026-09-21__try-a-ring-buffer-for-the-tokenizer   │
+│   │     │ held by you@laptop, just now                                 │
+└───┴─────┴──────────────────────────────────────────────────────────────┘
 
 Up next (1)
-────────────────────────────────────────────────────────────────────────
-  · IDEA       1  flaky test on macOS
+┌───┬─────┬──────────────────────────────────────────────────────────────┐
+│   │  id │ idea                                                         │
+├───┼─────┼──────────────────────────────────────────────────────────────┤
+│ · │   1 │ flaky test on macOS                                          │
+└───┴─────┴──────────────────────────────────────────────────────────────┘
 
 0 closed or dropped — clarity-ctl status --all
 ```
