@@ -2,6 +2,12 @@
 
 **Project state you can read in one command, and your coding agent can query without crawling the tree.**
 
+clarity-ctl is a small command-line tool that records what a project is trying to do,
+what has been tried, and what came of it. It is for people who work with coding agents
+like Claude Code or Codex on anything bigger than a toy, and want to stay in charge.
+
+## Why
+
 A coding agent can easily overtake your own thoughts and plans in a project and run away
 with its own reasoning. That leaves you with:
 
@@ -11,19 +17,25 @@ with its own reasoning. That leaves you with:
 4. Tokens burned on catching up. Every session starts with you re-explaining where
    things stand, and the agent re-reading the tree to find out for itself.
 
-For a toy project that can be fine. For larger work, where you need a complete handle
-on the state of things, it's a real problem.
-
 clarity-ctl is a small CLI and a few simple rules for your agent that keep you in the
-loop instead of floundering behind it. Good prompting can do this too; clarity-ctl makes
-it close to automatic.
+loop. Good prompting can do this too; clarity-ctl makes it close to automatic.
 
-Each cycle of work is an **epoch**, which keeps its logs, learnings, worktrees and
-branches together. I find it very hard to make sense of a repo after Claude or Codex has
-ploughed through it. This is the fix.
+## How it works
 
-The state lives in one file, `worklog.yaml`, written only by the CLI. It prints the
-state for you and serves it as JSON to an agent. Nothing in it needs a model.
+A project has three kinds of things:
+
+- **An objective**: one line saying what the project is for.
+- **Ideas**: things you might do. One line each; no folder, no branch.
+- **Epochs**: one attempt at one thing, such as a feature, a fix or an experiment.
+  Starting an idea turns it into an epoch.
+
+When an epoch starts, it gets its own folder, its own git branch, and a **worktree**: a
+second checkout of your repo in that folder, so two attempts in parallel never touch
+each other's files.
+
+As you work, you write **notes**: what you tried, and why a decision changed. When
+you're done, you **close** the epoch with a one-line outcome. All of it lives in one
+file, `worklog.yaml`, written only by the CLI.
 
 ## Install
 
@@ -35,164 +47,146 @@ uv tool install clarity-ctl         # or: pipx install clarity-ctl
 
 ## Quick start
 
-An agent's notes and plans belong to the project, not your repo's history. So your code
-lives in its own repo under `workspace/`, and pushing it never pushes the worklog.
+clarity's files live in the project folder; your code lives in its own repo under
+`workspace/`, so pushing your code never pushes the notes.
 
 ```sh
 mkdir parser && cd parser
 clarity-ctl init --objective "Make the parser fast enough for 1GB inputs"
 git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
+
+clarity-ctl idea add "memory-map the input file" --type experiment
+clarity-ctl epoch start 1                  # folder, branch epoch/001-..., worktree
+cd $(clarity-ctl path 1)/wt/parser         # work here
+clarity-ctl note 1 "load time halved, total unchanged: the tokenizer is the bottleneck"
+clarity-ctl epoch close 1 "no gain, I/O is not the bottleneck"
 ```
 
 Already have a repo? Run `clarity-ctl adopt` inside it instead
-([Existing projects](#existing-projects)). Then add ideas and start one:
+([Existing projects](#existing-projects)).
 
-```sh
-clarity-ctl idea add "flaky test on macOS" --type fix
-clarity-ctl idea add "try a ring buffer for the tokenizer" --type experiment
+## Reading the state
 
-clarity-ctl epoch start 2
-clarity-ctl note 2 "ring buffer 2x slower than the deque on small inputs — keeping the deque below 64KB"
-clarity-ctl epoch close 2 "kept the deque; ring buffer only above 64KB"
-```
-
-`clarity-ctl status` tells you, and your agent, where things stand:
+`clarity-ctl status` is the one-screen view: the objective, what's active, what's next.
+`--all` adds the 15 most recent closed and dropped epochs (`--limit N` for more,
+`--order oldest` to read them as a story).
 
 ```
+$ clarity-ctl status --all
 OBJECTIVE  Make the parser fast enough for 1GB inputs
 
 Active (1)
-┌───┬─────┬──────────────────────────────────────────────────────────────┐
-│   │  id │ epoch                                                        │
-├───┼─────┼──────────────────────────────────────────────────────────────┤
-│ ▸ │   2 │ try a ring buffer for the tokenizer                          │
-│   │     │ EPOCHS/002_2026-09-21__try-a-ring-buffer-for-the-tokenizer   │
-│   │     │ held by you@laptop, just now                                 │
-└───┴─────┴──────────────────────────────────────────────────────────────┘
+┌───┬─────┬────────────────────────────────────────────────────────────────────┐
+│   │  id │ epoch                                                              │
+├───┼─────┼────────────────────────────────────────────────────────────────────┤
+│ ▸ │   3 │ parallel chunk parsing                                             │
+│   │     │ EPOCHS/003_2026-10-20__parallel-chunk-parsing                      │
+│   │     │ held by you@laptop, just now                                       │
+└───┴─────┴────────────────────────────────────────────────────────────────────┘
 
 Up next (1)
-┌───┬─────┬──────────────────────────────────────────────────────────────┐
-│   │  id │ idea                                                         │
-├───┼─────┼──────────────────────────────────────────────────────────────┤
-│ · │   1 │ flaky test on macOS                                          │
-└───┴─────┴──────────────────────────────────────────────────────────────┘
+┌───┬─────┬────────────────────────────────────────────────────────────────────┐
+│   │  id │ idea                                                               │
+├───┼─────┼────────────────────────────────────────────────────────────────────┤
+│ · │   4 │ flaky test on macOS                                                │
+└───┴─────┴────────────────────────────────────────────────────────────────────┘
 
-0 closed or dropped — clarity-ctl status --all
+Closed (2)
+┌───┬─────┬─────────────────────────────────────────────────────┬──────────────┐
+│   │  id │ epoch                                               │ landed       │
+├───┼─────┼─────────────────────────────────────────────────────┼──────────────┤
+│ ✓ │   2 │ ring buffer for the tokenizer                       │ ✅ merged    │
+│   │     │ outcome: 1.6x faster on 1GB; deque kept under 64KB  │              │
+├───┼─────┼─────────────────────────────────────────────────────┼──────────────┤
+│ ✓ │   1 │ memory-map the input file                           │ ❌ not merged │
+│   │     │ outcome: no gain, I/O is not the bottleneck         │              │
+└───┴─────┴─────────────────────────────────────────────────────┴──────────────┘
 ```
 
-## Ideas and epochs
+The **landed** column is read live from git, squash merges included. So the history
+shows what stuck and what didn't, each with its reason. That makes clarity a good fit
+for performance and research work, where you try five things and keep two, not just
+for tracking bugs.
 
-Left alone, an agent starts the next thing before the last one is finished, and a week
-later nobody knows which change came from which attempt.
-
-An **idea** is one line in the worklog, so writing one down costs nothing. An **epoch**
-is an idea you've started. `epoch start` gives it a folder and a branch `epoch/NNN-slug`
-in every listed repo, checked out as a worktree inside that folder. `--repo` narrows
-that to the repos the work touches (`--repo agent --repo harness`, by folder name),
-and `epoch add-repo 7 other` adds one mid-flight; `epoch drop-repo 7 other` removes
-its worktree and keeps its branch. Just planning, or analysis with no code expected
-yet? `epoch start 7 --no-repos` gives it the folder and branches nothing until you
-`add-repo`.
+`clarity-ctl show <id>` prints one item as a page, with its full outcome and every note:
 
 ```
-idea ──start──► active ──close──► done / dropped
-                   ▲                  │
-                   └──────reopen──────┘
+$ clarity-ctl show 1
+memory-map the input file  #1
+✓ done • ❌ not merged into main • experiment • closed today
+
+  no gain, I/O is not the bottleneck
+
+==> Where
+  branch  epoch/001-memory-map-the-input-file
+  folder  EPOCHS/001_2026-10-20__memory-map-the-input-file
+  repo    workspace/parser — base main
+
+==> Notes (2)
+  just now · 2026-10-20 00:22
+    Profile says 30% of a 1GB run is in read(); trying mmap to cut it.
+
+  just now · 2026-10-20 00:22
+    Load time halved, total time unchanged: the tokenizer is the bottleneck, not
+    I/O.
 ```
 
-`refresh` merges each repo's **base** into the
-epoch's branch: the branch that repo's checkout was on when the epoch started (`main` if
-it was detached), recorded then, so switching the checkout later for other work changes
-nothing. `refresh 7 --base release --repo web` changes it on purpose. `close` records a
-one-line outcome, removes the worktree and keeps the branch; `--drop` records it as
-dropped. It never merges: merge first, and it warns if the branch has commits its
-base doesn't.
-
-## Notes and sessions
-
-The diff shows what an agent did. What you lose is *why*: the approach it tried first
-and dropped, the number that surprised it, the reason it changed direction.
-
-```sh
-clarity-ctl note 2 "ring buffer 2x slower on small inputs — keeping the deque below 64KB"
-```
-
-A note is one timestamped line on its epoch. The agent rules say to write one the moment
-a decision changes, not at the end, because in a long session the end never comes.
-
-This takes weight off the usual `work_so_far.md` handoff file rather than replacing it.
-Notes survive a crash or a compacted history, and epochs nudge you to finish one thing
-at a time, so a new session starts from "epoch 7, these notes", not the whole project.
-Longer handoffs go in the epoch's `PLANS/` folder.
-
-The record is only as good as the notes written, and a fast agent can forget. Glance at
-`clarity-ctl show <id>` before you close an epoch.
-
-## What's on disk
-
-You should be able to open the folder and see what happened without asking the agent.
-
-```
-parser/
-├── worklog.yaml            the source of truth
-├── .clarity/config.yaml    project settings
-├── AGENTS.md, CLAUDE.md    the rules for your agent
-├── EPOCHS/
-│   └── 002_2026-09-21__try-a-ring-buffer-for-the-tokenizer/
-│       ├── EPOCH.md        summary and notes, generated; yours below the marker
-│       ├── PLANS/          long-form docs for this piece of work
-│       ├── LOGS/ ANALYSIS/ VIZ/
-│       └── wt/parser/      the epoch's worktree of workspace/parser
-└── workspace/
-    └── parser/             your repo, with its own remote
-```
-
-The top folder is a git repo of clarity's files only. It ignores `workspace/`, has no
-remote unless you add one, and clarity never commits to it. Worktrees get removed;
-branches never do.
+Closing never merges and never deletes a branch: merge first if the work should land,
+or don't. For an attempt that failed outright, `epoch close <id> --drop "why"` records
+it as dropped instead of done.
 
 ## Working with agents
 
-An agent should ask for the state, not crawl for it. `init` writes a short block of
-rules into `AGENTS.md`, imported by `CLAUDE.md`: query clarity, claim an epoch before
-working on it, note decisions. The rest of those files is left alone.
+`init` writes a short block of rules into `AGENTS.md`, and `CLAUDE.md` imports it. The
+rules tell an agent to:
 
-```sh
-clarity-ctl install            # put the block back, in a project that lost it
-clarity-ctl install --remove   # take the block back out
-```
+- ask clarity for the state (`clarity-ctl status`, `clarity-ctl show active --json`)
+  instead of reading the whole tree;
+- claim an epoch before working on it (`clarity-ctl claim <id>`, `release <id>`);
+- write a note the moment a decision changes.
 
-Every command that writes keeps the block current, so after you upgrade clarity-ctl
-the next write in each project updates what its agents read. A worklog written by a
-newer clarity-ctl than yours still reads, with a warning, but refuses every write
-until you upgrade.
+`clarity-ctl install` puts the block back if it's lost; `install --remove` takes it out.
 
-Every read takes `--json` (`clarity-ctl show active --json`, `clarity-ctl show 2 --json`)
-and answers `{ok, command, data, warnings, version}`; a failure has the same fields with
-`error` and `code` in place of `data`, a mistyped command included. Exit codes: `0` ok · `1` error ·
-`2` validation failed · `3` not a clarity project · `4` refused. The envelope and exit
-codes are stable.
+A claim is a **lease**: a marker saying who is working on an epoch (`epoch start` takes
+one for you). It is a warning, not a lock; taking over someone else's needs `--steal`,
+which records who held it.
 
-**Commands always take the epoch id.** A guess works until a second epoch starts, and
-then the same command quietly means something else.
+Every read takes `--json` and answers `{ok, command, data, warnings, version}`. Exit
+codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project ·
+`4` refused.
 
-Several agents never share files, since each epoch has its own worktree.
-`clarity-ctl claim 7` and `clarity-ctl release 7` show who is on what. A claim is a
-warning, not a lock: a second one needs `--steal`, which records who it was taken from.
+Commands always take the epoch's id (`clarity-ctl note 7 "..."`). clarity never
+guesses: a guess works until a second epoch starts.
+
+## Getting the most out of it
+
+- **Read `status` at the start of every session.** It's the whole briefing.
+- **One epoch per attempt.** Two ideas in one branch can't be kept or thrown away
+  separately.
+- **Name things like a title.** A few words: "memory-map the input file". Put the why
+  and the evidence in the first note; `show <id>` prints it.
+- **Write a note the moment a decision changes,** not at the end. In a long session the
+  end never comes, and the notes are what the next session has instead of this
+  conversation.
+- **Close with an honest outcome,** even when it's "didn't work, not merging".
+- **Glance at `show <id>` before you close.** A fast agent can forget to write notes.
 
 ## Existing projects
 
-Most projects worth this already exist, and they're the messiest. Run `clarity-ctl adopt`
-in one.
+Run `clarity-ctl adopt` in the folder.
 
 - **A git repo**: adopt moves all of it, history and uncommitted work included, to
-  `workspace/<folder name>/`. Anything with an absolute path, like a virtualenv, needs
+  `workspace/<folder name>/`. A virtualenv or anything else with absolute paths needs
   rebuilding.
 - **Several checkouts and loose files**: adopt writes `.clarity/adopt.md`, a procedure
-  for an agent. It proposes moves into `workspace/` (repos you change), `3rd_party/`
-  (repos you only use) and a closed baseline epoch (past logs and results). Every move
-  waits for your approval.
+  for an agent. It proposes moving repos you change to `workspace/`, repos you only use
+  to `3rd_party/`, and past results into a closed baseline epoch. Every move waits for
+  your approval.
+
+A workspace can hold several repos. List each one you change with `clarity-ctl repo add
+<path>`, and every new epoch branches all of them. `epoch start <id> --repo <name>`
+branches only some, and `--no-repos` branches none, for planning or analysis.
 
 ## Development
 
