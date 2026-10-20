@@ -252,7 +252,8 @@ def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
             continue
         # landed only where something can have landed: a closed epoch's work
         landed_col = title == "Closed"
-        widths = [1, 3, 0] + ([12] if landed_col else [])
+        # wide enough for its widest value in terminal columns: "❌ not merged" is 13
+        widths = [1, 3, 0] + ([_dw("❌ not merged")] if landed_col else [])
         widths[2] = cols - sum(widths) - 3 * len(widths) - 1  # borders and padding
         rows = []
         for item in chosen:

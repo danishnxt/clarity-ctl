@@ -316,6 +316,8 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
     commit(worktree[gave_up.id], "g.txt")
     git(["merge", "-q", "--squash", project.worklog.by_id(shipped.id).branch], repo)
     git(["commit", "-qm", "ship it"], repo)
+    assert project.unmerged(shipped.id) == []        # squash-merged: close agrees
+    assert project.unmerged(kept_off.id)              # really not in main: warned
     project.close(shipped.id, outcome="in")
     project.close(kept_off.id, outcome="tried, not merging")
     project.close(gave_up.id, outcome="nope", dropped=True)
@@ -327,6 +329,8 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
     assert pending.id not in landed   # nothing committed, nothing to land
 
     text = project.status_text(show_all=True)
+    boxed = [line for line in text.splitlines() if line and line[0] in "┌├│└"]
+    assert len({render._dw(line) for line in boxed}) == 1   # ❌ is two columns wide
     row = {line.split("│")[3].strip(): line.split("│")[4].strip()
            for line in text.splitlines() if line.count("│") == 5}
     assert row["shipped"] == "✅ merged" and row["kept off main"] == "❌ not merged"

@@ -983,8 +983,9 @@ class Project:
         """One line per repo whose epoch branch has commits its base does not.
 
         close never merges, so this is what stops finished work from being closed
-        while it still sits only on its branch. A squash merge leaves the branch's
-        own commits unmerged by this measure; the warning says so rather than guess.
+        while it still sits only on its branch. Asked the same way status asks, so
+        a squash-merged branch — ahead by its own commits, its changes all in the
+        base — is not warned about here and marked merged there.
         """
         item = self.worklog.by_id(item_id)
         folder = self.folder_of(item)
@@ -1000,10 +1001,11 @@ class Project:
                 ahead, _ = gitops.ahead_behind(repo, item.branch, base)
             except ClarityError:
                 continue
-            if ahead:
+            sha = gitops.branch_sha(repo, item.branch)
+            if ahead and not (sha and gitops.landed(repo, sha, base)):
                 where = "" if repo == self.root else f" in {self._repo_key(repo)}"
                 out.append(f"{item.branch}{where} has {ahead} commit{'s' if ahead != 1 else ''} "
-                           f"not in {base} — merge before closing, unless it was squash-merged")
+                           f"not in {base} — merge before closing")
         return out
 
     def close(self, item_id: int | None, outcome: str, dropped: bool = False) -> Item:
