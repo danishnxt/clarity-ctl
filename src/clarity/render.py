@@ -83,8 +83,18 @@ def note_age(item: Item) -> str | None:
     return f"last note {minutes // 1440}d ago"
 
 
+def _landed(marks: dict[str, str] | None) -> str | None:
+    """One word when every repo agrees, else one per repo — never a summary that hides a repo."""
+    if not marks:
+        return None
+    words = {"merged": "merged", "unmerged": "not merged", "unknown": "landed: unknown"}
+    if len(set(marks.values())) == 1:
+        return words[next(iter(marks.values()))]
+    return ", ".join(f"{repo}: {words[m]}" for repo, m in marks.items())
+
+
 def _line(item: Item, leases: dict | None = None, cols: int | None = None,
-          stale: dict | None = None) -> str:
+          stale: dict | None = None, landed: dict | None = None) -> str:
     """Name first, detail on its own indented line — never a separator left dangling."""
     cols = cols or width()
     label = _LABEL.get(item.status, item.status.upper())
@@ -95,8 +105,13 @@ def _line(item: Item, leases: dict | None = None, cols: int | None = None,
     lines = _wrap(item.name, head, gutter, cols)
 
     detail = ""
+    marks = (landed or {}).get(item.id)
     if item.status in CLOSED and item.outcome:
         detail = f"outcome: {item.outcome}"
+        mark = _landed(marks)
+        if mark:
+            # first, not trailing the outcome: a long outcome would wrap it out of sight
+            detail = f"[{mark}] {detail}"
     elif item.folder:
         detail = item.folder
     if held:
@@ -111,6 +126,10 @@ def _line(item: Item, leases: dict | None = None, cols: int | None = None,
         # its own line for the same reason the refresh warning gets one: it is about
         # the record, not about where the work lives
         lines += _wrap(f"⚠ {quiet} — clarity-ctl note {item.id} \"...\"", gutter, gutter, cols)
+    if item.status in IN_FLIGHT and marks and set(marks.values()) == {"merged"}:
+        # only this one: unmerged is every epoch in flight, so saying it is noise
+        lines += _wrap(f"✓ its work is in its base — clarity-ctl epoch close {item.id} \"...\"",
+                       gutter, gutter, cols)
     for trail in (stale or {}).get(item.id, []):
         # its own line, not tacked onto the folder path: the base moving under an epoch
         # is the thing you want to notice, and it must not wrap into the path above it
@@ -120,7 +139,8 @@ def _line(item: Item, leases: dict | None = None, cols: int | None = None,
 
 def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
                 leases: dict | None = None, branches: bool = True,
-                stale: dict | None = None) -> str:
+                stale: dict | None = None, landed: dict | None = None,
+                reverse: bool = False) -> str:
     """The one-screen view. Printed, never written down — see the module docstring."""
     cols = width()
     out = []
@@ -129,6 +149,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
     out.append("")
     # What's ahead is a queue, oldest first — the top of the list is what to pick up.
     # What's finished is a stack, newest on top — recent work is what you look back for.
+    # --reverse turns every group over: finished work then reads oldest first, as a story.
     groups = [("Active", IN_FLIGHT, False), ("Up next", FUTURE, False)]
     if show_all:
         # Closed is what you finished; dropped work gets its own group, so scanning
@@ -140,13 +161,13 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
         # closed_seq is exact where it exists; a project that predates it falls back to
         # the date, which is how these read before, so old worklogs keep their order.
         chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", i.id),
-                    reverse=newest_first)
+                    reverse=newest_first != reverse)
         out.append(f"{title} ({len(chosen)})")
         out.append("─" * min(cols, 72))
         if not chosen:
             out.append("  —")
         for index, item in enumerate(chosen):
-            block = _line(item, leases, cols, stale)
+            block = _line(item, leases, cols, stale, landed)
             out.append(block)
             # only where two lines could read as two items — and never before the
             # blank line that already closes the group

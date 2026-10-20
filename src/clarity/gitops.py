@@ -125,6 +125,35 @@ def ahead_behind(root: Path, branch: str, base: str) -> tuple[int, int]:
     return ahead, behind
 
 
+def landed(root: Path, sha: str, base: str) -> bool | None:
+    """Whether the work at `sha` is in `base`: True, False, or None for can't tell.
+
+    Ancestry alone misses a squash or rebase merge — the branch's commits never reach
+    the base, only their changes do. So the fallback asks git to merge `sha` into
+    `base` without touching anything: if the result is the base's own tree, every
+    change was already there. A conflict, a sha git no longer has, or a git older
+    than 2.38 (no --write-tree) is None, never a guess.
+    """
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=str(root), capture_output=True,
+                              text=True, check=False)
+
+    if git("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
+        return None
+    ancestor = git("merge-base", "--is-ancestor", sha, base).returncode
+    if ancestor == 0:
+        return True
+    if ancestor != 1:
+        return None  # base is gone, or git failed
+    merged = git("merge-tree", "--write-tree", base, sha)
+    if merged.returncode != 0:
+        return None
+    tree = git("rev-parse", f"{base}^{{tree}}")
+    if tree.returncode != 0:
+        return None
+    return merged.stdout.split("\n", 1)[0].strip() == tree.stdout.strip()
+
+
 def _merging(worktree: Path) -> bool:
     """True only while git is stopped part-way through a merge."""
     proc = subprocess.run(

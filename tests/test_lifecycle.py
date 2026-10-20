@@ -279,3 +279,63 @@ def test_an_old_worklog_with_a_now_line_still_loads(repo):
     assert "NOW" not in project.status_text()
     project.set_objective("ship it well")
     assert "current" not in path.read_text()
+
+
+def test_landed_sees_plain_and_squash_merges_and_says_when_it_cannot_tell(repo, git, commit):
+    git(["checkout", "-qb", "feature"], repo)
+    commit(repo, "a.txt", "a")
+    commit(repo, "b.txt", "b")
+    tip = git(["rev-parse", "feature"], repo)
+    git(["checkout", "-q", "main"], repo)
+    assert gitops.landed(repo, tip, "main") is False
+
+    # a squash merge: none of feature's commits reach main, only their changes do
+    git(["merge", "-q", "--squash", "feature"], repo)
+    git(["commit", "-qm", "squashed"], repo)
+    assert tip not in git(["log", "--format=%H", "main"], repo)  # really not an ancestor
+    assert gitops.landed(repo, tip, "main") is True
+    commit(repo, "later.txt", "main moves on")  # and stays landed after it does
+    assert gitops.landed(repo, tip, "main") is True
+
+    assert gitops.landed(repo, "0" * 40, "main") is None       # a sha git doesn't have
+    assert gitops.landed(repo, tip, "no-such-base") is None
+
+
+def test_status_marks_what_landed_and_reverse_reads_oldest_first(project, repo, git, commit):
+    shipped = project.add("shipped")
+    kept_off = project.add("kept off main")
+    gave_up = project.add("gave up")
+    pending = project.add("still going")
+    for item in (shipped, kept_off, gave_up, pending):
+        project.start(item.id)
+    worktree = {i.id: repo / project.worklog.by_id(i.id).folder / "wt" / repo.name
+                for i in (shipped, kept_off, gave_up, pending)}
+
+    commit(worktree[shipped.id], "s.txt")
+    commit(worktree[kept_off.id], "k.txt")
+    commit(worktree[gave_up.id], "g.txt")
+    git(["merge", "-q", "--squash", project.worklog.by_id(shipped.id).branch], repo)
+    git(["commit", "-qm", "ship it"], repo)
+    project.close(shipped.id, outcome="in")
+    project.close(kept_off.id, outcome="tried, not merging")
+    project.close(gave_up.id, outcome="nope", dropped=True)
+
+    landed = project.landed_map()
+    assert landed[shipped.id] == {".": "merged"}
+    assert landed[kept_off.id] == {".": "unmerged"}
+    assert gave_up.id not in landed   # a drop is its own verdict
+    assert pending.id not in landed   # nothing committed, nothing to land
+
+    text = project.status_text(show_all=True)
+    assert "[merged] outcome: in" in text and "[not merged] outcome: tried" in text
+    closed = text.split("Closed")[1].split("Dropped")[0]
+    assert closed.index("kept off") < closed.index("shipped")         # newest first
+    closed = project.status_text(show_all=True, reverse=True).split("Closed")[1]
+    assert closed.index("shipped") < closed.index("kept off")         # oldest first
+
+    # in flight and already in its base: that is the one case worth saying
+    commit(worktree[pending.id], "p.txt")
+    assert "epoch close" not in project.status_text()
+    git(["merge", "-q", "--squash", project.worklog.by_id(pending.id).branch], repo)
+    git(["commit", "-qm", "land pending"], repo)
+    assert f"clarity-ctl epoch close {pending.id}" in project.status_text()

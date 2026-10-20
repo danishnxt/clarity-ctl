@@ -216,10 +216,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = _leaf(sub, "status", "print what's active and what's next",
                      "Prints only; it never writes. The view is composed on every run "
                      "from the worklog plus what is true on this machine right now — "
-                     "who holds a lease, and how far each branch trails its base. None of "
+                     "who holds a lease, how far each branch trails its base, and whether "
+                     "its work has landed there. None of "
                      "that is written down, so none of it can go stale.", section=look)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
+    p_status.add_argument("--reverse", action="store_true",
+                          help="oldest first in every group — finished work reads as a story")
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
@@ -578,7 +581,10 @@ def run(args) -> int:
         data = project.query("all" if args.all else "current")
         # the ⚠ lines status prints about bases, as data — keyed by id, like leases
         data["stale"] = project.stale_map()
-        emit(args, "status", data, project.status_text(show_all=args.all))
+        # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
+        data["landed"] = project.landed_map()
+        emit(args, "status", data, project.status_text(
+            show_all=args.all, reverse=args.reverse, landed=data["landed"]))
 
     elif args.command == "show":
         name = args.name

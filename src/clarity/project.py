@@ -906,6 +906,50 @@ class Project:
                 out[item.id] = lines
         return out
 
+    def landed_map(self) -> dict[int, dict[str, str]]:
+        """Per epoch, per repo: whether its work reached its base. Live, never stored.
+
+        merged, unmerged or unknown. A closed epoch is judged by the sha recorded at
+        close, falling back to its branch for one closed before shas were recorded. One
+        in flight is judged only once its branch has commits of its own — before that
+        there is nothing to land, and "merged" would read as finished. Dropped epochs
+        get no mark: a drop says the idea failed, whatever happened to its commits.
+        """
+        out: dict[int, dict[str, str]] = {}
+        for item in self.worklog.items:
+            if not item.branch or item.status == "dropped" or item.status == "idea":
+                continue
+            if item.repos is not None:
+                repos = [self.root / r for r in item.repos]
+            elif self.branches_root():
+                repos = [self.root]
+            else:
+                continue
+            ends = item.extra.get("end_shas") or {}
+            marks: dict[str, str] = {}
+            for repo in repos:
+                if not repo.is_dir():
+                    continue  # missing_warnings() says so, once, for every command
+                key = self._repo_key(repo)
+                base = self.base_of(item, repo)
+                if item.status in IN_FLIGHT:
+                    sha = gitops.branch_sha(repo, item.branch)
+                    try:
+                        if not sha or not base or not gitops.ahead_behind(
+                                repo, item.branch, base)[0]:
+                            continue
+                    except ClarityError:
+                        continue
+                else:
+                    sha = (ends.get(key) if item.repos is not None
+                           else item.extra.get("end_sha"))
+                    sha = sha or gitops.branch_sha(repo, item.branch)
+                found = gitops.landed(repo, sha, base) if sha and base else None
+                marks[key] = {True: "merged", False: "unmerged", None: "unknown"}[found]
+            if marks:
+                out[item.id] = marks
+        return out
+
     def note(self, item_id: int | None, text: str) -> Item:
         with self._write():
             item = self.worklog.by_id(self.resolve_id(item_id))
@@ -1092,9 +1136,12 @@ class Project:
         """The root is a repo, and one of code rather than clarity's state."""
         return gitops.is_repo(self.root) and not self.worklog.state_repo
 
-    def status_text(self, show_all: bool = False) -> str:
+    def status_text(self, show_all: bool = False, reverse: bool = False,
+                    landed: dict | None = None) -> str:
         return render.status_text(
             self.worklog.objectives, self.worklog.items, show_all, self.leases(),
             branches=self.branches_root() or bool(self.worklog.repos),
             stale=self.stale_map(),
+            landed=self.landed_map() if landed is None else landed,
+            reverse=reverse,
         )
