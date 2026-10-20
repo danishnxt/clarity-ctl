@@ -93,10 +93,15 @@ def _landed(marks: dict[str, str] | None) -> str | None:
 
 def _cell(item: Item, leases: dict | None, stale: dict | None,
           marks: dict | None) -> list[str]:
-    """What goes in an item's main cell, one paragraph each: name, then detail."""
-    paras = [item.name]
+    """What goes in an item's main cell, one paragraph each: name, then detail.
+
+    Name and outcome are tagged ONE_LINE: they are cut to a line, because an old
+    sentence-length name would otherwise make every row a paragraph. Nothing you
+    act on — folder, lease, warnings — is ever cut. `show <id>` has the whole text.
+    """
+    paras = [ONE_LINE + item.name]
     if item.status in CLOSED and item.outcome:
-        paras.append(f"outcome: {item.outcome}")
+        paras.append(ONE_LINE + f"outcome: {item.outcome}")
     elif item.folder:
         paras.append(item.folder)
     held = (leases or {}).get(item.id)
@@ -147,10 +152,23 @@ def _table(header: list[str], rows: list[list[list[str]]], widths: list[int],
     return out + [rule("└", "┴", "┘")]
 
 
-def _fill(paras: list[str], w: int) -> list[str]:
-    # long words break too: a path wider than the cell would push the border out
-    return [line for p in paras for line in
-            (textwrap.wrap(p, width=w, break_on_hyphens=False) or [""])]
+ONE_LINE = "\x00"  # marks a paragraph _fill cuts to one line rather than wraps
+
+
+def _fill(paras: list[str], w: int) -> tuple[list[str], bool]:
+    """Wrapped to the cell; True if a ONE_LINE paragraph had to be cut."""
+    out, cut = [], False
+    for p in paras:
+        one = p.startswith(ONE_LINE)
+        # long words break too: a path wider than the cell would push the border out
+        lines = textwrap.wrap(p.lstrip(ONE_LINE), width=w, break_on_hyphens=False) or [""]
+        if one and len(lines) > 1:
+            first = lines[0]
+            if len(first) > w - 2:
+                first = first[:w - 2].rsplit(" ", 1)[0] if " " in first[:w - 2] else first[:w - 2]
+            lines, cut = [first + " …"], True
+        out += lines
+    return out, cut
 
 
 def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
@@ -172,6 +190,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
         # what shipped is never interleaved with what you gave up on.
         groups += [("Closed", {"done"}), ("Dropped", {"dropped"})]
 
+    cut_any = False
     for title, statuses in groups:
         chosen = [i for i in items if i.status in statuses]
         # closed_seq is exact where it exists; a project that predates it falls back to
@@ -196,10 +215,12 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
         rows = []
         for item in chosen:
             mark = _landed((landed or {}).get(item.id)) or ""
-            cells = [[_GLYPH.get(item.status, " ")], [str(item.id)],
-                     _fill(_cell(item, leases, stale, (landed or {}).get(item.id)), widths[2])]
+            text, was_cut = _fill(_cell(item, leases, stale, (landed or {}).get(item.id)),
+                                  widths[2])
+            cut_any = cut_any or was_cut
+            cells = [[_GLYPH.get(item.status, " ")], [str(item.id)], text]
             if landed_col:
-                cells.append(_fill(["mixed" if ":" in mark else mark], widths[3]))
+                cells.append(_fill(["mixed" if ":" in mark else mark], widths[3])[0])
             rows.append(cells)
         header = ["", "id", "idea" if title == "Up next" else "epoch"]
         out += _table(header + (["landed"] if landed_col else []), rows, widths, right={1})
@@ -207,6 +228,8 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
             out.append(f"  {hidden} older — clarity-ctl status --all --limit 0")
         out.append("")
 
+    if cut_any:
+        out.append("… cut to a line — clarity-ctl show <id> for the whole of it")
     if not show_all:
         closed = len([i for i in items if i.status in CLOSED])
         out.append(f"{closed} closed or dropped — clarity-ctl status --all")

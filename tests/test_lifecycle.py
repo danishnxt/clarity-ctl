@@ -404,3 +404,26 @@ def test_status_all_shows_the_most_recent_closed_and_says_how_many_are_hidden(pr
     assert "epoch number 1" not in text
     # 0 is no limit
     assert "epoch number 0" in project.status_text(show_all=True, limit=0)
+
+
+def test_status_cuts_a_long_name_and_outcome_to_a_line_and_nothing_else(project, monkeypatch):
+    monkeypatch.setattr(render, "width", lambda: 80)
+    idea = project.add("a sentence-length idea name " * 6)
+    epoch = project.add("a short one")
+    project.start(epoch.id)
+    project.close(epoch.id, outcome="a long outcome " * 12)
+
+    text = project.status_text(show_all=True)
+    rows = {}
+    for line in text.splitlines():
+        if line.count("│") >= 4 and line.split("│")[2].strip():
+            current = line.split("│")[2].strip()
+        if line.count("│") >= 4:
+            rows.setdefault(current, []).append(line.split("│")[3].strip())
+    assert len(rows[str(idea.id)]) == 1 and rows[str(idea.id)][0].endswith("…")
+    assert rows[str(epoch.id)][1].startswith("outcome:") and rows[str(epoch.id)][1].endswith("…")
+    assert len(rows[str(epoch.id)]) == 2
+    assert "clarity-ctl show <id> for the whole of it" in text
+
+    # the whole text is one command away
+    assert project.query("item", str(idea.id))["name"] == idea.name
