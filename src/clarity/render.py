@@ -288,51 +288,113 @@ def view_text(items: list[Item], titles: list[str], leases: dict | None = None,
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _ago(at: str, now: datetime | None = None) -> str:
+    """'just now', '14h ago', '3d ago' — or the date, past a month. A bare date
+    (no time of day) is only ever day-granular: 'today', 'yesterday', '3d ago'."""
+    now = now or datetime.now()
+    try:
+        when = datetime.fromisoformat(at)
+    except ValueError:
+        return at
+    if len(at) <= 10:
+        days = (now.date() - when.date()).days
+        return "today" if days <= 0 else "yesterday" if days == 1 else (
+            f"{days}d ago" if days < 31 else at)
+    minutes = int((now - when).total_seconds() // 60)
+    if minutes < 2:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes}m ago"
+    if minutes < 60 * 24:
+        return f"{minutes // 60}h ago"
+    return f"{minutes // 1440}d ago" if minutes < 60 * 24 * 31 else at[:10]
+
+
 def item_text(data: dict, marks: dict | None = None) -> str:
-    """`show <id>`: one item as a card. Nothing is cut here — this is where the
-    whole of a name, an outcome and every note is read."""
-    cols = width()
-    widths = [16, 0]
-    widths[1] = cols - sum(widths) - 7
-    w = widths[1]
+    """`show <id>`: one item as a page, the way gh issue view and brew info read.
 
-    def wrap(text: str) -> list[str]:
-        return textwrap.wrap(text, width=w, break_on_hyphens=False) or [""]
+    A bold title, one dim line of status, the outcome as prose, then sections. No
+    box: borders are for lists, where they keep rows apart. Nothing is cut here —
+    this is where the whole of a name, an outcome and every note is read."""
+    # prose reads best short of the full terminal; gh and man pages stop near here too
+    cols = min(width(), 100)
+    status = data["status"]
 
-    fields: list[tuple[str, str]] = [("status", data["status"]), ("type", data.get("type", ""))]
+    def para(text: str, indent: int, style: str | None = None) -> list[str]:
+        lines = textwrap.wrap(text, width=cols - indent, break_on_hyphens=False) or [""]
+        return [" " * indent + paint(line, style) for line in lines]
+
+    def section(title: str) -> list[str]:
+        return ["", f"{paint('==>', 'cyan bold')} {paint(title, 'bold')}"]
+
+    # title, with the id after it on the last line — the id is what you type next
+    title = textwrap.wrap(data["name"], width=cols - len(f"  #{data['id']}"),
+                          break_on_hyphens=False) or [""]
+    out = [paint(line, "bold") for line in title]
+    out[-1] += "  " + paint(f"#{data['id']}", "dim")
+
+    facts = [paint(f"{_GLYPH.get(status, ' ')} {status}", _GLYPH_STYLE.get(status))]
     mark = _landed(marks)
     if mark:
-        fields.append(("landed", mark))
-    for key in ("outcome", "folder", "branch", "evidence"):
-        if data.get(key):
-            fields.append((key, data[key]))
+        bases = sorted(set((data.get("bases") or {}).values()))
+        into = f" into {bases[0]}" if len(bases) == 1 and ":" not in mark else ""
+        facts.append(paint(mark + into, "yellow" if ":" in mark else
+                           "red" if "not" in mark else "green"))
+    facts.append(paint(data.get("type", ""), "dim"))
+    if data.get("ended"):
+        when = f"closed {_ago(data['ended'])}"
+    elif data.get("started"):
+        when = f"started {_ago(data['started'])}"
+    else:
+        when = f"added {_ago(data.get('created', ''))}"
+    facts.append(paint(when, "dim"))
+    out.append(paint(" • ", "dim").join(facts))
+
+    if data.get("outcome"):
+        out += [""] + para(data["outcome"], 2)
+
+    where: list[tuple[str, str]] = []
+    if data.get("branch"):
+        where.append(("branch", data["branch"]))
+    if data.get("folder"):
+        where.append(("folder", data["folder"]))
     for git in data.get("git") or []:
         facts = [f"base {git['base']}" if git.get("base") else "no base"]
-        if git.get("behind") or git.get("ahead"):
+        # ahead/behind only while the branch is live: after a close, main moving
+        # on makes "N behind" true and useless — landed says what matters then
+        if status not in CLOSED and (git.get("behind") or git.get("ahead")):
             facts.append(f"{git.get('ahead', 0)} ahead, {git.get('behind', 0)} behind")
         if git.get("dirty"):
             facts.append(f"{git['dirty']} uncommitted")
         if git.get("shared"):
             facts.append("shares the main checkout")
-        fields.append(("repo", f"{git['repo']} — {', '.join(facts)}"))
+        where.append(("repo", f"{git['repo']} — {', '.join(facts)}"))
     if not data.get("git"):
-        fields += [("repo", r) for r in data.get("repos") or []]
+        where += [("repo", r) for r in data.get("repos") or []]
     held = data.get("lease")
     if held:
-        fields.append(("lease", f"{held.get('owner', '?')}@{held.get('host', '?')}, "
-                                f"{held.get('age', '?')}"))
-    fields += [("plan", p) for p in data.get("plans") or []]
-    dates = [f"{k} {data[k]}" for k in ("created", "started", "ended") if data.get(k)]
-    if dates:
-        fields.append(("dates", " · ".join(dates)))
+        where.append(("lease", f"held by {held.get('owner', '?')}@{held.get('host', '?')}, "
+                               f"{held.get('age', '?')}"))
+    where += [("plan", p) for p in data.get("plans") or []]
+    if data.get("evidence"):
+        where.append(("from", data["evidence"]))
+    if where:
+        out += section("Where")
+        key_w = max(len(k) for k, _ in where) + 2
+        for key, value in where:
+            lines = textwrap.wrap(value, width=cols - 2 - key_w, break_on_hyphens=False)
+            out.append("  " + paint(f"{key:<{key_w}}", "dim") + (lines or [""])[0])
+            out += [" " * (2 + key_w) + line for line in lines[1:]]
 
-    rows = [[[key], wrap(value)] for key, value in fields]
-    breaks = {0}  # fields read as one block; each note is its own row
-    for note in data.get("notes") or []:
-        breaks.add(len(rows))
-        rows.append([[note["at"][:16]], wrap(note["text"])])
-    head = [[f"{_GLYPH.get(data['status'], ' ')} {data['id']}"], wrap(data["name"])]
-    return "\n".join(_table(head, rows, widths, breaks=breaks)) + "\n"
+    notes = data.get("notes") or []
+    if notes:
+        out += section(f"Notes ({len(notes)})")
+        for n, note in enumerate(notes):
+            if n:
+                out.append("")
+            out.append("  " + paint(f"{_ago(note['at'])} · {note['at'][:16]}", "dim"))
+            out += para(note["text"], 4)
+    return "\n".join(out) + "\n"
 
 
 def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,

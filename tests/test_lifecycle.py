@@ -430,7 +430,7 @@ def test_status_cuts_a_long_name_and_outcome_to_a_line_and_nothing_else(project,
     assert project.query("item", str(idea.id))["name"] == idea.name
 
 
-def test_show_draws_an_item_as_a_card_and_views_as_status_tables(project, repo, git, commit):
+def test_show_draws_an_item_as_a_page_and_views_as_status_tables(project, repo, git, commit):
     long = "a name long enough that status would cut it " * 4
     item = project.add(long)
     project.start(item.id)
@@ -443,9 +443,11 @@ def test_show_draws_an_item_as_a_card_and_views_as_status_tables(project, repo, 
 
     card = render.item_text(project.query("item", str(item.id)),
                             project.landed_map(only=item.id).get(item.id))
-    flat = " ".join(line.split("│")[2].strip() for line in card.splitlines() if "│" in line)
+    flat = " ".join(line.strip() for line in card.splitlines())
     assert long.strip() in flat                       # whole, never cut
-    assert "✅ merged" in card and "it worked" in card
+    assert f"#{item.id}" in card and "✅ merged into main" in card and "it worked" in card
+    assert "│" not in card                            # a page, not a box
+    assert "behind" not in card                       # closed: landed says what matters
     assert card.index("first: the detail") < card.index("second: a reversal")
 
     closed = project.view_text("closed")
@@ -469,3 +471,13 @@ def test_color_only_where_asked_and_borders_still_line_up(project, monkeypatch):
     monkeypatch.delenv("NO_COLOR")
     monkeypatch.delenv("FORCE_COLOR")           # a pipe, as in every other test
     assert "\x1b[" not in project.status_text(), item
+
+
+def test_ago_reads_like_a_person_would_say_it():
+    now = datetime(2026, 10, 20, 12, 0)
+    assert render._ago("2026-10-20 11:59:30", now) == "just now"
+    assert render._ago("2026-10-20 09:00:00", now) == "3h ago"
+    assert render._ago("2026-10-17 12:00:00", now) == "3d ago"
+    assert render._ago("2026-10-20", now) == "today"
+    assert render._ago("2026-10-19", now) == "yesterday"
+    assert render._ago("2026-01-01", now) == "2026-01-01"   # far enough back, the date
