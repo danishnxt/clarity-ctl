@@ -221,8 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
                      "that is written down, so none of it can go stale.", section=look)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
-    p_status.add_argument("--reverse", action="store_true",
-                          help="oldest first in every group — finished work reads as a story")
+    p_status.add_argument("--order", choices=("newest", "oldest"), default="newest",
+                          help="newest first (default), or oldest first — finished work "
+                               "then reads as a story")
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
@@ -584,7 +585,7 @@ def run(args) -> int:
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
         data["landed"] = project.landed_map()
         emit(args, "status", data, project.status_text(
-            show_all=args.all, reverse=args.reverse, landed=data["landed"]))
+            show_all=args.all, oldest_first=args.order == "oldest", landed=data["landed"]))
 
     elif args.command == "show":
         name = args.name

@@ -1140,12 +1140,12 @@ class Project:
         """The root is a repo, and one of code rather than clarity's state."""
         return gitops.is_repo(self.root) and not self.worklog.state_repo
 
-    def status_text(self, show_all: bool = False, reverse: bool = False,
+    def status_text(self, show_all: bool = False, oldest_first: bool = False,
                     landed: dict | None = None) -> str:
         return render.status_text(
             self.worklog.objectives, self.worklog.items, show_all, self.leases(),
             branches=self.branches_root() or bool(self.worklog.repos),
             stale=self.stale_map(),
             landed=self.landed_map() if landed is None else landed,
-            reverse=reverse,
+            oldest_first=oldest_first,
         )

@@ -301,7 +301,7 @@ def test_landed_sees_plain_and_squash_merges_and_says_when_it_cannot_tell(repo, 
     assert gitops.landed(repo, tip, "no-such-base") is None
 
 
-def test_status_marks_what_landed_and_reverse_reads_oldest_first(project, repo, git, commit):
+def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, repo, git, commit):
     shipped = project.add("shipped")
     kept_off = project.add("kept off main")
     gave_up = project.add("gave up")
@@ -330,7 +330,7 @@ def test_status_marks_what_landed_and_reverse_reads_oldest_first(project, repo, 
     assert "[merged] outcome: in" in text and "[not merged] outcome: tried" in text
     closed = text.split("Closed")[1].split("Dropped")[0]
     assert closed.index("kept off") < closed.index("shipped")         # newest first
-    closed = project.status_text(show_all=True, reverse=True).split("Closed")[1]
+    closed = project.status_text(show_all=True, oldest_first=True).split("Closed")[1]
     assert closed.index("shipped") < closed.index("kept off")         # oldest first
 
     # in flight and already in its base: that is the one case worth saying

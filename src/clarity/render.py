@@ -144,28 +144,28 @@ def _line(item: Item, leases: dict | None = None, cols: int | None = None,
 def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
                 leases: dict | None = None, branches: bool = True,
                 stale: dict | None = None, landed: dict | None = None,
-                reverse: bool = False) -> str:
+                oldest_first: bool = False) -> str:
     """The one-screen view. Printed, never written down — see the module docstring."""
     cols = width()
     out = []
     for label, text in (("OBJECTIVE", objectives.overall),):
         out += _wrap(text or "— not set —", f"{label:<11}", " " * 11, cols)
     out.append("")
-    # What's ahead is a queue, oldest first — the top of the list is what to pick up.
-    # What's finished is a stack, newest on top — recent work is what you look back for.
-    # --reverse turns every group over: finished work then reads oldest first, as a story.
-    groups = [("Active", IN_FLIGHT, False), ("Up next", FUTURE, False)]
+    # One order for every group, named, so nobody has to remember which way a group
+    # runs: newest first by default — recent work is what you look for — and oldest
+    # first on request, when the finished work should read as a story.
+    groups = [("Active", IN_FLIGHT), ("Up next", FUTURE)]
     if show_all:
         # Closed is what you finished; dropped work gets its own group, so scanning
         # what shipped is never interleaved with what you gave up on.
-        groups += [("Closed", {"done"}, True), ("Dropped", {"dropped"}, True)]
+        groups += [("Closed", {"done"}), ("Dropped", {"dropped"})]
 
-    for title, statuses, newest_first in groups:
+    for title, statuses in groups:
         chosen = [i for i in items if i.status in statuses]
         # closed_seq is exact where it exists; a project that predates it falls back to
         # the date, which is how these read before, so old worklogs keep their order.
         chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", i.id),
-                    reverse=newest_first != reverse)
+                    reverse=not oldest_first)
         out.append(f"{title} ({len(chosen)})")
         out.append("─" * min(cols, 72))
         if not chosen:
