@@ -36,6 +36,8 @@ from .store import (
 )
 
 EPOCHS = "EPOCHS"
+SUBAGENTS = "subagents"  # child epochs' folders live under EPOCHS/subagents/
+CHILD_WT = "EPOCHS/*/*/wt/"  # a child's worktrees, one folder deeper than the rest
 LEARNINGS = "LEARNINGS"
 EPOCH_SUBDIRS = ("PLANS", "LOGS", "VIZ", "ANALYSIS")
 LOCK_FILE = "worklog.lock"
@@ -43,6 +45,7 @@ LOCK_FILE = "worklog.lock"
 GITIGNORE_LINES = [
     "# clarity",
     "EPOCHS/*/wt/",
+    CHILD_WT,
     "EPOCHS/*/.lease",
     ".clarity/cache/",
     ".clarity/worklog.lock",
@@ -504,7 +507,8 @@ class Project:
     def _make_folder(self, item: Item) -> Path:
         if item.folder and (self.root / item.folder).is_dir():
             return self.root / item.folder
-        folder = self.epochs_dir / item.folder_name
+        home = self.epochs_dir / SUBAGENTS if item.parent is not None else self.epochs_dir
+        folder = home / item.folder_name
         for sub in EPOCH_SUBDIRS:
             (folder / sub).mkdir(parents=True, exist_ok=True)
         item.folder = str(folder.relative_to(self.root))
@@ -513,7 +517,8 @@ class Project:
     def start(self, item_id: int, branch: str | None = None,
               take_lease: bool = True, reopen: bool = False,
               repos: list[str] | None = None,
-              no_repos: bool = False) -> tuple[Item, list[str]]:
+              no_repos: bool = False,
+              parent: int | None = None) -> tuple[Item, list[str]]:
         """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
 
         A closed epoch needs `reopen`, so picking work back up is deliberate rather
@@ -523,10 +528,16 @@ class Project:
         all of them. `no_repos` branches none — a folder and a lease, for planning or
         analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
         add_repos, so no command does two jobs depending on the epoch's state.
+
+        `parent` starts it as a subagent of an active epoch: its folder goes under
+        EPOCHS/subagents/, and its parent's close waits for it.
         """
         warnings: list[str] = []
         with self._write():
             item = self.worklog.by_id(item_id)
+            if parent is not None:
+                self._check_parent(item, parent)
+                item.parent = parent
             if item.status == "active":
                 raise ClarityError(
                     f"epoch {item.id} is already active — to add a repo:\n"
@@ -556,6 +567,8 @@ class Project:
                 item.outcome = None
                 item.ended = None
             folder = self._make_folder(item)
+            if item.parent is not None:
+                self.ensure_gitignore([CHILD_WT])  # projects set up before subagents
             # Claim before anything else: _write() saves only if the body succeeds, so a
             # refused lease leaves no half-started epoch and no worktree we may not use.
             if take_lease:
@@ -572,6 +585,39 @@ class Project:
             item.status = "active"
             item.started = item.started or today()
         return item, warnings
+
+    def _check_parent(self, item: Item, parent_id: int) -> None:
+        """Refuse a parent that cannot take a child: missing, archived, not active, a
+        child itself, or the epoch being started. One level only, so the tree stays
+        something a person can read."""
+        if parent_id == item.id:
+            raise ClarityError(f"epoch {item.id} cannot be its own parent", code=4)
+        parent = self.worklog.by_id(parent_id)
+        if parent.status not in IN_FLIGHT:
+            raise ClarityError(
+                f"parent {parent_id} is {parent.status} — start it first:\n"
+                f"  clarity-ctl epoch start {parent_id}", code=4)
+        if parent.parent is not None:
+            raise ClarityError(
+                f"parent {parent_id} is itself a subagent of {parent.parent} — "
+                "epochs nest one level only", code=4)
+
+    def children_of(self, item_id: int) -> list[Item]:
+        """Every child of an epoch, archived ones too: a finished child still counts."""
+        return [i for i in self.worklog.all_items() if i.parent == item_id]
+
+    def child_summary(self, child: Item) -> dict:
+        """What a parent's roll-up says about one child. Plain data, the same in
+        `show --json` and in the text view, so the two cannot disagree."""
+        held = self.leases().get(child.id)
+        return {
+            "id": child.id,
+            "name": child.name,
+            "status": child.status,
+            "outcome": child.outcome,
+            "handoff": child.handoff,
+            "lease": held,
+        }
 
     def _in_flight_with_repos(self, item: Item) -> Path:
         if item.status not in IN_FLIGHT:
@@ -1013,6 +1059,15 @@ class Project:
             item = self.worklog.by_id(self.resolve_id(item_id))
             if item.status in CLOSED:
                 raise ClarityError(f"item {item.id} is already {item.status}", code=4)
+            # a parent is not done while a subagent of it is still running or still leased
+            leased = self.leases()
+            running = [c.id for c in self.children_of(item.id)
+                       if c.status in IN_FLIGHT or c.id in leased]
+            if running:
+                ids = ", ".join(str(i) for i in running)
+                raise ClarityError(
+                    f"epoch {item.id} has subagents still running: {ids}\n"
+                    f"  close or release them first — see: clarity-ctl show {item.id}", code=4)
             folder = self.folder_of(item)
             # its branch and end sha live in that repo: closing now would record
             # neither, and leave a worktree git can no longer remove
@@ -1058,6 +1113,9 @@ class Project:
             written = write_archive(self.root, closing)
             gone = {i.id for i in closing}
             self.worklog.items = [i for i in self.worklog.items if i.id not in gone]
+            # this object now answers for them too, without a reload
+            for item in closing:
+                self.worklog.archived[item.id] = (item, f"{(item.ended or item.created)[:7]}.yaml")
         return written
 
     # ---------- reading ----------
@@ -1082,6 +1140,10 @@ class Project:
             held = self.leases().get(item.id)
             if held:
                 data["lease"] = held
+            kids = self.children_of(item.id)
+            if kids:
+                # the roll-up: each child's status, outcome, handoff and lease
+                data["children"] = [self.child_summary(c) for c in kids]
             folder = self.folder_of(item)
             if folder and folder.is_dir():
                 plans = self._plans(folder)
@@ -1166,10 +1228,12 @@ class Project:
         titles = {"active": ["Active"], "next": ["Up next"], "closed": ["Closed", "Dropped"],
                   "all": list(render.GROUPS)}[name]
         return render.view_text(self.worklog.items, titles, self.leases(),
-                                self.stale_map(), self.landed_map())
+                                self.stale_map(), self.landed_map(),
+                                kids=self.children_by_parent())
 
     def status_text(self, show_all: bool = False, oldest_first: bool = False,
-                    landed: dict | None = None, limit: int = render.CLOSED_LIMIT) -> str:
+                    landed: dict | None = None, limit: int = render.CLOSED_LIMIT,
+                    children: bool = False) -> str:
         return render.status_text(
             self.worklog.objectives, self.worklog.items, show_all, self.leases(),
             branches=self.branches_root() or bool(self.worklog.repos),
@@ -1177,4 +1241,13 @@ class Project:
             landed=self.landed_map() if landed is None else landed,
             oldest_first=oldest_first,
             limit=limit,
+            kids=self.children_by_parent(),
+            children=children,
         )
+
+    def children_by_parent(self) -> dict[int, list[Item]]:
+        out: dict[int, list[Item]] = {}
+        for item in self.worklog.all_items():
+            if item.parent is not None:
+                out.setdefault(item.parent, []).append(item)
+        return out

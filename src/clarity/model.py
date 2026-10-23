@@ -45,6 +45,9 @@ class Note:
     text: str
 
 
+# The tag that makes a note a handoff. Plain text, so it survives in every view.
+HANDOFF = "HANDOFF:"
+
 # Folder and branch names come from the item's name. Short enough to read in a
 # listing; an item named like a title fits whole.
 SLUG_MAX = 30
@@ -66,6 +69,9 @@ class Item:
     # list at first start, so close and refresh act on what was actually branched
     # even if that list changes later. None means the root repo, as before.
     repos: list[str] | None = None
+    # The epoch this one was started under, as a subagent of it. None for a top-level
+    # epoch. One level only: a child cannot be a parent.
+    parent: int | None = None
     # The branch each repo's epoch branch catches up with, keyed like `repos` ("."
     # for the root). Taken from the repo's checkout when the epoch first branches
     # it, so switching that checkout later for unrelated work changes nothing.
@@ -82,7 +88,7 @@ class Item:
     extra: dict = field(default_factory=dict)  # preserves hand-added keys
 
     KNOWN = (
-        "id name type status description outcome folder branch repos bases "
+        "id name type status description outcome folder branch repos parent bases "
         "evidence notes created started ended closed_seq"
     ).split()
 
@@ -106,6 +112,15 @@ class Item:
             out["notes"] = [{"at": n.at, "text": n.text} for n in self.notes]
         out.update(self.extra)
         return out
+
+    @property
+    def handoff(self) -> str | None:
+        """The latest note an agent wrote as its handoff: a note starting `HANDOFF:`.
+        What is finished, what is stuck, what the next agent should do first."""
+        for note in reversed(self.notes):
+            if note.text.startswith(HANDOFF):
+                return note.text[len(HANDOFF):].strip()
+        return None
 
     @property
     def slug(self) -> str:

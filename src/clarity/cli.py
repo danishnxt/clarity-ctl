@@ -228,6 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("--order", choices=("newest", "oldest"), default="newest",
                           help="newest first (default), or oldest first — finished work "
                                "then reads as a story")
+    p_status.add_argument("--children", action="store_true",
+                          help="list subagents in the tables too, not only counted on "
+                               "their parent's row")
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
@@ -314,6 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "epoch add-repo brings repos in when the code starts.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
+    p_start.add_argument("--parent", type=int, metavar="<id>",
+                         help="start it as a subagent of this active epoch; its folder goes "
+                              "under EPOCHS/subagents/, and the parent cannot close while it runs")
     which = p_start.add_mutually_exclusive_group()
     _repo_arg(which)
     which.add_argument("--no-repos", action="store_true",
@@ -560,7 +566,8 @@ def run(args) -> int:
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
         data["landed"] = project.landed_map()
         emit(args, "status", data, project.status_text(
-            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit, landed=data["landed"]))
+            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
+            landed=data["landed"], children=args.children))
 
     elif args.command == "show":
         name = args.name
@@ -628,7 +635,8 @@ def run(args) -> int:
                 raise ClarityError("--branch names the branch to make, and --no-repos "
                                    "makes none — pass one", code=2)
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
-                                           repos=args.repos, no_repos=args.no_repos)
+                                           repos=args.repos, no_repos=args.no_repos,
+                                           parent=args.parent)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:
