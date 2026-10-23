@@ -397,11 +397,16 @@ def build_parser() -> argparse.ArgumentParser:
     _id_arg(p_claim)
     p_claim.add_argument("--steal", action="store_true",
                          help="take over someone else's lease, recording who held it")
+    p_claim.add_argument("--as", dest="as_name", metavar="<name>",
+                         help="name the holder, e.g. epoch15-opus, so status shows which "
+                              "agent holds what; release with the same name")
 
     p_release = _leaf(sub, "release", "drop the lease", section=parallel)
     _id_arg(p_release)
     p_release.add_argument("--force", action="store_true",
                            help="release a lease held by someone else")
+    p_release.add_argument("--as", dest="as_name", metavar="<name>",
+                           help="the name the lease was claimed under, with claim --as")
 
     ACTIONS.clear()
     ACTIONS.update(objective=obj_rows, repo=repo_rows, idea=idea_rows, epoch=epoch_rows)
@@ -677,7 +682,7 @@ def run(args) -> int:
         emit(args, "note", item.to_dict(), f"noted on {item.id} ({len(item.notes)} so far)")
 
     elif args.command == "claim":
-        item, held = project.claim(args.id, steal=args.steal)
+        item, held = project.claim(args.id, steal=args.steal, as_name=args.as_name)
         # no expiry by design — a lease says who and since when, and waits for a person
         human = f"epoch {item.id} claimed by {held['owner']}@{held['host']}"
         if held.get("stolen_from"):
@@ -685,7 +690,7 @@ def run(args) -> int:
         emit(args, "claim", {"item": item.to_dict(), "lease": held}, human)
 
     elif args.command == "release":
-        item = project.release(args.id, force=args.force)
+        item = project.release(args.id, force=args.force, as_name=args.as_name)
         emit(args, "release", item.to_dict(), f"epoch {item.id} released")
 
     return 0

@@ -368,19 +368,21 @@ class Project:
                     out[item.id] = {**held, "age": lease.age(held)}
         return out
 
-    def claim(self, item_id: int | None = None, steal: bool = False) -> tuple[Item, dict]:
+    def claim(self, item_id: int | None = None, steal: bool = False,
+              as_name: str | None = None) -> tuple[Item, dict]:
         item = self.worklog.by_id(self.resolve_id(item_id))
         folder = self.folder_of(item)
         if not folder:
             raise ClarityError(f"item {item.id} has no folder to lease", code=4)
-        held = lease.claim(folder, steal=steal, label=item.name)
+        held = lease.claim(folder, steal=steal, label=item.name, name=as_name)
         return item, held
 
-    def release(self, item_id: int | None = None, force: bool = False) -> Item:
+    def release(self, item_id: int | None = None, force: bool = False,
+                as_name: str | None = None) -> Item:
         item = self.worklog.by_id(self.resolve_id(item_id))
         folder = self.folder_of(item)
         if folder:
-            lease.release(folder, force=force)
+            lease.release(folder, force=force, name=as_name)
         return item
 
     # ---------- objectives ----------

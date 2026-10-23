@@ -40,13 +40,14 @@ def _stamp(moment: datetime) -> str:
     return moment.isoformat(timespec="seconds")
 
 
-def whoami() -> dict:
-    """Identity of this holder. CLARITY_AGENT lets an agent name itself.
+def whoami(name: str | None = None) -> dict:
+    """Identity of this holder. `name` (claim --as) wins, then CLARITY_AGENT, so an
+    agent can name itself per command or once per shell.
 
     A self-declared string, like a kubernetes lease's holderIdentity — never a pid.
     """
     return {
-        "owner": os.environ.get("CLARITY_AGENT") or os.environ.get("USER") or "unknown",
+        "owner": name or os.environ.get("CLARITY_AGENT") or os.environ.get("USER") or "unknown",
         "host": socket.gethostname(),
     }
 
@@ -66,8 +67,8 @@ def read(folder: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def held_by_us(lease: dict) -> bool:
-    me = whoami()
+def held_by_us(lease: dict, name: str | None = None) -> bool:
+    me = whoami(name)
     return lease.get("owner") == me["owner"] and lease.get("host") == me["host"]
 
 
@@ -92,10 +93,11 @@ def describe(lease: dict) -> str:
     return f"{who}, claimed {when}" if when else who
 
 
-def claim(folder: Path, steal: bool = False, label: str | None = None) -> dict:
+def claim(folder: Path, steal: bool = False, label: str | None = None,
+          name: str | None = None) -> dict:
     """Take the lease. Refuses if anyone else holds it, unless stealing."""
     folder.mkdir(parents=True, exist_ok=True)
-    lease = {**whoami(), "at": _stamp(_now())}
+    lease = {**whoami(name), "at": _stamp(_now())}
     if label:
         lease["label"] = label
 
@@ -104,14 +106,14 @@ def claim(folder: Path, steal: bool = False, label: str | None = None) -> dict:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
         current = read(folder)
-        if current and not held_by_us(current) and not steal:
+        if current and not held_by_us(current, name) and not steal:
             raise ClarityError(
                 f"epoch is leased by {describe(current)}\n"
                 "  check whether that agent is still working before you take it\n"
                 "  then: clarity-ctl claim <id> --steal",
                 code=4,
             )
-        if current and steal and not held_by_us(current):
+        if current and steal and not held_by_us(current, name):
             lease["stolen_from"] = describe(current)
         fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
 
@@ -120,11 +122,11 @@ def claim(folder: Path, steal: bool = False, label: str | None = None) -> dict:
     return lease
 
 
-def release(folder: Path, force: bool = False) -> bool:
+def release(folder: Path, force: bool = False, name: str | None = None) -> bool:
     current = read(folder)
     if current is None:
         return False
-    if not force and not held_by_us(current):
+    if not force and not held_by_us(current, name):
         raise ClarityError(f"lease belongs to {describe(current)} — use --force", code=4)
     path_for(folder).unlink(missing_ok=True)
     return True
