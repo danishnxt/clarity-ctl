@@ -40,7 +40,7 @@ exit codes:
   0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
 """
 
-SHOW_NAMES = "active | next | closed | all | objective | leases | <id>"
+SHOW_NAMES = "active | next | closed | all | objective | <id>"
 
 
 def envelope(command: str, data, warnings=None) -> str:
@@ -239,8 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
                    "  closed     done and dropped\n"
                    "  all        everything\n"
                    "  objective  what the project is for\n"
-                   "  leases     who holds which epoch\n"
-                   "  <id>       one item: status, branch, repos, notes, lease, plans\n\n"
+                   "  <id>       one item: status, branch, repos, notes, plans; lease in --json\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
@@ -595,10 +594,6 @@ def run(args) -> int:
             data = project.query(name)
             if name == "objective":
                 human = f"OBJECTIVE  {data['overall'] or '— not set —'}"
-            elif name == "leases":
-                human = "\n".join(
-                    f"{i:>3}  {h.get('owner', '?')}@{h.get('host', '?')}, {h.get('age', '?')}"
-                    for i, h in data["leases"].items()) or "no leases held"
             else:
                 human = project.view_text(name)
             emit(args, f"show.{name}", data, human)

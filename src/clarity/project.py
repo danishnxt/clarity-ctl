@@ -1140,7 +1140,9 @@ class Project:
         "closed": CLOSED,
         "all": set(STATUSES),
     }
-    SHOW_NAMES = [*VIEWS, "objective", "leases"]
+    # No `leases` view: who holds what is for agents, and status --json and
+    # show <id> --json already carry it.
+    SHOW_NAMES = [*VIEWS, "objective"]
 
     def query(self, name: str, arg: str | None = None) -> dict:
         views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
@@ -1167,8 +1169,6 @@ class Project:
             return data
         if name == "objective":
             return self.worklog.objectives.to_dict()
-        if name == "leases":
-            return {"leases": self.leases()}
         if name not in views:
             raise ClarityError(
                 f"unknown view {name!r}; try: {', '.join(self.SHOW_NAMES)}, or an id",
