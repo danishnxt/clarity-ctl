@@ -152,9 +152,30 @@ def _id_arg(node, what: str = "the epoch"):
 
 def _repo_arg(parser) -> None:
     parser.add_argument(
-        "--repo", action="append", metavar="<repo>", dest="repos",
-        help="branch only this listed repo — its path or folder name, exactly; "
-             "repeat for more. Default: every listed repo")
+        "--repo", action="append", metavar="<repo|all|none>", dest="repos",
+        help="which listed repos to branch: one by path or folder name (repeat for more), "
+             "all of them, or none. Required when the project lists repos")
+
+
+def _repo_choice(project, item_id: int, repos: list[str] | None,
+                 no_repos: bool) -> tuple[list[str] | None, bool]:
+    """--repo as (repos, no_repos) for Project.start: `all` is every listed repo, `none`
+    is --no-repos. In a project that lists repos, leaving the choice out is refused —
+    a default that branches everything is the mistake an agent makes without noticing,
+    and the refusal names all three answers, so it doubles as the reminder."""
+    if repos and len(repos) == 1 and repos[0] in ("all", "none"):
+        return None, repos[0] == "none"
+    if repos and {"all", "none"} & set(repos):
+        raise ClarityError("--repo all and --repo none stand alone — not with other repos",
+                           code=2)
+    if not repos and not no_repos and project.worklog.repos:
+        listed = ", ".join(project.worklog.repos)
+        raise ClarityError(
+            f"say which repos epoch {item_id} branches — one of:\n"
+            f"  --repo <repo>   just these, repeat for more ({listed})\n"
+            f"  --repo all      every listed repo\n"
+            f"  --repo none     nothing yet; add one later with epoch add-repo", code=2)
+    return repos, no_repos
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -229,8 +250,8 @@ def build_parser() -> argparse.ArgumentParser:
                           help="newest first (default), or oldest first — finished work "
                                "then reads as a story")
     p_status.add_argument("--children", action="store_true",
-                          help="list subagents in the tables too, not only counted on "
-                               "their parent's row")
+                          help="list swarm members as rows of their own, not only under "
+                               "their swarm epoch")
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
@@ -309,25 +330,27 @@ def build_parser() -> argparse.ArgumentParser:
                     "Takes an idea straight to active. Creates "
                     "epoch/NNN-slug unless --branch names one; if that branch is already "
                     "checked out somewhere, wt/ symlinks to it instead of adding a worktree. "
-                    "Every listed repo is branched unless --repo picks some; to add one "
-                    "later, use epoch add-repo.\n\n"
-                    "Just planning, or analysis with no code expected yet? --no-repos "
+                    "When the project lists repos, say which to branch: --repo <repo> "
+                    "(repeat for more), --repo all, or --repo none; to add one later, use "
+                    "epoch add-repo.\n\n"
+                    "Just planning, or analysis with no code expected yet? --repo none "
                     "gives the epoch its folder and lease and branches nothing; "
-                    "epoch add-repo brings repos in when the code starts.")
+                    "epoch add-repo brings repos in when the code starts.\n\n"
+                    "Splitting the work across agents? --parent <id> starts this epoch in "
+                    "that epoch's swarm.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
     p_start.add_argument("--brief", metavar="<text|file>",
                          help="what the work is for and what limits apply — the text, or a "
                               "file holding it; shown first to whoever picks the epoch up")
     p_start.add_argument("--parent", type=int, metavar="<id>",
-                         help="start it as a subagent of this active epoch; its folder goes "
-                              "in the parent's swarm, EPOCHS/swarms/<parent>/, and the parent cannot "
+                         help="start it in the swarm of this active epoch; its folder goes "
+                              "in EPOCHS/swarms/<that epoch>/, and the swarm epoch cannot "
                               "close while it runs")
     which = p_start.add_mutually_exclusive_group()
     _repo_arg(which)
     which.add_argument("--no-repos", action="store_true",
-                       help="branch nothing yet — for planning or analysis; "
-                            "add repos later with epoch add-repo")
+                       help="the same as --repo none")
 
     p_reopen = _leaf(epoch, "reopen", "pick a closed epoch back up — straight to active",
                      into=epoch_rows,
@@ -628,7 +651,8 @@ def run(args) -> int:
             item = project.add(args.text, type_=args.type, evidence=args.evidence)
             emit(args, "idea.add", item.to_dict(),
                  f"idea {item.id}: {item.name}\n"
-                 f"  start it with: clarity-ctl epoch start {item.id}")
+                 f"  start it with: clarity-ctl epoch start {item.id}"
+                 + (" --repo <repo|all|none>" if project.worklog.repos else ""))
         else:
             human = "\n".join(
                 _item_line(i) for i in project.worklog.with_status({"idea"})
@@ -637,11 +661,13 @@ def run(args) -> int:
 
     elif args.command == "epoch":
         if action == "start":
-            if args.no_repos and args.branch:
-                raise ClarityError("--branch names the branch to make, and --no-repos "
+            item_id = project.resolve_id(args.id)
+            repos, no_repos = _repo_choice(project, item_id, args.repos, args.no_repos)
+            if no_repos and args.branch:
+                raise ClarityError("--branch names the branch to make, and --repo none "
                                    "makes none — pass one", code=2)
-            item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
-                                           repos=args.repos, no_repos=args.no_repos,
+            item, warnings = project.start(item_id, branch=args.branch,
+                                           repos=repos, no_repos=no_repos,
                                            parent=args.parent, brief=args.brief)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))

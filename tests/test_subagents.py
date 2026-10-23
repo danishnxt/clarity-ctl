@@ -52,13 +52,13 @@ def test_epochs_nest_one_level_only(project):
     child = _child(project, parent, "child")
     grandchild = project.add("grandchild")
 
-    with pytest.raises(ClarityError, match="one level only"):
+    with pytest.raises(ClarityError, match="nest one level only"):
         project.start(grandchild.id, parent=child.id)
 
 
 def test_parent_cannot_be_itself(project):
     parent = _active(project, "self")
-    with pytest.raises(ClarityError, match="own parent"):
+    with pytest.raises(ClarityError, match="own swarm"):
         project._check_parent(parent, parent.id)
 
 
@@ -66,7 +66,7 @@ def test_close_parent_refused_while_child_runs(project):
     parent = _active(project, "parent")
     child = _child(project, parent, "still going")
 
-    with pytest.raises(ClarityError, match="subagents still running"):
+    with pytest.raises(ClarityError, match="swarm is still running"):
         project.close(parent.id, "shipped")
 
     project.close(child.id, "done")
@@ -111,7 +111,7 @@ def test_active_parent_lists_subagents_one_line_each(project):
 
     assert f"↳ #{first.id} ▸ worker one" in text
     assert f"↳ #{second.id} ✓ worker two" in text
-    assert "subagents:" not in text  # a list, not a count, while the parent runs
+    assert "swarm of" not in text  # a list, not a count, while the swarm runs
 
 
 def test_closed_parent_shows_only_the_count(project):
@@ -122,7 +122,7 @@ def test_closed_parent_shows_only_the_count(project):
 
     text = Project.find(project.root).status_text(show_all=True)
 
-    assert "1 subagent: 0 active, 1 closed" in text
+    assert "swarm of 1: 0 active, 1 closed" in text
     assert "finished worker" not in text
 
 
@@ -132,7 +132,7 @@ def test_children_flag_lists_them_as_rows(project):
 
     expanded = Project.find(project.root).status_text(children=True)
 
-    assert f"subagent of {parent.id}" in expanded
+    assert f"in swarm {parent.id}" in expanded
     assert "↳" not in expanded  # rows already list them; the parent shows the count
     assert [c.id for c in Project.find(project.root).children_by_parent()[parent.id]] == [child.id]
 
@@ -158,7 +158,7 @@ def test_show_text_has_subagents_section(project):
     data = Project.find(project.root).query("item", str(parent.id))
     text = render.item_text(data)
 
-    assert "Subagents (1)" in text
+    assert "Swarm (1)" in text
     assert "worker one" in text
     assert "handoff: waiting on the API key" in text
 

@@ -538,9 +538,9 @@ class Project:
         analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
         add_repos, so no command does two jobs depending on the epoch's state.
 
-        `parent` starts it as a subagent of an active epoch: its folder goes under
-        EPOCHS/swarms/<parent's folder>/, beside the rest of its swarm, and its
-        parent's close waits for it.
+        `parent` starts it in the swarm of an active epoch: its folder goes under
+        EPOCHS/swarms/<that epoch's folder>/, beside the rest of the swarm, and the
+        swarm epoch's close waits for it.
 
         `brief` is the text, or the path to a file holding it. Given on a reopen, it
         replaces the old one; left out, the brief stays.
@@ -608,16 +608,16 @@ class Project:
         child itself, or the epoch being started. One level only, so the tree stays
         something a person can read."""
         if parent_id == item.id:
-            raise ClarityError(f"epoch {item.id} cannot be its own parent", code=4)
+            raise ClarityError(f"epoch {item.id} cannot be in its own swarm", code=4)
         parent = self.worklog.by_id(parent_id)
         if parent.status not in IN_FLIGHT:
             raise ClarityError(
-                f"parent {parent_id} is {parent.status} — start it first:\n"
+                f"swarm epoch {parent_id} is {parent.status} — start it first:\n"
                 f"  clarity-ctl epoch start {parent_id}", code=4)
         if parent.parent is not None:
             raise ClarityError(
-                f"parent {parent_id} is itself a subagent of {parent.parent} — "
-                "epochs nest one level only", code=4)
+                f"epoch {parent_id} is itself in swarm {parent.parent} — "
+                "swarms nest one level only", code=4)
 
     def children_of(self, item_id: int) -> list[Item]:
         """Every child of an epoch, archived ones too: a finished child still counts."""
@@ -1078,14 +1078,14 @@ class Project:
             item = self.worklog.by_id(self.resolve_id(item_id))
             if item.status in CLOSED:
                 raise ClarityError(f"item {item.id} is already {item.status}", code=4)
-            # a parent is not done while a subagent of it is still running or still leased
+            # a swarm epoch is not done while a member is still running or still leased
             leased = self.leases()
             running = [c.id for c in self.children_of(item.id)
                        if c.status in IN_FLIGHT or c.id in leased]
             if running:
                 ids = ", ".join(str(i) for i in running)
                 raise ClarityError(
-                    f"epoch {item.id} has subagents still running: {ids}\n"
+                    f"epoch {item.id}'s swarm is still running: {ids}\n"
                     f"  close or release them first — see: clarity-ctl show {item.id}", code=4)
             folder = self.folder_of(item)
             # its branch and end sha live in that repo: closing now would record

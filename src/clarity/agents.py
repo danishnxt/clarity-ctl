@@ -88,15 +88,16 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
   crash on missing repo"`. The why, the evidence and the context go in a note
   right after — the first note is the detail. Folder and branch names come from
   the name.
-- Start work with `clarity-ctl epoch start <id> --brief "<goal and limits>"`; it takes an
-  idea straight to active, and the brief is what whoever picks the epoch up reads first.
+- Start work with `clarity-ctl epoch start <id> --repo <repo|all|none> --brief "<goal and
+  limits>"`; it takes an idea straight to active, and the brief is what whoever picks the
+  epoch up reads first. Name the repos you will change; a project that lists repos asks.
   Then work in that epoch's folder: `clarity-ctl path <id>`.
 - Every command that acts on an epoch takes its id, always: `clarity-ctl note 7
   "..."`. Clarity never infers which epoch you mean and will refuse without one.
 - Claim before you work: `clarity-ctl claim <id> --as <your name>`; release with the same
   name when done: `clarity-ctl release <id> --as <your name>`.
-- Splitting work out to a subagent: `clarity-ctl epoch start <id> --parent <pid>`, with
-  the parent active. The parent cannot close while a subagent still runs.
+- Running a swarm: start each agent's part with `clarity-ctl epoch start <id> --parent
+  <swarm epoch id>`, the swarm epoch active. It cannot close while any member still runs.
 - Stopping before the work is done: write a note starting `HANDOFF:` — what is finished,
   what is stuck, what the next agent should do first. `show <id>` reads the latest one.
 - Write a note the moment a decision changes — a reversal, an approach you

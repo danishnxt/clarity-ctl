@@ -74,3 +74,51 @@ def test_release_needs_the_same_name_it_was_claimed_under(project):
 
     project.release(item.id, as_name="agent-a")
     assert lease.read(project.folder_of(project.worklog.by_id(item.id))) is None
+
+
+# ---- the repo choice on epoch start: required where the project lists repos ----
+
+def _start(monkeypatch, root, *argv):
+    from clarity.cli import main
+    monkeypatch.chdir(root)
+    return main(["epoch", "start", *argv])
+
+
+def test_start_without_a_repo_choice_is_refused_with_the_three_answers(
+        workspace, monkeypatch, capsys):
+    item = workspace.add("needs a choice")
+
+    code = _start(monkeypatch, workspace.root, str(item.id))
+
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "--repo <repo>" in err and "--repo all" in err and "--repo none" in err
+    assert Project.find(workspace.root).worklog.by_id(item.id).status == "idea"
+
+
+def test_repo_all_branches_every_listed_repo(workspace, monkeypatch):
+    item = workspace.add("everything")
+
+    assert _start(monkeypatch, workspace.root, str(item.id), "--repo", "all") == 0
+    assert Project.find(workspace.root).worklog.by_id(item.id).repos == [
+        "workspace/agent", "workspace/harness"]
+
+
+def test_repo_none_branches_nothing(workspace, monkeypatch):
+    item = workspace.add("planning")
+
+    assert _start(monkeypatch, workspace.root, str(item.id), "--repo", "none") == 0
+    assert Project.find(workspace.root).worklog.by_id(item.id).repos == []
+
+
+def test_repo_all_cannot_be_mixed_with_names(workspace, monkeypatch):
+    item = workspace.add("mixed")
+
+    assert _start(monkeypatch, workspace.root, str(item.id),
+                  "--repo", "all", "--repo", "workspace/agent") == 2
+
+
+def test_a_project_that_branches_its_root_needs_no_choice(project, monkeypatch):
+    item = project.add("single repo")
+
+    assert _start(monkeypatch, project.root, str(item.id)) == 0
