@@ -317,6 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "epoch add-repo brings repos in when the code starts.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
+    p_start.add_argument("--brief", metavar="<text|file>",
+                         help="what the work is for and what limits apply — the text, or a "
+                              "file holding it; shown first to whoever picks the epoch up")
     p_start.add_argument("--parent", type=int, metavar="<id>",
                          help="start it as a subagent of this active epoch; its folder goes "
                               "under EPOCHS/subagents/, and the parent cannot close while it runs")
@@ -641,7 +644,7 @@ def run(args) -> int:
                                    "makes none — pass one", code=2)
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
                                            repos=args.repos, no_repos=args.no_repos,
-                                           parent=args.parent)
+                                           parent=args.parent, brief=args.brief)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:

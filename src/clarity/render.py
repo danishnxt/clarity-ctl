@@ -373,6 +373,10 @@ def item_text(data: dict, marks: dict | None = None) -> str:
     if data.get("outcome"):
         out += [""] + para(data["outcome"], 2)
 
+    if data.get("brief"):
+        out += section("Brief")
+        out += para(data["brief"], 2)
+
     where: list[tuple[str, str]] = []
     if data.get("branch"):
         where.append(("branch", data["branch"]))

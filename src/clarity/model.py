@@ -62,6 +62,9 @@ class Item:
     type: str = "feature"
     status: str = "idea"
     description: str | None = None
+    # What the work is for and what limits apply, written once at start. Read first by
+    # whoever picks the epoch up, including a replacement agent after a kill.
+    brief: str | None = None
     outcome: str | None = None
     folder: str | None = None
     branch: str | None = None
@@ -88,7 +91,7 @@ class Item:
     extra: dict = field(default_factory=dict)  # preserves hand-added keys
 
     KNOWN = (
-        "id name type status description outcome folder branch repos parent bases "
+        "id name type status description brief outcome folder branch repos parent bases "
         "evidence notes created started ended closed_seq"
     ).split()
 

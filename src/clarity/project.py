@@ -520,7 +520,8 @@ class Project:
               take_lease: bool = True, reopen: bool = False,
               repos: list[str] | None = None,
               no_repos: bool = False,
-              parent: int | None = None) -> tuple[Item, list[str]]:
+              parent: int | None = None,
+              brief: str | None = None) -> tuple[Item, list[str]]:
         """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
 
         A closed epoch needs `reopen`, so picking work back up is deliberate rather
@@ -533,13 +534,20 @@ class Project:
 
         `parent` starts it as a subagent of an active epoch: its folder goes under
         EPOCHS/subagents/, and its parent's close waits for it.
+
+        `brief` is the text, or the path to a file holding it. Given on a reopen, it
+        replaces the old one; left out, the brief stays.
         """
         warnings: list[str] = []
+        if brief and Path(brief).is_file():
+            brief = Path(brief).read_text(encoding="utf-8").strip()
         with self._write():
             item = self.worklog.by_id(item_id)
             if parent is not None:
                 self._check_parent(item, parent)
                 item.parent = parent
+            if brief:
+                item.brief = brief
             if item.status == "active":
                 raise ClarityError(
                     f"epoch {item.id} is already active — to add a repo:\n"
@@ -1035,10 +1043,12 @@ class Project:
         close never merges, so this is what stops finished work from being closed
         while it still sits only on its branch. A squash merge leaves the branch's
         own commits unmerged by this measure; the warning says so rather than guess.
+
+        An experiment is meant to stay unmerged, so it gets no warning at all.
         """
         item = self.worklog.by_id(item_id)
         folder = self.folder_of(item)
-        if not item.branch or not folder:
+        if not item.branch or not folder or item.type == "experiment":
             return []
         out = []
         for repo, _ in self._targets(item, folder):
