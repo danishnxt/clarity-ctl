@@ -321,7 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
                               "file holding it; shown first to whoever picks the epoch up")
     p_start.add_argument("--parent", type=int, metavar="<id>",
                          help="start it as a subagent of this active epoch; its folder goes "
-                              "under EPOCHS/subagents/, and the parent cannot close while it runs")
+                              "in the parent's swarm, EPOCHS/swarms/<parent>/, and the parent cannot "
+                              "close while it runs")
     which = p_start.add_mutually_exclusive_group()
     _repo_arg(which)
     which.add_argument("--no-repos", action="store_true",

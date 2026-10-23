@@ -19,13 +19,24 @@ def _child(project, parent, name):
     return started
 
 
-def test_child_folder_goes_under_subagents(project):
+def test_a_swarm_is_kept_together_under_its_parent(project):
     parent = _active(project, "big job")
-    child = _child(project, parent, "fan out one")
+    one = _child(project, parent, "fan out one")
+    two = _child(project, parent, "fan out two")
 
-    assert child.folder.startswith("EPOCHS/subagents/")
-    assert (project.root / child.folder).is_dir()
-    assert not (project.root / parent.folder / "subagents").exists()
+    swarm = f"EPOCHS/swarms/{parent.folder.split('/')[-1]}/"
+    assert one.folder.startswith(swarm) and two.folder.startswith(swarm)
+    assert (project.root / one.folder).is_dir()
+
+
+def test_a_child_lease_and_worktree_are_gitignored(project, git):
+    parent = _active(project, "parent")
+    child = _child(project, parent, "ignored bits")
+
+    ignored = (project.root / ".gitignore").read_text()
+    assert "EPOCHS/swarms/*/*/wt/" in ignored and "EPOCHS/swarms/*/*/.lease" in ignored
+    lease_file = f"{child.folder}/.lease"
+    assert git(["check-ignore", lease_file], project.root) == lease_file
 
 
 def test_parent_must_be_active(project):

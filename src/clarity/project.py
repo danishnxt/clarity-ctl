@@ -36,8 +36,11 @@ from .store import (
 )
 
 EPOCHS = "EPOCHS"
-SUBAGENTS = "subagents"  # child epochs' folders live under EPOCHS/subagents/
-CHILD_WT = "EPOCHS/*/*/wt/"  # a child's worktrees, one folder deeper than the rest
+# A swarm is a parent's children, kept together: EPOCHS/swarms/<parent folder>/<child>.
+SWARMS = "swarms"
+# A child sits two folders deeper than a top-level epoch, so its worktrees and lease
+# need their own lines — EPOCHS/*/wt/ and EPOCHS/*/.lease do not reach it.
+SWARM_IGNORES = ["EPOCHS/swarms/*/*/wt/", "EPOCHS/swarms/*/*/.lease"]
 LEARNINGS = "LEARNINGS"
 EPOCH_SUBDIRS = ("PLANS", "LOGS", "VIZ", "ANALYSIS")
 LOCK_FILE = "worklog.lock"
@@ -45,7 +48,7 @@ LOCK_FILE = "worklog.lock"
 GITIGNORE_LINES = [
     "# clarity",
     "EPOCHS/*/wt/",
-    CHILD_WT,
+    *SWARM_IGNORES,
     "EPOCHS/*/.lease",
     ".clarity/cache/",
     ".clarity/worklog.lock",
@@ -509,7 +512,10 @@ class Project:
     def _make_folder(self, item: Item) -> Path:
         if item.folder and (self.root / item.folder).is_dir():
             return self.root / item.folder
-        home = self.epochs_dir / SUBAGENTS if item.parent is not None else self.epochs_dir
+        home = self.epochs_dir
+        if item.parent is not None:
+            parent = self.worklog.by_id(item.parent)
+            home = self.epochs_dir / SWARMS / Path(parent.folder).name
         folder = home / item.folder_name
         for sub in EPOCH_SUBDIRS:
             (folder / sub).mkdir(parents=True, exist_ok=True)
@@ -533,7 +539,8 @@ class Project:
         add_repos, so no command does two jobs depending on the epoch's state.
 
         `parent` starts it as a subagent of an active epoch: its folder goes under
-        EPOCHS/subagents/, and its parent's close waits for it.
+        EPOCHS/swarms/<parent's folder>/, beside the rest of its swarm, and its
+        parent's close waits for it.
 
         `brief` is the text, or the path to a file holding it. Given on a reopen, it
         replaces the old one; left out, the brief stays.
@@ -578,7 +585,7 @@ class Project:
                 item.ended = None
             folder = self._make_folder(item)
             if item.parent is not None:
-                self.ensure_gitignore([CHILD_WT])  # projects set up before subagents
+                self.ensure_gitignore(SWARM_IGNORES)  # projects set up before swarms
             # Claim before anything else: _write() saves only if the body succeeds, so a
             # refused lease leaves no half-started epoch and no worktree we may not use.
             if take_lease:
