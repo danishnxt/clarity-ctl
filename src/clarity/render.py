@@ -412,7 +412,10 @@ def item_text(data: dict, marks: dict | None = None) -> str:
             glyph = paint(f"{_GLYPH.get(kid['status'], ' ')} {kid['status']}",
                           _GLYPH_STYLE.get(kid["status"]))
             out.append(f"  #{kid['id']} {kid['name']} — {glyph}")
-            if kid.get("handoff"):
+            # a finished child is summed up by its outcome; one still going, by its handoff
+            if kid["status"] in CLOSED and kid.get("outcome"):
+                out += para(f"outcome: {kid['outcome']}", 4, "dim")
+            elif kid.get("handoff"):
                 out += para(f"handoff: {kid['handoff']}", 4, "dim")
 
     notes = data.get("notes") or []

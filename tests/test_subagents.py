@@ -173,3 +173,17 @@ def test_archive_keeps_parent_child_link(project):
     _, name = fresh.worklog.lookup(child.id)
     assert name and name.endswith(".yaml")  # archived, not live
     assert fresh.worklog.lookup(child.id)[0].parent == parent.id
+
+
+def test_show_text_gives_a_closed_child_its_outcome(project):
+    from clarity import render
+
+    parent = _active(project, "parent")
+    child = _child(project, parent, "finished worker")
+    project.note(child.id, f"{HANDOFF} almost there")
+    project.close(child.id, "statements ported")
+
+    text = render.item_text(Project.find(project.root).query("item", str(parent.id)))
+
+    assert "outcome: statements ported" in text
+    assert "handoff: almost there" not in text  # the outcome supersedes it
