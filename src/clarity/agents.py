@@ -93,6 +93,10 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
 - Every command that acts on an epoch takes its id, always: `clarity-ctl note 7
   "..."`. Clarity never infers which epoch you mean and will refuse without one.
 - Claim before you work: `clarity-ctl claim <id>`, `clarity-ctl release <id>` when done.
+- Splitting work out to a subagent: `clarity-ctl epoch start <id> --parent <pid>`, with
+  the parent active. The parent cannot close while a subagent still runs.
+- Stopping before the work is done: write a note starting `HANDOFF:` — what is finished,
+  what is stuck, what the next agent should do first. `show <id>` reads the latest one.
 - Write a note the moment a decision changes — a reversal, an approach you
   rejected, a result that surprised you: `clarity-ctl note <id> "..."`. Not when
   work completes; in a long session it never does, and the record is what the

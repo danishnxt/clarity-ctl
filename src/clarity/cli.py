@@ -19,7 +19,7 @@ from pathlib import Path
 from . import render
 from .model import TYPES
 from .project import Project
-from .store import ClarityError
+from .store import ARCHIVE, ClarityError
 
 VERSION = "0.1.0"
 
@@ -228,6 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("--order", choices=("newest", "oldest"), default="newest",
                           help="newest first (default), or oldest first — finished work "
                                "then reads as a story")
+    p_status.add_argument("--children", action="store_true",
+                          help="list subagents in the tables too, not only counted on "
+                               "their parent's row")
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
@@ -314,6 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "epoch add-repo brings repos in when the code starts.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
+    p_start.add_argument("--parent", type=int, metavar="<id>",
+                         help="start it as a subagent of this active epoch; its folder goes "
+                              "under EPOCHS/subagents/, and the parent cannot close while it runs")
     which = p_start.add_mutually_exclusive_group()
     _repo_arg(which)
     which.add_argument("--no-repos", action="store_true",
@@ -388,6 +394,12 @@ def build_parser() -> argparse.ArgumentParser:
                      "old name is kept as a note.", section=work)
     _id_arg(p_rename, "the item")
     p_rename.add_argument("name", metavar="<name>", help="the new name, a short title")
+
+    _leaf(sub, "archive", "move closed epochs out of worklog.yaml into ARCHIVE/",
+          "Closed epochs and dropped ideas leave the live worklog for ARCHIVE/<month>.yaml, "
+          "one file per month they ended in. Their folders stay put and their ids are never "
+          "reused. Archived epochs still read with show <id>; they cannot be changed.",
+          section=work)
 
     p_claim = _leaf(sub, "claim", "take the lease on an epoch",
                     "Says who is working an epoch, and refuses a second claim. It is a "
@@ -559,7 +571,8 @@ def run(args) -> int:
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
         data["landed"] = project.landed_map()
         emit(args, "status", data, project.status_text(
-            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit, landed=data["landed"]))
+            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
+            landed=data["landed"], children=args.children))
 
     elif args.command == "show":
         name = args.name
@@ -627,7 +640,8 @@ def run(args) -> int:
                 raise ClarityError("--branch names the branch to make, and --no-repos "
                                    "makes none — pass one", code=2)
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
-                                           repos=args.repos, no_repos=args.no_repos)
+                                           repos=args.repos, no_repos=args.no_repos,
+                                           parent=args.parent)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:
@@ -673,6 +687,15 @@ def run(args) -> int:
     elif args.command == "rename":
         item = project.rename(args.id, args.name)
         emit(args, "rename", item.to_dict(), f"{item.id} is now: {item.name}")
+
+    elif args.command == "archive":
+        written = project.archive()
+        data = {"files": [{"file": f"{ARCHIVE}/{name}", "added": n} for name, n in written]}
+        if not written:
+            human = "nothing to archive — no closed epochs in worklog.yaml"
+        else:
+            human = "\n".join(f"archived {n} into {ARCHIVE}/{name}" for name, n in written)
+        emit(args, "archive", data, human)
 
     elif args.command == "note":
         target, text = _split_id_text(args.id, args.text)

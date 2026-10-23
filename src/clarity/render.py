@@ -119,7 +119,8 @@ def _landed(marks: dict[str, str] | None) -> str | None:
 
 
 def _cell(item: Item, leases: dict | None, stale: dict | None,
-          marks: dict | None) -> list[tuple[str, str | None, bool]]:
+          marks: dict | None, kids: list[Item] | None = None,
+          expanded: bool = False) -> list[tuple[str, str | None, bool]]:
     """What goes in an item's main cell: (text, style, one line?) per paragraph —
     name, then detail.
 
@@ -132,6 +133,14 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
         paras.append((f"outcome: {item.outcome}", "dim", True))
     elif item.folder:
         paras.append((item.folder, "dim", False))
+    if expanded and item.parent is not None:
+        paras.append((f"subagent of {item.parent}", "dim", False))
+    if kids:
+        # a parent's children are counted here and listed by show <id>, not in every table
+        active = len([c for c in kids if c.status in IN_FLIGHT])
+        closed = len([c for c in kids if c.status in CLOSED])
+        word = "subagent" if len(kids) == 1 else "subagents"
+        paras.append((f"{len(kids)} {word}: {active} active, {closed} closed", "dim", False))
     held = (leases or {}).get(item.id)
     if held:
         # the age is the whole judgement: nothing expires, so you decide if it's stale
@@ -228,12 +237,17 @@ GROUPS = {
 
 def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
             leases: dict | None, stale: dict | None, landed: dict | None,
-            oldest_first: bool, limit: int) -> tuple[list[str], bool]:
-    """One titled table per group. True as well if any name or outcome was cut."""
+            oldest_first: bool, limit: int, kids: dict | None = None,
+            children: bool = False) -> tuple[list[str], bool]:
+    """One titled table per group. True as well if any name or outcome was cut.
+
+    Subagents are left out of the tables unless `children` asks for them: under a
+    parent they are counted on its row, so ten running agents do not bury the list.
+    """
     out: list[str] = []
     cut_any = False
     for title, statuses in groups:
-        chosen = [i for i in items if i.status in statuses]
+        chosen = [i for i in items if i.status in statuses and (children or i.parent is None)]
         # closed_seq is exact where it exists; a project that predates it falls back to
         # the date, which is how these read before, so old worklogs keep their order.
         chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", i.id),
@@ -257,7 +271,8 @@ def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
         rows = []
         for item in chosen:
             mark = _landed((landed or {}).get(item.id)) or ""
-            text, was_cut = _fill(_cell(item, leases, stale, (landed or {}).get(item.id)),
+            text, was_cut = _fill(_cell(item, leases, stale, (landed or {}).get(item.id),
+                                        kids=(kids or {}).get(item.id), expanded=children),
                                   widths[2])
             cut_any = cut_any or was_cut
             cells = [[paint(_GLYPH.get(item.status, " "), _GLYPH_STYLE.get(item.status))],
@@ -279,10 +294,11 @@ def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
 
 
 def view_text(items: list[Item], titles: list[str], leases: dict | None = None,
-              stale: dict | None = None, landed: dict | None = None) -> str:
+              stale: dict | None = None, landed: dict | None = None,
+              kids: dict | None = None, children: bool = False) -> str:
     """`show active|next|closed|all`: status's tables for just those groups, uncut by count."""
     lines, cut = _groups(items, [(t, GROUPS[t]) for t in titles], width(), leases, stale,
-                         landed, oldest_first=False, limit=0)
+                         landed, oldest_first=False, limit=0, kids=kids, children=children)
     if cut:
         lines.append(paint(CUT_HINT, "dim"))
     return "\n".join(lines).rstrip() + "\n"
@@ -341,6 +357,10 @@ def item_text(data: dict, marks: dict | None = None) -> str:
         facts.append(paint(mark + into, "yellow" if ":" in mark else
                            "red" if "not" in mark else "green"))
     facts.append(paint(data.get("type", ""), "dim"))
+    if data.get("archived"):
+        facts.append(paint(f"archived in {data['archived']} (read-only)", "dim"))
+    if data.get("parent") is not None:
+        facts.append(paint(f"subagent of {data['parent']}", "dim"))
     if data.get("ended"):
         when = f"closed {_ago(data['ended'])}"
     elif data.get("started"):
@@ -386,6 +406,20 @@ def item_text(data: dict, marks: dict | None = None) -> str:
             out.append("  " + paint(f"{key:<{key_w}}", "dim") + (lines or [""])[0])
             out += [" " * (2 + key_w) + line for line in lines[1:]]
 
+    kids = data.get("children") or []
+    if kids:
+        out += section(f"Subagents ({len(kids)})")
+        for kid in kids:
+            glyph = paint(f"{_GLYPH.get(kid['status'], ' ')} {kid['status']}",
+                          _GLYPH_STYLE.get(kid["status"]))
+            held = kid.get("lease")
+            line = f"  #{kid['id']} {kid['name']} — {glyph}"
+            if held:
+                line += paint(f" · held by {held.get('owner', '?')}", "dim")
+            out.append(line)
+            if kid.get("handoff"):
+                out += para(f"handoff: {kid['handoff']}", 4, "dim")
+
     notes = data.get("notes") or []
     if notes:
         out += section(f"Notes ({len(notes)})")
@@ -400,7 +434,8 @@ def item_text(data: dict, marks: dict | None = None) -> str:
 def status_text(objectives: Objectives, items: list[Item], show_all: bool = False,
                 leases: dict | None = None, branches: bool = True,
                 stale: dict | None = None, landed: dict | None = None,
-                oldest_first: bool = False, limit: int = CLOSED_LIMIT) -> str:
+                oldest_first: bool = False, limit: int = CLOSED_LIMIT,
+                kids: dict | None = None, children: bool = False) -> str:
     """The one-screen view. Printed, never written down — see the module docstring."""
     cols = width()
     out = []
@@ -413,7 +448,8 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
     titles = ["Active", "Up next"] + (["Closed", "Dropped"] if show_all else [])
     groups = [(t, GROUPS[t]) for t in titles]
 
-    lines, cut_any = _groups(items, groups, cols, leases, stale, landed, oldest_first, limit)
+    lines, cut_any = _groups(items, groups, cols, leases, stale, landed, oldest_first, limit,
+                             kids=kids, children=children)
     out += lines
     if cut_any:
         out.append(paint(CUT_HINT, "dim"))
