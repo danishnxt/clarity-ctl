@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = _leaf(sub, "status", "print what's active and what's next",
                      "Prints only; it never writes. The view is composed on every run "
                      "from the worklog plus what is true on this machine right now — "
-                     "who holds a lease, how far each branch trails its base, and whether "
+                     "who holds a lease (in --json), how far each branch trails its base, and whether "
                      "its work has landed there. None of "
                      "that is written down, so none of it can go stale.", section=look)
     p_status.add_argument("--all", action="store_true",
@@ -573,6 +573,8 @@ def run(args) -> int:
         data["stale"] = project.stale_map()
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
         data["landed"] = project.landed_map()
+        # who holds which epoch — data only; the tables leave it out
+        data["leases"] = project.leases()
         emit(args, "status", data, project.status_text(
             show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
             landed=data["landed"], children=args.children))

@@ -140,21 +140,12 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
         # cut like a name. Once it closes, a count is all the table needs.
         for kid in kids:
             line = f"↳ #{kid.id} {_GLYPH.get(kid.status, ' ')} {kid.name}"
-            holder = (leases or {}).get(kid.id)
-            if holder:
-                line += f" · {holder.get('owner', '?')}"
             paras.append((line, "dim" if kid.status in CLOSED else None, True))
     elif kids:
         active = len([c for c in kids if c.status in IN_FLIGHT])
         closed = len([c for c in kids if c.status in CLOSED])
         word = "subagent" if len(kids) == 1 else "subagents"
         paras.append((f"{len(kids)} {word}: {active} active, {closed} closed", "dim", False))
-    held = (leases or {}).get(item.id)
-    if held:
-        # the age is the whole judgement: nothing expires, so you decide if it's stale
-        who = f"{held.get('owner', '?')}@{held.get('host', '?')}"
-        since = held.get("age")
-        paras.append((f"held by {who}{', ' + since if since else ''}", "dim", False))
     mark = _landed(marks)
     if item.status in CLOSED and mark and ":" in mark:
         # the column says "mixed"; this says which
@@ -403,10 +394,6 @@ def item_text(data: dict, marks: dict | None = None) -> str:
         where.append(("repo", f"{git['repo']} — {', '.join(facts)}"))
     if not data.get("git"):
         where += [("repo", r) for r in data.get("repos") or []]
-    held = data.get("lease")
-    if held:
-        where.append(("lease", f"held by {held.get('owner', '?')}@{held.get('host', '?')}, "
-                               f"{held.get('age', '?')}"))
     where += [("plan", p) for p in data.get("plans") or []]
     if data.get("evidence"):
         where.append(("from", data["evidence"]))
@@ -424,11 +411,7 @@ def item_text(data: dict, marks: dict | None = None) -> str:
         for kid in kids:
             glyph = paint(f"{_GLYPH.get(kid['status'], ' ')} {kid['status']}",
                           _GLYPH_STYLE.get(kid["status"]))
-            held = kid.get("lease")
-            line = f"  #{kid['id']} {kid['name']} — {glyph}"
-            if held:
-                line += paint(f" · held by {held.get('owner', '?')}", "dim")
-            out.append(line)
+            out.append(f"  #{kid['id']} {kid['name']} — {glyph}")
             if kid.get("handoff"):
                 out += para(f"handoff: {kid['handoff']}", 4, "dim")
 

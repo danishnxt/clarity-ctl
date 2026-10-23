@@ -61,7 +61,7 @@ def test_claiming_leaves_nothing_to_go_stale(project, monkeypatch):
 
     touched = writes_during(monkeypatch, lambda: project.claim(item.id))
     assert touched == []
-    assert "held by" in project.status_text()  # composed live, every run
+    assert project.leases()[item.id]["owner"]  # composed live, every run
 
 
 def test_an_unchanged_render_does_not_touch_the_file(project, repo):
