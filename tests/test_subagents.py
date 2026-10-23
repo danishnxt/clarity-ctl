@@ -89,19 +89,41 @@ def test_children_still_counted_after_archive(project):
     assert roll["children"][0]["status"] == "done"
 
 
-def test_status_text_counts_children_and_hides_them_by_default(project):
+def test_active_parent_lists_subagents_one_line_each(project):
     parent = _active(project, "parent")
-    child = _child(project, parent, "hidden worker")
+    first = _child(project, parent, "worker one")
+    second = _child(project, parent, "worker two")
+    project.close(second.id, "done")
     fresh = Project.find(project.root)
 
     text = fresh.status_text()
-    assert "1 subagent: 1 active, 0 closed" in text
-    assert "hidden worker" not in text
 
-    expanded = fresh.status_text(children=True)
-    assert "hidden worker" in expanded
+    assert f"↳ #{first.id} ▸ worker one" in text
+    assert f"↳ #{second.id} ✓ worker two" in text
+    assert "subagents:" not in text  # a list, not a count, while the parent runs
+
+
+def test_closed_parent_shows_only_the_count(project):
+    parent = _active(project, "parent")
+    child = _child(project, parent, "finished worker")
+    project.close(child.id, "done")
+    project.close(parent.id, "shipped")
+
+    text = Project.find(project.root).status_text(show_all=True)
+
+    assert "1 subagent: 0 active, 1 closed" in text
+    assert "finished worker" not in text
+
+
+def test_children_flag_lists_them_as_rows(project):
+    parent = _active(project, "parent")
+    child = _child(project, parent, "row of its own")
+
+    expanded = Project.find(project.root).status_text(children=True)
+
     assert f"subagent of {parent.id}" in expanded
-    assert [c.id for c in fresh.children_by_parent()[parent.id]] == [child.id]
+    assert "↳" not in expanded  # rows already list them; the parent shows the count
+    assert [c.id for c in Project.find(project.root).children_by_parent()[parent.id]] == [child.id]
 
 
 def test_json_status_is_never_collapsed(project):

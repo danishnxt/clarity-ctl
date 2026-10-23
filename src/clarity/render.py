@@ -135,8 +135,16 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
         paras.append((item.folder, "dim", False))
     if expanded and item.parent is not None:
         paras.append((f"subagent of {item.parent}", "dim", False))
-    if kids:
-        # a parent's children are counted here and listed by show <id>, not in every table
+    if kids and item.status in IN_FLIGHT and not expanded:
+        # while the parent runs, its subagents are what you are watching: one line each,
+        # cut like a name. Once it closes, a count is all the table needs.
+        for kid in kids:
+            line = f"↳ #{kid.id} {_GLYPH.get(kid.status, ' ')} {kid.name}"
+            holder = (leases or {}).get(kid.id)
+            if holder:
+                line += f" · {holder.get('owner', '?')}"
+            paras.append((line, "dim" if kid.status in CLOSED else None, True))
+    elif kids:
         active = len([c for c in kids if c.status in IN_FLIGHT])
         closed = len([c for c in kids if c.status in CLOSED])
         word = "subagent" if len(kids) == 1 else "subagents"
