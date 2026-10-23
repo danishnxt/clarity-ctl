@@ -22,6 +22,7 @@ from .model import (
     today,
 )
 from .store import (
+    ARCHIVE,
     CONFIG_DIR,
     WORKLOG,
     ClarityError,
@@ -29,6 +30,7 @@ from .store import (
     file_lock,
     load_config,
     save_config,
+    write_archive,
     write_atomic,
     write_if_changed,
 )
@@ -1039,9 +1041,24 @@ class Project:
             # Derived, not a stored counter: a counter is a second source of truth that
             # can drift from the items it numbers. Safe under _write()'s lock.
             item.closed_seq = max(
-                (i.closed_seq or 0 for i in self.worklog.items), default=0
+                (i.closed_seq or 0 for i in self.worklog.all_items()), default=0
             ) + 1
         return item
+
+    def archive(self) -> list[tuple[str, int]]:
+        """Move every closed epoch out of worklog.yaml into ARCHIVE/<month>.yaml.
+
+        Their folders stay where they are, and their ids are never reused. Returns
+        the files written, empty when nothing was closed.
+        """
+        with self._write():
+            closing = [i for i in self.worklog.items if i.status in CLOSED]
+            if not closing:
+                return []
+            written = write_archive(self.root, closing)
+            gone = {i.id for i in closing}
+            self.worklog.items = [i for i in self.worklog.items if i.id not in gone]
+        return written
 
     # ---------- reading ----------
 
@@ -1058,8 +1075,10 @@ class Project:
     def query(self, name: str, arg: str | None = None) -> dict:
         views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
         if name == "item":
-            item = self.worklog.by_id(self.resolve_id(arg))
+            item, archive_file = self.worklog.lookup(self.resolve_id(arg))
             data = item.to_dict()
+            if archive_file:
+                data["archived"] = f"{ARCHIVE}/{archive_file}"
             held = self.leases().get(item.id)
             if held:
                 data["lease"] = held

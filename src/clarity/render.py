@@ -341,6 +341,8 @@ def item_text(data: dict, marks: dict | None = None) -> str:
         facts.append(paint(mark + into, "yellow" if ":" in mark else
                            "red" if "not" in mark else "green"))
     facts.append(paint(data.get("type", ""), "dim"))
+    if data.get("archived"):
+        facts.append(paint(f"archived in {data['archived']} (read-only)", "dim"))
     if data.get("ended"):
         when = f"closed {_ago(data['ended'])}"
     elif data.get("started"):

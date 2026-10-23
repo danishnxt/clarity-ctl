@@ -19,7 +19,7 @@ from pathlib import Path
 from . import render
 from .model import TYPES
 from .project import Project
-from .store import ClarityError
+from .store import ARCHIVE, ClarityError
 
 VERSION = "0.1.0"
 
@@ -389,6 +389,12 @@ def build_parser() -> argparse.ArgumentParser:
     _id_arg(p_rename, "the item")
     p_rename.add_argument("name", metavar="<name>", help="the new name, a short title")
 
+    _leaf(sub, "archive", "move closed epochs out of worklog.yaml into ARCHIVE/",
+          "Closed epochs and dropped ideas leave the live worklog for ARCHIVE/<month>.yaml, "
+          "one file per month they ended in. Their folders stay put and their ids are never "
+          "reused. Archived epochs still read with show <id>; they cannot be changed.",
+          section=work)
+
     p_claim = _leaf(sub, "claim", "take the lease on an epoch",
                     "Says who is working an epoch, and refuses a second claim. It is a "
                     "warning, not a lock — nothing stops another agent editing the "
@@ -668,6 +674,15 @@ def run(args) -> int:
     elif args.command == "rename":
         item = project.rename(args.id, args.name)
         emit(args, "rename", item.to_dict(), f"{item.id} is now: {item.name}")
+
+    elif args.command == "archive":
+        written = project.archive()
+        data = {"files": [{"file": f"{ARCHIVE}/{name}", "added": n} for name, n in written]}
+        if not written:
+            human = "nothing to archive — no closed epochs in worklog.yaml"
+        else:
+            human = "\n".join(f"archived {n} into {ARCHIVE}/{name}" for name, n in written)
+        emit(args, "archive", data, human)
 
     elif args.command == "note":
         target, text = _split_id_text(args.id, args.text)
