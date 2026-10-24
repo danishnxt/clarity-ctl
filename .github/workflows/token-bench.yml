@@ -1,0 +1,84 @@
+# The token-savings benchmark (bench/token-savings). Manual only: a full run costs
+# real money. Needs an ANTHROPIC_API_KEY repository secret.
+#
+# Every arm of every replicate runs on its own throwaway runner. That is what makes
+# --bypass safe, and it means no arm can wander into another's files. Run folders
+# live in RUNNER_TEMP, outside the checkout. The last job combines them.
+name: token-bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      blocks:
+        description: "Blocks of 8 sessions"
+        default: "8"
+      checkpoints:
+        description: "Probe after these blocks"
+        default: "1,3,8"
+      reps:
+        description: "Repeats of each probe"
+        default: "5"
+      replicates:
+        description: "Independent workload runs, as a JSON list"
+        default: "[1, 2]"
+      model:
+        default: "claude-sonnet-5-5"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(inputs.replicates) }}
+        arm: [clarity, claudemd, vanilla]
+    env:
+      OUT: ${{ runner.temp }}/bench/r${{ matrix.replicate }}-${{ matrix.arm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >
+          python3 bench/token-savings/run.py all --bypass --out "$OUT"
+          --replicate ${{ matrix.replicate }}
+          --arms ${{ matrix.arm == 'clarity' && 'clarity,ripout' || matrix.arm }}
+          --blocks ${{ inputs.blocks }} --checkpoints ${{ inputs.checkpoints }}
+          --reps ${{ inputs.reps }} --model ${{ inputs.model }} --grader ${{ inputs.model }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r${{ matrix.replicate }}-${{ matrix.arm }}
+          path: |
+            ${{ env.OUT }}/config.json
+            ${{ env.OUT }}/results.jsonl
+            ${{ env.OUT }}/report.md
+            ${{ env.OUT }}/traces/
+            ${{ env.OUT }}/arms/*/snap-*.tar
+
+  report:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/bench
+      - name: Combine replicates
+        run: |
+          outs=$(for d in "$RUNNER_TEMP"/bench/r*/; do printf -- '--out %s ' "$d"; done)
+          python3 bench/token-savings/run.py report $outs
+          cat "$RUNNER_TEMP/bench/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: |
+            ${{ runner.temp }}/bench/report.md
+            ${{ runner.temp }}/bench/summary.csv
