@@ -88,11 +88,22 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
   crash on missing repo"`. The why, the evidence and the context go in a note
   right after — the first note is the detail. Folder and branch names come from
   the name.
-- Start work with `clarity-ctl epoch start <id>`; it takes an idea straight to active.
+- Start work with `clarity-ctl epoch start <id> --repo <repo|all|none> --brief "<goal and
+  limits>"`; it takes an idea straight to active, and the brief is what whoever picks the
+  epoch up reads first. Name the repos you will change; a project that lists repos asks.
   Then work in that epoch's folder: `clarity-ctl path <id>`.
 - Every command that acts on an epoch takes its id, always: `clarity-ctl note 7
   "..."`. Clarity never infers which epoch you mean and will refuse without one.
-- Claim before you work: `clarity-ctl claim <id>`, `clarity-ctl release <id>` when done.
+- Claim before you work: `clarity-ctl claim <id> --as <your name>`; release with the same
+  name when done: `clarity-ctl release <id> --as <your name>`.
+- Splitting an epoch across agents: give each agent's part a subepoch, only when it
+  needs a branch of its own — quick work is a note on the epoch. `clarity-ctl epoch
+  spawn <id> "<name>" --brief "<goal and limits>"` gives `<id>.1`, `<id>.2`, branched
+  from the epoch's branch. The part's agent claims it with `--as`, writes a `HANDOFF:`
+  note and releases when it stops, and does not close it. Whoever owns the epoch notes
+  any feedback on the subepoch, merges its branch into the epoch's, and closes it.
+- Stopping before the work is done: write a note starting `HANDOFF:` — what is finished,
+  what is stuck, what the next agent should do first. `show <id>` reads the latest one.
 - Write a note the moment a decision changes — a reversal, an approach you
   rejected, a result that surprised you: `clarity-ctl note <id> "..."`. Not when
   work completes; in a long session it never does, and the record is what the

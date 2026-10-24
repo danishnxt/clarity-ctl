@@ -45,6 +45,31 @@ class Note:
     text: str
 
 
+# The tag that makes a note a handoff. Plain text, so it survives in every view.
+HANDOFF = "HANDOFF:"
+
+def parse_id(value) -> int | str | None:
+    """An id as given — 7, or "7.1" for a subepoch — in its one stored form, or None.
+
+    A top-level id is an int. A subepoch's is "<parent>.<n>", counted per parent, so
+    it reads as part of its parent and uses up none of the top-level numbers. YAML
+    reads an unquoted 7.1 as a float; str() brings that back too.
+    """
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    head, dot, tail = text.partition(".")
+    if dot and head.isdigit() and tail.isdigit() and int(tail) > 0:
+        return f"{int(head)}.{int(tail)}"
+    return None
+
+
+def id_key(item_id: int | str) -> tuple[int, int]:
+    """Sorts 7 before 7.1 before 7.2 before 8 — never 7.10 before 7.2."""
+    head, _, tail = str(item_id).partition(".")
+    return int(head), int(tail or 0)
+
+
 # Folder and branch names come from the item's name. Short enough to read in a
 # listing; an item named like a title fits whole.
 SLUG_MAX = 30
@@ -54,11 +79,14 @@ SLUG_MAX = 30
 class Item:
     """One unit of work: idea, feature, fix, experiment."""
 
-    id: int
+    id: int | str  # 7, or "7.1" for a subepoch — see parse_id
     name: str
     type: str = "feature"
     status: str = "idea"
     description: str | None = None
+    # What the work is for and what limits apply, written once at start. Read first by
+    # whoever picks the epoch up, including a replacement agent after a kill.
+    brief: str | None = None
     outcome: str | None = None
     folder: str | None = None
     branch: str | None = None
@@ -66,6 +94,9 @@ class Item:
     # list at first start, so close and refresh act on what was actually branched
     # even if that list changes later. None means the root repo, as before.
     repos: list[str] | None = None
+    # The epoch this one was spawned under, as a subepoch of it: the head of its id.
+    # None for a top-level epoch. One level only: a subepoch cannot have its own.
+    parent: int | None = None
     # The branch each repo's epoch branch catches up with, keyed like `repos` ("."
     # for the root). Taken from the repo's checkout when the epoch first branches
     # it, so switching that checkout later for unrelated work changes nothing.
@@ -82,7 +113,7 @@ class Item:
     extra: dict = field(default_factory=dict)  # preserves hand-added keys
 
     KNOWN = (
-        "id name type status description outcome folder branch repos bases "
+        "id name type status description brief outcome folder branch repos parent bases "
         "evidence notes created started ended closed_seq"
     ).split()
 
@@ -91,6 +122,8 @@ class Item:
         known = {k: raw.get(k) for k in cls.KNOWN if k in raw}
         notes = [Note(**n) for n in (known.pop("notes", None) or [])]
         extra = {k: v for k, v in raw.items() if k not in cls.KNOWN}
+        if parse_id(known.get("id")) is not None:
+            known["id"] = parse_id(known["id"])
         item = cls(**known, notes=notes, extra=extra)
         return item
 
@@ -108,6 +141,15 @@ class Item:
         return out
 
     @property
+    def handoff(self) -> str | None:
+        """The latest note an agent wrote as its handoff: a note starting `HANDOFF:`.
+        What is finished, what is stuck, what the next agent should do first."""
+        for note in reversed(self.notes):
+            if note.text.startswith(HANDOFF):
+                return note.text[len(HANDOFF):].strip()
+        return None
+
+    @property
     def slug(self) -> str:
         keep = [c.lower() if c.isalnum() else "-" for c in self.name]
         slug = "".join(keep)
@@ -121,8 +163,14 @@ class Item:
         return slug or f"item-{self.id}"
 
     @property
+    def code(self) -> str:
+        """The id as folder and branch names carry it: 007, or 007.1 for a subepoch."""
+        head, _ = id_key(self.id)
+        return f"{head:03d}" if isinstance(self.id, int) else f"{head:03d}.{id_key(self.id)[1]}"
+
+    @property
     def folder_name(self) -> str:
-        return f"{self.id:03d}_{today()}__{self.slug}"
+        return f"{self.code}_{today()}__{self.slug}"
 
 
 @dataclass

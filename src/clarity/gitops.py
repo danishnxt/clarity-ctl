@@ -198,13 +198,17 @@ def merge_into(worktree: Path, base: str) -> str:
         ) from None
 
 
-def add_worktree(root: Path, target: Path, branch: str, create: bool) -> None:
+def add_worktree(root: Path, target: Path, branch: str, create: bool,
+                 start: str | None = None) -> None:
+    """`start` is where a created branch begins; left out, it is the checkout's HEAD."""
     args = ["worktree", "add"]
     if create:
         args += ["-b", branch]
     args.append(str(target))
     if not create:
         args.append(branch)
+    elif start:
+        args.append(start)
     _run(args, root)
 
 

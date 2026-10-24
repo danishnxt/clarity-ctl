@@ -17,9 +17,9 @@ import sys
 from pathlib import Path
 
 from . import render
-from .model import TYPES
+from .model import TYPES, parse_id
 from .project import Project
-from .store import ClarityError
+from .store import ARCHIVE, ClarityError
 
 VERSION = "0.1.0"
 
@@ -40,7 +40,7 @@ exit codes:
   0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
 """
 
-SHOW_NAMES = "active | next | closed | all | objective | leases | <id>"
+SHOW_NAMES = "active | next | closed | all | objective | <id>"
 
 
 def envelope(command: str, data, warnings=None) -> str:
@@ -152,9 +152,30 @@ def _id_arg(node, what: str = "the epoch"):
 
 def _repo_arg(parser) -> None:
     parser.add_argument(
-        "--repo", action="append", metavar="<repo>", dest="repos",
-        help="branch only this listed repo — its path or folder name, exactly; "
-             "repeat for more. Default: every listed repo")
+        "--repo", action="append", metavar="<repo|all|none>", dest="repos",
+        help="which listed repos to branch: one by path or folder name (repeat for more), "
+             "all of them, or none. Required when the project lists repos")
+
+
+def _repo_choice(project, item_id: int, repos: list[str] | None,
+                 no_repos: bool) -> tuple[list[str] | None, bool]:
+    """--repo as (repos, no_repos) for Project.start: `all` is every listed repo, `none`
+    is --no-repos. In a project that lists repos, leaving the choice out is refused —
+    a default that branches everything is the mistake an agent makes without noticing,
+    and the refusal names all three answers, so it doubles as the reminder."""
+    if repos and len(repos) == 1 and repos[0] in ("all", "none"):
+        return None, repos[0] == "none"
+    if repos and {"all", "none"} & set(repos):
+        raise ClarityError("--repo all and --repo none stand alone — not with other repos",
+                           code=2)
+    if not repos and not no_repos and project.worklog.repos:
+        listed = ", ".join(project.worklog.repos)
+        raise ClarityError(
+            f"say which repos epoch {item_id} branches — one of:\n"
+            f"  --repo <repo>   just these, repeat for more ({listed})\n"
+            f"  --repo all      every listed repo\n"
+            f"  --repo none     nothing yet; add one later with epoch add-repo", code=2)
+    return repos, no_repos
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -217,7 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = _leaf(sub, "status", "print what's active and what's next",
                      "Prints only; it never writes. The view is composed on every run "
                      "from the worklog plus what is true on this machine right now — "
-                     "who holds a lease, how far each branch trails its base, and whether "
+                     "who holds a lease (in --json), how far each branch trails its base, and whether "
                      "its work has landed there. None of "
                      "that is written down, so none of it can go stale.", section=look)
     p_status.add_argument("--all", action="store_true",
@@ -228,6 +249,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("--order", choices=("newest", "oldest"), default="newest",
                           help="newest first (default), or oldest first — finished work "
                                "then reads as a story")
+    p_status.add_argument("--children", action="store_true",
+                          help="list subepochs as rows of their own, not only under "
+                               "their parent epoch")
 
     p_show = _leaf(sub, "show", "print one view of the worklog, or one item",
                    f"Read-only. Views: {SHOW_NAMES}.\n\n"
@@ -236,8 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
                    "  closed     done and dropped\n"
                    "  all        everything\n"
                    "  objective  what the project is for\n"
-                   "  leases     who holds which epoch\n"
-                   "  <id>       one item: status, branch, repos, notes, lease, plans\n\n"
+                   "  <id>       one item: status, branch, repos, notes, plans; lease in --json\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
@@ -307,18 +330,44 @@ def build_parser() -> argparse.ArgumentParser:
                     "Takes an idea straight to active. Creates "
                     "epoch/NNN-slug unless --branch names one; if that branch is already "
                     "checked out somewhere, wt/ symlinks to it instead of adding a worktree. "
-                    "Every listed repo is branched unless --repo picks some; to add one "
-                    "later, use epoch add-repo.\n\n"
-                    "Just planning, or analysis with no code expected yet? --no-repos "
+                    "When the project lists repos, say which to branch: --repo <repo> "
+                    "(repeat for more), --repo all, or --repo none; to add one later, use "
+                    "epoch add-repo.\n\n"
+                    "Just planning, or analysis with no code expected yet? --repo none "
                     "gives the epoch its folder and lease and branches nothing; "
-                    "epoch add-repo brings repos in when the code starts.")
+                    "epoch add-repo brings repos in when the code starts.\n\n"
+                    "Splitting the work across agents? epoch spawn <id> starts a subepoch "
+                    "of an active epoch.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
+    p_start.add_argument("--brief", metavar="<text|file>",
+                         help="what the work is for and what limits apply — the text, or a "
+                              "file holding it; shown first to whoever picks the epoch up")
     which = p_start.add_mutually_exclusive_group()
     _repo_arg(which)
     which.add_argument("--no-repos", action="store_true",
-                       help="branch nothing yet — for planning or analysis; "
-                            "add repos later with epoch add-repo")
+                       help="the same as --repo none")
+
+    p_spawn = _leaf(epoch, "spawn", "start a subepoch of an active epoch, for another agent",
+                    into=epoch_rows, description=
+                    "Adds and starts one part of an active epoch, numbered under it: "
+                    "spawning under 7 gives 7.1, then 7.2. Its branch is cut from 7's and "
+                    "merges back into it; only 7 merges onward. It branches 7's repos "
+                    "unless --repo names some of them. Its folder goes in "
+                    "EPOCHS/subepochs/<7's folder>/, and 7 cannot close while it is "
+                    "active.\n\n"
+                    "The lease is left free for the agent doing the part: it claims with "
+                    "claim <id> --as <name>, writes a HANDOFF: note and releases when it "
+                    "stops. Whoever owns 7 reviews, merges, and closes it.\n\n"
+                    "Quick work that needs no branch of its own is a note on 7, not a "
+                    "subepoch.")
+    _id_arg(p_spawn, "the active epoch it is a part of")
+    p_spawn.add_argument("name", help="what the part is, a few words like a title")
+    p_spawn.add_argument("--brief", metavar="<text|file>",
+                         help="what this part is for and what limits apply — the text, or "
+                              "a file holding it; the first thing its agent reads")
+    p_spawn.add_argument("--type", default="feature", choices=TYPES)
+    _repo_arg(p_spawn)
 
     p_reopen = _leaf(epoch, "reopen", "pick a closed epoch back up — straight to active",
                      into=epoch_rows,
@@ -389,6 +438,12 @@ def build_parser() -> argparse.ArgumentParser:
     _id_arg(p_rename, "the item")
     p_rename.add_argument("name", metavar="<name>", help="the new name, a short title")
 
+    _leaf(sub, "archive", "move closed epochs out of worklog.yaml into ARCHIVE/",
+          "Closed epochs and dropped ideas leave the live worklog for ARCHIVE/<month>.yaml, "
+          "one file per month they ended in. Their folders stay put and their ids are never "
+          "reused. Archived epochs still read with show <id>; they cannot be changed.",
+          section=work)
+
     p_claim = _leaf(sub, "claim", "take the lease on an epoch",
                     "Says who is working an epoch, and refuses a second claim. It is a "
                     "warning, not a lock — nothing stops another agent editing the "
@@ -397,11 +452,16 @@ def build_parser() -> argparse.ArgumentParser:
     _id_arg(p_claim)
     p_claim.add_argument("--steal", action="store_true",
                          help="take over someone else's lease, recording who held it")
+    p_claim.add_argument("--as", dest="as_name", metavar="<name>",
+                         help="name the holder, e.g. epoch15-opus, so status shows which "
+                              "agent holds what; release with the same name")
 
     p_release = _leaf(sub, "release", "drop the lease", section=parallel)
     _id_arg(p_release)
     p_release.add_argument("--force", action="store_true",
                            help="release a lease held by someone else")
+    p_release.add_argument("--as", dest="as_name", metavar="<name>",
+                           help="the name the lease was claimed under, with claim --as")
 
     ACTIONS.clear()
     ACTIONS.update(objective=obj_rows, repo=repo_rows, idea=idea_rows, epoch=epoch_rows)
@@ -418,8 +478,8 @@ def _split_id_text(value: str | None, text: str | None) -> tuple[int | None, str
     missing — resolve_id then refuses and lists the ids it could have meant."""
     if value is None:
         return None, text
-    if str(value).isdigit():
-        return int(value), text
+    if parse_id(value) is not None:
+        return parse_id(value), text
     return None, value
 
 
@@ -553,12 +613,15 @@ def run(args) -> int:
         data["stale"] = project.stale_map()
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
         data["landed"] = project.landed_map()
+        # who holds which epoch — data only; the tables leave it out
+        data["leases"] = project.leases()
         emit(args, "status", data, project.status_text(
-            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit, landed=data["landed"]))
+            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
+            landed=data["landed"], children=args.children))
 
     elif args.command == "show":
         name = args.name
-        if name.isdigit():
+        if parse_id(name) is not None:
             data = project.query("item", name)
             marks = project.landed_map(only=data["id"]).get(data["id"])
             if marks:
@@ -572,10 +635,6 @@ def run(args) -> int:
             data = project.query(name)
             if name == "objective":
                 human = f"OBJECTIVE  {data['overall'] or '— not set —'}"
-            elif name == "leases":
-                human = "\n".join(
-                    f"{i:>3}  {h.get('owner', '?')}@{h.get('host', '?')}, {h.get('age', '?')}"
-                    for i, h in data["leases"].items()) or "no leases held"
             else:
                 human = project.view_text(name)
             emit(args, f"show.{name}", data, human)
@@ -609,7 +668,8 @@ def run(args) -> int:
             item = project.add(args.text, type_=args.type, evidence=args.evidence)
             emit(args, "idea.add", item.to_dict(),
                  f"idea {item.id}: {item.name}\n"
-                 f"  start it with: clarity-ctl epoch start {item.id}")
+                 f"  start it with: clarity-ctl epoch start {item.id}"
+                 + (" --repo <repo|all|none>" if project.worklog.repos else ""))
         else:
             human = "\n".join(
                 _item_line(i) for i in project.worklog.with_status({"idea"})
@@ -618,15 +678,32 @@ def run(args) -> int:
 
     elif args.command == "epoch":
         if action == "start":
-            if args.no_repos and args.branch:
-                raise ClarityError("--branch names the branch to make, and --no-repos "
+            item_id = project.resolve_id(args.id)
+            repos, no_repos = _repo_choice(project, item_id, args.repos, args.no_repos)
+            if no_repos and args.branch:
+                raise ClarityError("--branch names the branch to make, and --repo none "
                                    "makes none — pass one", code=2)
-            item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
-                                           repos=args.repos, no_repos=args.no_repos)
+            item, warnings = project.start(item_id, branch=args.branch,
+                                           repos=repos, no_repos=no_repos,
+                                           brief=args.brief)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:
                 print(_started_text(item, "active", warnings))
+        elif action == "spawn":
+            repos, no_repos = args.repos, False
+            if repos and len(repos) == 1 and repos[0] in ("all", "none"):
+                repos, no_repos = None, repos[0] == "none"
+            elif repos and {"all", "none"} & set(repos):
+                raise ClarityError("--repo all and --repo none stand alone — not with "
+                                   "other repos", code=2)
+            item, warnings = project.spawn(args.id, args.name, type_=args.type,
+                                           brief=args.brief, repos=repos, no_repos=no_repos)
+            if args.json:
+                print(envelope("epoch.spawn", item.to_dict(), warnings))
+            else:
+                print(_started_text(item, "spawned", warnings)
+                      + f"\n  its agent claims it: clarity-ctl claim {item.id} --as <name>")
         elif action == "reopen":
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
                                            reopen=True)
@@ -669,6 +746,15 @@ def run(args) -> int:
         item = project.rename(args.id, args.name)
         emit(args, "rename", item.to_dict(), f"{item.id} is now: {item.name}")
 
+    elif args.command == "archive":
+        written = project.archive()
+        data = {"files": [{"file": f"{ARCHIVE}/{name}", "added": n} for name, n in written]}
+        if not written:
+            human = "nothing to archive — no closed epochs in worklog.yaml"
+        else:
+            human = "\n".join(f"archived {n} into {ARCHIVE}/{name}" for name, n in written)
+        emit(args, "archive", data, human)
+
     elif args.command == "note":
         target, text = _split_id_text(args.id, args.text)
         if not text:
@@ -677,7 +763,7 @@ def run(args) -> int:
         emit(args, "note", item.to_dict(), f"noted on {item.id} ({len(item.notes)} so far)")
 
     elif args.command == "claim":
-        item, held = project.claim(args.id, steal=args.steal)
+        item, held = project.claim(args.id, steal=args.steal, as_name=args.as_name)
         # no expiry by design — a lease says who and since when, and waits for a person
         human = f"epoch {item.id} claimed by {held['owner']}@{held['host']}"
         if held.get("stolen_from"):
@@ -685,7 +771,7 @@ def run(args) -> int:
         emit(args, "claim", {"item": item.to_dict(), "lease": held}, human)
 
     elif args.command == "release":
-        item = project.release(args.id, force=args.force)
+        item = project.release(args.id, force=args.force, as_name=args.as_name)
         emit(args, "release", item.to_dict(), f"epoch {item.id} released")
 
     return 0

@@ -11,9 +11,10 @@ from pathlib import Path
 
 import yaml
 
-from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives, today
+from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives, id_key, parse_id, today
 
 WORKLOG = "worklog.yaml"
+ARCHIVE = "ARCHIVE"
 CONFIG_DIR = ".clarity"
 CONFIG = "config.yaml"
 
@@ -141,6 +142,21 @@ def _migrate(raw: dict) -> dict:
     return raw
 
 
+def load_archive(root: Path) -> list[tuple[Item, str]]:
+    """Every item `archive` moved out of worklog.yaml, with the file it sits in.
+
+    Read-only: nothing here is saved back, and a write to an archived item is refused.
+    """
+    folder = root / ARCHIVE
+    if not folder.is_dir():
+        return []
+    found = []
+    for path in sorted(folder.glob("*.yaml")):
+        for raw in load_yaml(path).get("items") or []:
+            found.append((Item.from_dict(raw), path.name))
+    return found
+
+
 class Worklog:
     """objectives + the repos the project changes + every item, idea through closed.
 
@@ -148,6 +164,9 @@ class Worklog:
     A workspace holding several checkouts lists the ones its epochs branch instead.
     `state_repo` marks a root that is a repo only to hold clarity's own files — adopt
     makes one when the root was not a repo — so epochs never branch it.
+
+    `archived` maps id to (item, archive file name) for closed items moved out of
+    worklog.yaml. They are read for `show` and for id allocation, never saved here.
 
     `newer` is set when the file was written by a newer clarity-ctl than this one.
     It still reads — what it knows it shows — but never saves: a write would put
@@ -158,7 +177,7 @@ class Worklog:
 
     def __init__(self, path: Path, objectives: Objectives, items: list[Item], extra: dict,
                  repos: list[str] | None = None, state_repo: bool = False,
-                 newer: int | None = None):
+                 newer: int | None = None, archived: dict | None = None):
         self.path = path
         self.objectives = objectives
         self.repos = repos or []
@@ -166,6 +185,7 @@ class Worklog:
         self.items = items
         self.extra = extra
         self.newer = newer
+        self.archived = archived or {}
 
     @classmethod
     def load(cls, path: Path) -> "Worklog":
@@ -186,9 +206,14 @@ class Worklog:
                         f"{path.name}: item {item.id} has status {item.status!r}; "
                         f"known: {', '.join(STATUSES)}", code=2)
         extra = {k: v for k, v in raw.items() if k not in cls.OWN}
+        # A live copy wins: a crash between writing an archive file and saving the
+        # worklog leaves the item in both, and the worklog is the one that is current.
+        live = {i.id for i in items}
+        archived = {i.id: (i, name) for i, name in load_archive(path.parent)
+                    if i.id not in live}
         return cls(path, Objectives.from_dict(raw.get("objectives")), items, extra,
                    repos=list(raw.get("repos") or []),
-                   state_repo=bool(raw.get("state_repo")), newer=newer)
+                   state_repo=bool(raw.get("state_repo")), newer=newer, archived=archived)
 
     @classmethod
     def empty(cls, path: Path) -> "Worklog":
@@ -214,17 +239,76 @@ class Worklog:
         data.update(self.extra)
         write_atomic(self.path, _dump(data))
 
-    def by_id(self, item_id: int) -> Item:
+    def by_id(self, item_id: int | str) -> Item:
+        """A live item, for a write. An archived one is refused, not returned: changing
+        a copy that is never saved would lose the change without a word."""
+        item_id = _norm(item_id)
         for item in self.items:
             if item.id == item_id:
                 return item
+        if item_id in self.archived:
+            _, name = self.archived[item_id]
+            raise ClarityError(
+                f"epoch {item_id} is archived in {ARCHIVE}/{name} — archived epochs are "
+                f"read-only; `show {item_id}` still reads them", code=4)
         raise ClarityError(f"no item with id {item_id}", code=4)
 
+    def lookup(self, item_id: int | str) -> tuple[Item, str | None]:
+        """A live or archived item, for a read. The second value is the archive file
+        it sits in, or None when it is live."""
+        item_id = _norm(item_id)
+        for item in self.items:
+            if item.id == item_id:
+                return item, None
+        if item_id in self.archived:
+            item, name = self.archived[item_id]
+            return item, name
+        raise ClarityError(f"no item with id {item_id}", code=4)
+
+    def all_items(self) -> list[Item]:
+        """Live and archived together: ids and closing order are allocated over both."""
+        return [*self.items, *(item for item, _ in self.archived.values())]
+
     def next_id(self) -> int:
-        return max((i.id for i in self.items), default=0) + 1
+        """The next top-level id. Subepochs are numbered under their parent instead."""
+        return max((i.id for i in self.all_items() if isinstance(i.id, int)), default=0) + 1
+
+    def next_sub_id(self, parent_id: int) -> str:
+        """The next subepoch id under `parent_id`: 7.1, then 7.2 — archived ones count,
+        so a number is never handed out twice."""
+        taken = [id_key(i.id)[1] for i in self.all_items()
+                 if i.parent == parent_id and isinstance(i.id, str)]
+        return f"{parent_id}.{max(taken, default=0) + 1}"
 
     def with_status(self, statuses) -> list[Item]:
         return [i for i in self.items if i.status in statuses]
+
+
+def _norm(item_id):
+    """7, "7", 7.1 or "7.1" as the id it names; anything else as given, to be not found."""
+    parsed = parse_id(item_id)
+    return item_id if parsed is None else parsed
+
+
+def write_archive(root: Path, items: list[Item]) -> list[tuple[str, int]]:
+    """Append closed items to ARCHIVE/<month>.yaml, one file per month they ended in.
+
+    Returns (file name, items added) for each file written. An item already in its
+    file is not added twice, so re-running after a crash is safe.
+    """
+    by_month: dict[str, list[Item]] = {}
+    for item in items:
+        by_month.setdefault((item.ended or item.created)[:7], []).append(item)
+    written = []
+    for month, batch in sorted(by_month.items()):
+        path = root / ARCHIVE / f"{month}.yaml"
+        kept = load_yaml(path).get("items") or []
+        have = {d.get("id") for d in kept}
+        fresh = [i for i in batch if i.id not in have]
+        kept += [i.to_dict() for i in fresh]
+        write_atomic(path, _dump({"version": WORKLOG_VERSION, "items": kept}))
+        written.append((path.name, len(fresh)))
+    return written
 
 
 def load_config(root: Path) -> dict:
