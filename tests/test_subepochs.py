@@ -1,5 +1,5 @@
 """Parent and child epochs: placement, the close guard, the roll-up, and the display.
-Run: .venv/bin/python -m pytest -q tests/test_subagents.py"""
+Run: .venv/bin/python -m pytest -q tests/test_subepochs.py"""
 
 import pytest
 
@@ -19,13 +19,13 @@ def _child(project, parent, name):
     return started
 
 
-def test_a_swarm_is_kept_together_under_its_parent(project):
+def test_subepochs_are_kept_together_under_their_parent(project):
     parent = _active(project, "big job")
     one = _child(project, parent, "fan out one")
     two = _child(project, parent, "fan out two")
 
-    swarm = f"EPOCHS/swarms/{parent.folder.split('/')[-1]}/"
-    assert one.folder.startswith(swarm) and two.folder.startswith(swarm)
+    home = f"EPOCHS/subepochs/{parent.folder.split('/')[-1]}/"
+    assert one.folder.startswith(home) and two.folder.startswith(home)
     assert (project.root / one.folder).is_dir()
 
 
@@ -34,7 +34,7 @@ def test_a_child_lease_and_worktree_are_gitignored(project, git):
     child = _child(project, parent, "ignored bits")
 
     ignored = (project.root / ".gitignore").read_text()
-    assert "EPOCHS/swarms/*/*/wt/" in ignored and "EPOCHS/swarms/*/*/.lease" in ignored
+    assert "EPOCHS/subepochs/*/*/wt/" in ignored and "EPOCHS/subepochs/*/*/.lease" in ignored
     lease_file = f"{child.folder}/.lease"
     assert git(["check-ignore", lease_file], project.root) == lease_file
 
@@ -58,7 +58,7 @@ def test_epochs_nest_one_level_only(project):
 
 def test_parent_cannot_be_itself(project):
     parent = _active(project, "self")
-    with pytest.raises(ClarityError, match="own swarm"):
+    with pytest.raises(ClarityError, match="its own subepoch"):
         project._check_parent(parent, parent.id)
 
 
@@ -66,7 +66,7 @@ def test_close_parent_refused_while_child_runs(project):
     parent = _active(project, "parent")
     child = _child(project, parent, "still going")
 
-    with pytest.raises(ClarityError, match="swarm is still running"):
+    with pytest.raises(ClarityError, match="subepochs still active"):
         project.close(parent.id, "shipped")
 
     project.close(child.id, "done")
@@ -100,7 +100,7 @@ def test_children_still_counted_after_archive(project):
     assert roll["children"][0]["status"] == "done"
 
 
-def test_active_parent_lists_subagents_one_line_each(project):
+def test_active_parent_lists_subepochs_one_line_each(project):
     parent = _active(project, "parent")
     first = _child(project, parent, "worker one")
     second = _child(project, parent, "worker two")
@@ -111,7 +111,7 @@ def test_active_parent_lists_subagents_one_line_each(project):
 
     assert f"↳ #{first.id} ▸ worker one" in text
     assert f"↳ #{second.id} ✓ worker two" in text
-    assert "swarm of" not in text  # a list, not a count, while the swarm runs
+    assert "subepoch:" not in text and "subepochs:" not in text  # a list, not a count, while they run
 
 
 def test_closed_parent_shows_only_the_count(project):
@@ -122,7 +122,7 @@ def test_closed_parent_shows_only_the_count(project):
 
     text = Project.find(project.root).status_text(show_all=True)
 
-    assert "swarm of 1: 0 active, 1 closed" in text
+    assert "1 subepoch: 0 active, 1 closed" in text
     assert "finished worker" not in text
 
 
@@ -132,7 +132,7 @@ def test_children_flag_lists_them_as_rows(project):
 
     expanded = Project.find(project.root).status_text(children=True)
 
-    assert f"in swarm {parent.id}" in expanded
+    assert f"subepoch of {parent.id}" in expanded
     assert "↳" not in expanded  # rows already list them; the parent shows the count
     assert [c.id for c in Project.find(project.root).children_by_parent()[parent.id]] == [child.id]
 
@@ -148,7 +148,7 @@ def test_json_status_is_never_collapsed(project):
     assert parent.id in ids
 
 
-def test_show_text_has_subagents_section(project):
+def test_show_text_has_subepochs_section(project):
     from clarity import render
 
     parent = _active(project, "parent")
@@ -158,7 +158,7 @@ def test_show_text_has_subagents_section(project):
     data = Project.find(project.root).query("item", str(parent.id))
     text = render.item_text(data)
 
-    assert "Swarm (1)" in text
+    assert "Subepochs (1)" in text
     assert "worker one" in text
     assert "handoff: waiting on the API key" in text
 

@@ -96,8 +96,9 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
   "..."`. Clarity never infers which epoch you mean and will refuse without one.
 - Claim before you work: `clarity-ctl claim <id> --as <your name>`; release with the same
   name when done: `clarity-ctl release <id> --as <your name>`.
-- Running a swarm: start each agent's part with `clarity-ctl epoch start <id> --parent
-  <swarm epoch id>`, the swarm epoch active. It cannot close while any member still runs.
+- Splitting an epoch across agents: start each agent's part as a subepoch, with
+  `clarity-ctl epoch start <id> --parent <epoch id>` while that epoch is active. The
+  parent cannot close while any subepoch is still active.
 - Stopping before the work is done: write a note starting `HANDOFF:` — what is finished,
   what is stuck, what the next agent should do first. `show <id>` reads the latest one.
 - Write a note the moment a decision changes — a reversal, an approach you

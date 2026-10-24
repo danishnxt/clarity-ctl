@@ -134,9 +134,9 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
     elif item.folder:
         paras.append((item.folder, "dim", False))
     if expanded and item.parent is not None:
-        paras.append((f"in swarm {item.parent}", "dim", False))
+        paras.append((f"subepoch of {item.parent}", "dim", False))
     if kids and item.status in IN_FLIGHT and not expanded:
-        # while a swarm runs, its members are what you are watching: one line each,
+        # while an epoch's subepochs run, they are what you are watching: one line each,
         # cut like a name. Once it closes, a count is all the table needs.
         for kid in kids:
             line = f"↳ #{kid.id} {_GLYPH.get(kid.status, ' ')} {kid.name}"
@@ -144,7 +144,8 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
     elif kids:
         active = len([c for c in kids if c.status in IN_FLIGHT])
         closed = len([c for c in kids if c.status in CLOSED])
-        paras.append((f"swarm of {len(kids)}: {active} active, {closed} closed", "dim", False))
+        noun = "subepoch" if len(kids) == 1 else "subepochs"
+        paras.append((f"{len(kids)} {noun}: {active} active, {closed} closed", "dim", False))
     mark = _landed(marks)
     if item.status in CLOSED and mark and ":" in mark:
         # the column says "mixed"; this says which
@@ -239,8 +240,8 @@ def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
             children: bool = False) -> tuple[list[str], bool]:
     """One titled table per group. True as well if any name or outcome was cut.
 
-    Swarm members are left out of the tables unless `children` asks for them: they are
-    listed or counted on their swarm epoch's row, so ten running agents do not bury it.
+    Subepochs are left out of the tables unless `children` asks for them: they are
+    listed or counted on their parent's row, so ten running agents do not bury it.
     """
     out: list[str] = []
     cut_any = False
@@ -358,7 +359,7 @@ def item_text(data: dict, marks: dict | None = None) -> str:
     if data.get("archived"):
         facts.append(paint(f"archived in {data['archived']} (read-only)", "dim"))
     if data.get("parent") is not None:
-        facts.append(paint(f"in swarm {data['parent']}", "dim"))
+        facts.append(paint(f"subepoch of {data['parent']}", "dim"))
     if data.get("ended"):
         when = f"closed {_ago(data['ended'])}"
     elif data.get("started"):
@@ -406,7 +407,7 @@ def item_text(data: dict, marks: dict | None = None) -> str:
 
     kids = data.get("children") or []
     if kids:
-        out += section(f"Swarm ({len(kids)})")
+        out += section(f"Subepochs ({len(kids)})")
         for kid in kids:
             glyph = paint(f"{_GLYPH.get(kid['status'], ' ')} {kid['status']}",
                           _GLYPH_STYLE.get(kid["status"]))

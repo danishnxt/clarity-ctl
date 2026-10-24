@@ -36,11 +36,11 @@ from .store import (
 )
 
 EPOCHS = "EPOCHS"
-# A swarm is a parent's children, kept together: EPOCHS/swarms/<parent folder>/<child>.
-SWARMS = "swarms"
+# An epoch's subepochs, kept together: EPOCHS/subepochs/<parent folder>/<child>.
+SUBEPOCHS = "subepochs"
 # A child sits two folders deeper than a top-level epoch, so its worktrees and lease
 # need their own lines — EPOCHS/*/wt/ and EPOCHS/*/.lease do not reach it.
-SWARM_IGNORES = ["EPOCHS/swarms/*/*/wt/", "EPOCHS/swarms/*/*/.lease"]
+SUBEPOCH_IGNORES = ["EPOCHS/subepochs/*/*/wt/", "EPOCHS/subepochs/*/*/.lease"]
 LEARNINGS = "LEARNINGS"
 EPOCH_SUBDIRS = ("PLANS", "LOGS", "VIZ", "ANALYSIS")
 LOCK_FILE = "worklog.lock"
@@ -48,7 +48,7 @@ LOCK_FILE = "worklog.lock"
 GITIGNORE_LINES = [
     "# clarity",
     "EPOCHS/*/wt/",
-    *SWARM_IGNORES,
+    *SUBEPOCH_IGNORES,
     "EPOCHS/*/.lease",
     ".clarity/cache/",
     ".clarity/worklog.lock",
@@ -515,7 +515,7 @@ class Project:
         home = self.epochs_dir
         if item.parent is not None:
             parent = self.worklog.by_id(item.parent)
-            home = self.epochs_dir / SWARMS / Path(parent.folder).name
+            home = self.epochs_dir / SUBEPOCHS / Path(parent.folder).name
         folder = home / item.folder_name
         for sub in EPOCH_SUBDIRS:
             (folder / sub).mkdir(parents=True, exist_ok=True)
@@ -538,9 +538,9 @@ class Project:
         analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
         add_repos, so no command does two jobs depending on the epoch's state.
 
-        `parent` starts it in the swarm of an active epoch: its folder goes under
-        EPOCHS/swarms/<that epoch's folder>/, beside the rest of the swarm, and the
-        swarm epoch's close waits for it.
+        `parent` starts it as a subepoch of an active epoch: its folder goes under
+        EPOCHS/subepochs/<that epoch's folder>/, beside its siblings, and the
+        parent's close waits for it.
 
         `brief` is the text, or the path to a file holding it. Given on a reopen, it
         replaces the old one; left out, the brief stays.
@@ -585,7 +585,7 @@ class Project:
                 item.ended = None
             folder = self._make_folder(item)
             if item.parent is not None:
-                self.ensure_gitignore(SWARM_IGNORES)  # projects set up before swarms
+                self.ensure_gitignore(SUBEPOCH_IGNORES)  # projects set up before subepochs
             # Claim before anything else: _write() saves only if the body succeeds, so a
             # refused lease leaves no half-started epoch and no worktree we may not use.
             if take_lease:
@@ -608,16 +608,16 @@ class Project:
         child itself, or the epoch being started. One level only, so the tree stays
         something a person can read."""
         if parent_id == item.id:
-            raise ClarityError(f"epoch {item.id} cannot be in its own swarm", code=4)
+            raise ClarityError(f"epoch {item.id} cannot be its own subepoch", code=4)
         parent = self.worklog.by_id(parent_id)
         if parent.status not in IN_FLIGHT:
             raise ClarityError(
-                f"swarm epoch {parent_id} is {parent.status} — start it first:\n"
+                f"parent epoch {parent_id} is {parent.status} — start it first:\n"
                 f"  clarity-ctl epoch start {parent_id}", code=4)
         if parent.parent is not None:
             raise ClarityError(
-                f"epoch {parent_id} is itself in swarm {parent.parent} — "
-                "swarms nest one level only", code=4)
+                f"epoch {parent_id} is itself a subepoch of {parent.parent} — "
+                "subepochs nest one level only", code=4)
 
     def children_of(self, item_id: int) -> list[Item]:
         """Every child of an epoch, archived ones too: a finished child still counts."""
@@ -1078,14 +1078,14 @@ class Project:
             item = self.worklog.by_id(self.resolve_id(item_id))
             if item.status in CLOSED:
                 raise ClarityError(f"item {item.id} is already {item.status}", code=4)
-            # a swarm epoch is not done while a member is still running or still leased
+            # a parent is not done while a subepoch is still running or still leased
             leased = self.leases()
             running = [c.id for c in self.children_of(item.id)
                        if c.status in IN_FLIGHT or c.id in leased]
             if running:
                 ids = ", ".join(str(i) for i in running)
                 raise ClarityError(
-                    f"epoch {item.id}'s swarm is still running: {ids}\n"
+                    f"epoch {item.id} has subepochs still active: {ids}\n"
                     f"  close or release them first — see: clarity-ctl show {item.id}", code=4)
             folder = self.folder_of(item)
             # its branch and end sha live in that repo: closing now would record

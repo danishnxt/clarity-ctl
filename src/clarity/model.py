@@ -72,7 +72,7 @@ class Item:
     # list at first start, so close and refresh act on what was actually branched
     # even if that list changes later. None means the root repo, as before.
     repos: list[str] | None = None
-    # The epoch this one was started under, as a subagent of it. None for a top-level
+    # The epoch this one was started under, as a subepoch of it. None for a top-level
     # epoch. One level only: a child cannot be a parent.
     parent: int | None = None
     # The branch each repo's epoch branch catches up with, keyed like `repos` ("."
