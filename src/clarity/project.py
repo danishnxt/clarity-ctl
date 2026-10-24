@@ -18,7 +18,9 @@ from .model import (
     TYPES,
     Item,
     Note,
+    id_key,
     now as model_now,
+    parse_id,
     today,
 )
 from .store import (
@@ -280,14 +282,15 @@ class Project:
     # ---------- which epoch does a command mean ----------
 
     @staticmethod
-    def as_id(value: int | str) -> int:
+    def as_id(value: int | str) -> int | str:
         """An id, or a refusal. Never a ValueError escaping to the user as a traceback."""
-        text = str(value).strip()
-        if not text.isdigit():
-            raise ClarityError(f"{value!r} is not an id — ids are numbers, like 7", code=4)
-        return int(text)
+        parsed = parse_id(value)
+        if parsed is None:
+            raise ClarityError(f"{value!r} is not an id — ids are numbers, like 7, or 7.1 "
+                               f"for a subepoch", code=4)
+        return parsed
 
-    def resolve_id(self, explicit: int | str | None = None) -> int:
+    def resolve_id(self, explicit: int | str | None = None) -> int | str:
         """The id the command was given. There is no fallback, on purpose.
 
         Inferring it — from the cwd, an env var, or "the only active epoch" —
@@ -526,7 +529,6 @@ class Project:
               take_lease: bool = True, reopen: bool = False,
               repos: list[str] | None = None,
               no_repos: bool = False,
-              parent: int | None = None,
               brief: str | None = None) -> tuple[Item, list[str]]:
         """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
 
@@ -538,9 +540,8 @@ class Project:
         analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
         add_repos, so no command does two jobs depending on the epoch's state.
 
-        `parent` starts it as a subepoch of an active epoch: its folder goes under
-        EPOCHS/subepochs/<that epoch's folder>/, beside its siblings, and the
-        parent's close waits for it.
+        A subepoch (see spawn) starts only while its parent is active, and a reopen
+        of one asks the same.
 
         `brief` is the text, or the path to a file holding it. Given on a reopen, it
         replaces the old one; left out, the brief stays.
@@ -550,9 +551,8 @@ class Project:
             brief = Path(brief).read_text(encoding="utf-8").strip()
         with self._write():
             item = self.worklog.by_id(item_id)
-            if parent is not None:
-                self._check_parent(item, parent)
-                item.parent = parent
+            if item.parent is not None:
+                self._check_parent(self.worklog.by_id(item.parent))
             if brief:
                 item.brief = brief
             if item.status == "active":
@@ -603,25 +603,69 @@ class Project:
             item.started = item.started or today()
         return item, warnings
 
-    def _check_parent(self, item: Item, parent_id: int) -> None:
-        """Refuse a parent that cannot take a child: missing, archived, not active, a
-        child itself, or the epoch being started. One level only, so the tree stays
-        something a person can read."""
-        if parent_id == item.id:
-            raise ClarityError(f"epoch {item.id} cannot be its own subepoch", code=4)
-        parent = self.worklog.by_id(parent_id)
-        if parent.status not in IN_FLIGHT:
-            raise ClarityError(
-                f"parent epoch {parent_id} is {parent.status} — start it first:\n"
-                f"  clarity-ctl epoch start {parent_id}", code=4)
+    def _check_parent(self, parent: Item) -> None:
+        """Refuse a parent that cannot take a subepoch: not active, or a subepoch
+        itself. One level only, so the tree stays something a person can read.
+        by_id has already refused one that is missing or archived."""
         if parent.parent is not None:
             raise ClarityError(
-                f"epoch {parent_id} is itself a subepoch of {parent.parent} — "
+                f"epoch {parent.id} is itself a subepoch of {parent.parent} — "
                 "subepochs nest one level only", code=4)
+        if parent.status not in IN_FLIGHT:
+            how = "start" if parent.status in FUTURE else "reopen"
+            raise ClarityError(
+                f"parent epoch {parent.id} is {parent.status} — a subepoch runs only while "
+                f"its parent is active:\n  clarity-ctl epoch {how} {parent.id}", code=4)
+
+    def spawn(self, parent_id: int | str, name: str, type_: str = "feature",
+              brief: str | None = None, repos: list[str] | None = None,
+              no_repos: bool = False) -> tuple[Item, list[str]]:
+        """A new subepoch of an active epoch, started: id 7.1, 7.2, … under parent 7.
+
+        It branches the parent's repos, or the ones `repos` names among them, and its
+        branch is cut from the parent's branch, which is recorded as its base — so
+        refresh catches it up with whatever siblings have merged into the parent, and
+        the close warning asks for a merge into the parent, not into main. Only the
+        parent merges onward. The lease is left free: whoever spawns hands the
+        subepoch to another agent, and that agent claims it.
+        """
+        if type_ not in TYPES:
+            raise ClarityError(f"unknown type {type_!r}; one of {', '.join(TYPES)}", code=4)
+        with self._write():
+            parent = self.worklog.by_id(self.as_id(parent_id))
+            self._check_parent(parent)
+            if no_repos:
+                chosen: list[str] | None = []
+            elif repos:
+                if parent.repos is None:
+                    raise ClarityError(
+                        f"epoch {parent.id} branches the project root — its subepochs do "
+                        f"too; leave out --repo", code=4)
+                named = {self.listed_repo(
+                    r, among=parent.repos,
+                    what=f"one of epoch {parent.id}'s repos — add it there first: "
+                         f"clarity-ctl epoch add-repo {parent.id} <repo>") for r in repos}
+                chosen = [r for r in parent.repos if r in named]
+            else:
+                chosen = None if parent.repos is None else list(parent.repos)
+            item = Item(id=self.worklog.next_sub_id(parent.id), name=name, type=type_,
+                        parent=parent.id, repos=chosen)
+            if parent.branch:
+                keys = chosen if chosen is not None else (["."] if self.branches_root() else [])
+                item.bases = {k: parent.branch for k in keys} or None
+            self.worklog.items.append(item)
+        try:
+            return self.start(item.id, take_lease=False, brief=brief)
+        except Exception:
+            # a subepoch that never started is not an idea anyone queued — take it back
+            with self._write():
+                self.worklog.items = [i for i in self.worklog.items if i.id != item.id]
+            raise
 
     def children_of(self, item_id: int) -> list[Item]:
         """Every child of an epoch, archived ones too: a finished child still counts."""
-        return [i for i in self.worklog.all_items() if i.parent == item_id]
+        return sorted((i for i in self.worklog.all_items() if i.parent == item_id),
+                      key=lambda i: id_key(i.id))
 
     def child_summary(self, child: Item) -> dict:
         """What a parent's roll-up says about one child. Plain data, the same in
@@ -732,7 +776,7 @@ class Project:
         """
         # item.branch before the slug: after a rename, a reopen must find the branch
         # the epoch actually has, not one named after its new title
-        name = branch or item.branch or f"epoch/{item.id:03d}-{item.slug}"
+        name = branch or item.branch or f"epoch/{item.code}-{item.slug}"
         warnings: list[str] = []
         made: list[tuple[Path, Path, bool]] = []
         try:
@@ -800,8 +844,10 @@ class Project:
                     f"{name} in the same checkout — edits will collide"
                 )
         else:
-            # a worktree can be added from a dirty tree; git carries nothing across
-            gitops.add_worktree(repo, link, name, create=not exists)
+            # a worktree can be added from a dirty tree; git carries nothing across.
+            # A subepoch's new branch starts where its parent's is, not at the checkout.
+            start = (item.bases or {}).get(key) if item.parent is not None else None
+            gitops.add_worktree(repo, link, name, create=not exists, start=start)
         return not exists, warnings
 
     def _repo_key(self, repo: Path) -> str:
@@ -1044,34 +1090,78 @@ class Project:
                 item.name = name
         return item
 
-    def unmerged(self, item_id: int) -> list[str]:
+    def unmerged(self, item_id: int | str) -> list[str]:
         """One line per repo whose epoch branch has commits its base does not.
 
         close never merges, so this is what stops finished work from being closed
         while it still sits only on its branch. A squash merge leaves the branch's
         own commits unmerged by this measure; the warning says so rather than guess.
 
-        An experiment is meant to stay unmerged, so it gets no warning at all.
+        A subepoch's base is its parent's branch, so its line says to merge there and
+        gives the command. A parent also gets a line for each done subepoch whose
+        work never reached it: closing the parent would strand that work for good.
+        An experiment is meant to stay unmerged, so it gets no warning of its own.
         """
         item = self.worklog.by_id(item_id)
         folder = self.folder_of(item)
-        if not item.branch or not folder or item.type == "experiment":
-            return []
         out = []
-        for repo, _ in self._targets(item, folder):
-            base = self.base_of(item, repo)
-            if (not repo.is_dir() or not base or base == item.branch
-                    or not gitops.branch_exists(repo, item.branch)):
-                continue
-            try:
-                ahead, _ = gitops.ahead_behind(repo, item.branch, base)
-            except ClarityError:
-                continue
-            if ahead:
+        if item.branch and folder and item.type != "experiment":
+            into = self._parent_worktrees(item)
+            for repo, _ in self._targets(item, folder):
+                base = self.base_of(item, repo)
+                ahead = self._ahead(repo, item.branch, base)
+                if not ahead:
+                    continue
                 where = "" if repo == self.root else f" in {self._repo_key(repo)}"
-                out.append(f"{item.branch}{where} has {ahead} commit{'s' if ahead != 1 else ''} "
-                           f"not in {base} — merge before closing, unless it was squash-merged")
+                line = (f"{item.branch}{where} has {ahead} commit{'s' if ahead != 1 else ''} "
+                        f"not in {base}")
+                if repo in into:
+                    line += (f" — merge it into epoch {item.parent} before closing:\n"
+                             f"  git -C {into[repo]} merge {item.branch}")
+                else:
+                    line += " — merge before closing, unless it was squash-merged"
+                out.append(line)
+        for child in self.children_of(item.id):
+            if child.status != "done" or not child.branch or not item.branch:
+                continue
+            for repo in self._repo_paths(child):
+                ahead = self._ahead(repo, child.branch, item.branch)
+                if ahead:
+                    where = "" if repo == self.root else f" in {self._repo_key(repo)}"
+                    out.append(f"subepoch {child.id}'s {child.branch}{where} has {ahead} "
+                               f"commit{'s' if ahead != 1 else ''} not in {item.branch} — "
+                               f"its work never reached epoch {item.id}")
         return out
+
+    def _ahead(self, repo: Path, branch: str, base: str | None) -> int:
+        """Commits on `branch` that `base` lacks; 0 when either is missing or unreadable."""
+        if (not repo.is_dir() or not base or base == branch
+                or not gitops.branch_exists(repo, branch)
+                or not gitops.branch_exists(repo, base)):
+            return 0
+        try:
+            ahead, _ = gitops.ahead_behind(repo, branch, base)
+        except ClarityError:
+            return 0
+        return ahead
+
+    def _repo_paths(self, item: Item) -> list[Path]:
+        """The repos an epoch branched, whether or not its folder is still there."""
+        if item.repos is not None:
+            return [self.root / r for r in item.repos]
+        return [self.root] if self.branches_root() else []
+
+    def _parent_worktrees(self, item: Item) -> dict[Path, str]:
+        """For a subepoch: each repo's worktree of its parent, as a path from the root —
+        where the merge into the parent is run."""
+        if item.parent is None:
+            return {}
+        parent, _ = self.worklog.lookup(item.parent)
+        folder = self.folder_of(parent)
+        if not folder:
+            return {}
+        return {repo: os.path.relpath(wt, self.root)
+                for repo, wt in self._targets(parent, folder)}
 
     def close(self, item_id: int | None, outcome: str, dropped: bool = False) -> Item:
         with self._write():
@@ -1266,7 +1356,7 @@ class Project:
 
     def children_by_parent(self) -> dict[int, list[Item]]:
         out: dict[int, list[Item]] = {}
-        for item in self.worklog.all_items():
+        for item in sorted(self.worklog.all_items(), key=lambda i: id_key(i.id)):
             if item.parent is not None:
                 out.setdefault(item.parent, []).append(item)
         return out

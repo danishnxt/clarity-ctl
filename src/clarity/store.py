@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives, today
+from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives, id_key, parse_id, today
 
 WORKLOG = "worklog.yaml"
 ARCHIVE = "ARCHIVE"
@@ -239,9 +239,10 @@ class Worklog:
         data.update(self.extra)
         write_atomic(self.path, _dump(data))
 
-    def by_id(self, item_id: int) -> Item:
+    def by_id(self, item_id: int | str) -> Item:
         """A live item, for a write. An archived one is refused, not returned: changing
         a copy that is never saved would lose the change without a word."""
+        item_id = _norm(item_id)
         for item in self.items:
             if item.id == item_id:
                 return item
@@ -252,9 +253,10 @@ class Worklog:
                 f"read-only; `show {item_id}` still reads them", code=4)
         raise ClarityError(f"no item with id {item_id}", code=4)
 
-    def lookup(self, item_id: int) -> tuple[Item, str | None]:
+    def lookup(self, item_id: int | str) -> tuple[Item, str | None]:
         """A live or archived item, for a read. The second value is the archive file
         it sits in, or None when it is live."""
+        item_id = _norm(item_id)
         for item in self.items:
             if item.id == item_id:
                 return item, None
@@ -268,10 +270,24 @@ class Worklog:
         return [*self.items, *(item for item, _ in self.archived.values())]
 
     def next_id(self) -> int:
-        return max((i.id for i in self.all_items()), default=0) + 1
+        """The next top-level id. Subepochs are numbered under their parent instead."""
+        return max((i.id for i in self.all_items() if isinstance(i.id, int)), default=0) + 1
+
+    def next_sub_id(self, parent_id: int) -> str:
+        """The next subepoch id under `parent_id`: 7.1, then 7.2 — archived ones count,
+        so a number is never handed out twice."""
+        taken = [id_key(i.id)[1] for i in self.all_items()
+                 if i.parent == parent_id and isinstance(i.id, str)]
+        return f"{parent_id}.{max(taken, default=0) + 1}"
 
     def with_status(self, statuses) -> list[Item]:
         return [i for i in self.items if i.status in statuses]
+
+
+def _norm(item_id):
+    """7, "7", 7.1 or "7.1" as the id it names; anything else as given, to be not found."""
+    parsed = parse_id(item_id)
+    return item_id if parsed is None else parsed
 
 
 def write_archive(root: Path, items: list[Item]) -> list[tuple[str, int]]:

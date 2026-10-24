@@ -96,9 +96,12 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
   "..."`. Clarity never infers which epoch you mean and will refuse without one.
 - Claim before you work: `clarity-ctl claim <id> --as <your name>`; release with the same
   name when done: `clarity-ctl release <id> --as <your name>`.
-- Splitting an epoch across agents: start each agent's part as a subepoch, with
-  `clarity-ctl epoch start <id> --parent <epoch id>` while that epoch is active. The
-  parent cannot close while any subepoch is still active.
+- Splitting an epoch across agents: give each agent's part a subepoch, only when it
+  needs a branch of its own — quick work is a note on the epoch. `clarity-ctl epoch
+  spawn <id> "<name>" --brief "<goal and limits>"` gives `<id>.1`, `<id>.2`, branched
+  from the epoch's branch. The part's agent claims it with `--as`, writes a `HANDOFF:`
+  note and releases when it stops, and does not close it. Whoever owns the epoch notes
+  any feedback on the subepoch, merges its branch into the epoch's, and closes it.
 - Stopping before the work is done: write a note starting `HANDOFF:` — what is finished,
   what is stuck, what the next agent should do first. `show <id>` reads the latest one.
 - Write a note the moment a decision changes — a reversal, an approach you

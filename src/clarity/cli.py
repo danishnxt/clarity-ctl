@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from . import render
-from .model import TYPES
+from .model import TYPES, parse_id
 from .project import Project
 from .store import ARCHIVE, ClarityError
 
@@ -336,21 +336,38 @@ def build_parser() -> argparse.ArgumentParser:
                     "Just planning, or analysis with no code expected yet? --repo none "
                     "gives the epoch its folder and lease and branches nothing; "
                     "epoch add-repo brings repos in when the code starts.\n\n"
-                    "Splitting the work across agents? --parent <id> starts this epoch as a "
-                    "subepoch of that one.")
+                    "Splitting the work across agents? epoch spawn <id> starts a subepoch "
+                    "of an active epoch.")
     _id_arg(p_start, "the item to start")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
     p_start.add_argument("--brief", metavar="<text|file>",
                          help="what the work is for and what limits apply — the text, or a "
                               "file holding it; shown first to whoever picks the epoch up")
-    p_start.add_argument("--parent", type=int, metavar="<id>",
-                         help="start it as a subepoch of this active epoch; its folder goes "
-                              "in EPOCHS/subepochs/<that epoch>/, and the parent cannot "
-                              "close while it runs")
     which = p_start.add_mutually_exclusive_group()
     _repo_arg(which)
     which.add_argument("--no-repos", action="store_true",
                        help="the same as --repo none")
+
+    p_spawn = _leaf(epoch, "spawn", "start a subepoch of an active epoch, for another agent",
+                    into=epoch_rows, description=
+                    "Adds and starts one part of an active epoch, numbered under it: "
+                    "spawning under 7 gives 7.1, then 7.2. Its branch is cut from 7's and "
+                    "merges back into it; only 7 merges onward. It branches 7's repos "
+                    "unless --repo names some of them. Its folder goes in "
+                    "EPOCHS/subepochs/<7's folder>/, and 7 cannot close while it is "
+                    "active.\n\n"
+                    "The lease is left free for the agent doing the part: it claims with "
+                    "claim <id> --as <name>, writes a HANDOFF: note and releases when it "
+                    "stops. Whoever owns 7 reviews, merges, and closes it.\n\n"
+                    "Quick work that needs no branch of its own is a note on 7, not a "
+                    "subepoch.")
+    _id_arg(p_spawn, "the active epoch it is a part of")
+    p_spawn.add_argument("name", help="what the part is, a few words like a title")
+    p_spawn.add_argument("--brief", metavar="<text|file>",
+                         help="what this part is for and what limits apply — the text, or "
+                              "a file holding it; the first thing its agent reads")
+    p_spawn.add_argument("--type", default="feature", choices=TYPES)
+    _repo_arg(p_spawn)
 
     p_reopen = _leaf(epoch, "reopen", "pick a closed epoch back up — straight to active",
                      into=epoch_rows,
@@ -461,8 +478,8 @@ def _split_id_text(value: str | None, text: str | None) -> tuple[int | None, str
     missing — resolve_id then refuses and lists the ids it could have meant."""
     if value is None:
         return None, text
-    if str(value).isdigit():
-        return int(value), text
+    if parse_id(value) is not None:
+        return parse_id(value), text
     return None, value
 
 
@@ -604,7 +621,7 @@ def run(args) -> int:
 
     elif args.command == "show":
         name = args.name
-        if name.isdigit():
+        if parse_id(name) is not None:
             data = project.query("item", name)
             marks = project.landed_map(only=data["id"]).get(data["id"])
             if marks:
@@ -668,11 +685,25 @@ def run(args) -> int:
                                    "makes none — pass one", code=2)
             item, warnings = project.start(item_id, branch=args.branch,
                                            repos=repos, no_repos=no_repos,
-                                           parent=args.parent, brief=args.brief)
+                                           brief=args.brief)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:
                 print(_started_text(item, "active", warnings))
+        elif action == "spawn":
+            repos, no_repos = args.repos, False
+            if repos and len(repos) == 1 and repos[0] in ("all", "none"):
+                repos, no_repos = None, repos[0] == "none"
+            elif repos and {"all", "none"} & set(repos):
+                raise ClarityError("--repo all and --repo none stand alone — not with "
+                                   "other repos", code=2)
+            item, warnings = project.spawn(args.id, args.name, type_=args.type,
+                                           brief=args.brief, repos=repos, no_repos=no_repos)
+            if args.json:
+                print(envelope("epoch.spawn", item.to_dict(), warnings))
+            else:
+                print(_started_text(item, "spawned", warnings)
+                      + f"\n  its agent claims it: clarity-ctl claim {item.id} --as <name>")
         elif action == "reopen":
             item, warnings = project.start(project.resolve_id(args.id), branch=args.branch,
                                            reopen=True)

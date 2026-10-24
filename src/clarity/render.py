@@ -18,7 +18,7 @@ import textwrap
 import unicodedata
 from datetime import datetime
 
-from .model import CLOSED, FUTURE, IN_FLIGHT, Item, Objectives
+from .model import CLOSED, FUTURE, IN_FLIGHT, Item, Objectives, id_key
 
 # Wrapped here, not by the terminal, so zooming or resizing never re-flows the output.
 # Capped rather than fixed: a terminal narrower than the cap would wrap it again itself,
@@ -249,7 +249,7 @@ def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
         chosen = [i for i in items if i.status in statuses and (children or i.parent is None)]
         # closed_seq is exact where it exists; a project that predates it falls back to
         # the date, which is how these read before, so old worklogs keep their order.
-        chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", i.id),
+        chosen.sort(key=lambda i: (i.closed_seq or 0, i.ended or i.created or "", id_key(i.id)),
                     reverse=True)
         total, hidden = len(chosen), 0
         if statuses <= CLOSED and limit > 0 and len(chosen) > limit:
@@ -469,7 +469,7 @@ def epoch_md(item: Item, existing: str | None = None) -> str:
     """
     lines = [
         MARK,
-        f"# {item.id:03d} · {item.name}",
+        f"# {item.code} · {item.name}",
         "",
         f"- **type** {item.type}",
         f"- **status** {item.status}",
