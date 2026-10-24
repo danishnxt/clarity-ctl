@@ -57,7 +57,7 @@ git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
 
 clarity-ctl idea add "memory-map the input file" --type experiment
-clarity-ctl epoch start 1                  # folder, branch epoch/001-..., worktree
+clarity-ctl epoch start 1 --repo all      # folder, branch epoch/001-..., worktree
 cd $(clarity-ctl path 1)/wt/parser         # work here
 clarity-ctl note 1 "load time halved, total unchanged: the tokenizer is the bottleneck"
 clarity-ctl epoch close 1 "no gain, I/O is not the bottleneck"
@@ -82,7 +82,6 @@ Active (1)
 ├───┼─────┼────────────────────────────────────────────────────────────────────┤
 │ ▸ │   3 │ parallel chunk parsing                                             │
 │   │     │ EPOCHS/003_2026-10-20__parallel-chunk-parsing                      │
-│   │     │ held by you@laptop, just now                                       │
 └───┴─────┴────────────────────────────────────────────────────────────────────┘
 
 Up next (1)
@@ -136,6 +135,10 @@ Closing never merges and never deletes a branch: merge first if the work should 
 or don't. For an attempt that failed outright, `epoch close <id> --drop "why"` records
 it as dropped instead of done.
 
+When the closed list gets long, `clarity-ctl archive` moves every closed epoch out of
+`worklog.yaml` into `ARCHIVE/<month>.yaml`. Their folders stay, their ids are never
+reused, and `show <id>` still reads them.
+
 ## Working with agents
 
 `init` writes a short block of rules into `AGENTS.md`, and `CLAUDE.md` imports it. The
@@ -143,8 +146,14 @@ rules tell an agent to:
 
 - ask clarity for the state (`clarity-ctl status`, `clarity-ctl show active --json`)
   instead of reading the whole tree;
-- claim an epoch before working on it (`clarity-ctl claim <id>`, `release <id>`);
-- write a note the moment a decision changes.
+- claim an epoch before working on it, under its own name (`clarity-ctl claim <id> --as
+  <name>`, `release <id> --as <name>`);
+- write a note the moment a decision changes;
+- stop with a **handoff**: a note starting `HANDOFF:` that says what's done, what's
+  stuck, and what to do first. `show <id>` puts the latest one up front.
+
+Give an epoch a **brief** when you start it: `epoch start <id> --brief "<goal and
+limits>"`, as text or a file. It's the first thing whoever picks the epoch up reads.
 
 `clarity-ctl install` puts the block back if it's lost; `install --remove` takes it out.
 
@@ -158,6 +167,35 @@ codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project
 
 Commands always take the epoch's id (`clarity-ctl note 7 "..."`). clarity never
 guesses: a guess works until a second epoch starts.
+
+## Splitting an epoch across agents
+
+When one epoch is too big for one agent, its owner spawns a **subepoch** for each part
+that needs a branch of its own:
+
+    clarity-ctl epoch spawn 7 "port expressions" --brief "Expressions only. Don't touch the lexer."
+
+Subepochs are numbered under their parent (7.1, 7.2) and sit together under
+`EPOCHS/subepochs/`. Each branches from 7's branch and merges back into it; only 7
+merges to main. Quick work that needs no branch, like a search or a review, is a note
+on 7 instead.
+
+1. The part's agent claims it (`claim 7.1 --as expr-agent`), works in `path 7.1`, and
+   stops with a `HANDOFF:` note. It doesn't close the subepoch.
+2. 7's owner reviews. Feedback goes in a note on 7.1, so it's still there when the
+   agent's session isn't.
+3. 7's owner merges 7.1's branch into 7's and closes 7.1. `close` prints the merge
+   command if it's missing, and `epoch refresh 7.2` brings the merged work into a
+   sibling.
+
+While 7 is active, `status` lists its subepochs under it, one line each:
+
+    │ ▸ │  7 │ migrate the parser
+    │   │    │ ↳ #7.1 ✓ port expressions
+    │   │    │ ↳ #7.2 ▸ port statements
+
+`show 7` gathers each one's outcome, or its latest handoff while it's still going.
+7 can't close while a subepoch is active, and warns if a done one never got merged in.
 
 ## Getting the most out of it
 
@@ -185,8 +223,8 @@ Run `clarity-ctl adopt` in the folder.
   your approval.
 
 A workspace can hold several repos. List each one you change with `clarity-ctl repo add
-<path>`, and every new epoch branches all of them. `epoch start <id> --repo <name>`
-branches only some, and `--no-repos` branches none, for planning or analysis.
+<path>`. Then `epoch start` asks which to branch: `--repo <name>` (repeat for more),
+`--repo all`, or `--repo none` for planning or analysis.
 
 ## Development
 
