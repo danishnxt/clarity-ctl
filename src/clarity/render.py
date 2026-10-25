@@ -472,6 +472,7 @@ DIGEST_CLOSED = 10
 DIGEST_IDEAS = 12
 DIGEST_DECISIONS = 20
 DIGEST_TEXT = 240  # characters of any one note, brief or outcome
+DIGEST_HANDOFF = 600  # a handoff gets more: it is the line the next session acts on
 
 
 def _line(text: str, limit: int = DIGEST_TEXT) -> str:
@@ -498,7 +499,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
     for i in active:
         latest = next((n.text for n in reversed(i.notes) if not n.text.startswith(DECISION)), None)
         if i.handoff:
-            what = f"handoff: {_line(i.handoff)}"
+            what = f"handoff: {_line(i.handoff, DIGEST_HANDOFF)}"
         elif latest:
             what = f"last note: {_line(latest)}"
         else:
