@@ -91,48 +91,26 @@ START = "<!-- CLARITY:START -->"
 END = "<!-- CLARITY:END -->"
 
 _BODY = """- Where things stand is at the end of this block, current as of the last clarity
-  write. Start there; query clarity for more rather than crawling the tree.
-- If `.clarity/adopt.md` exists, adoption is unfinished: read it first and do
-  what it says. It ends by telling you to delete it.
-- `clarity-ctl status` — objective, what's active, what's next.
-  `clarity-ctl --help` — every command.
-- `clarity-ctl show active --json`, `clarity-ctl show <id> --json` — for you. Every read
-  takes `--json` and answers `{ok, command, data, warnings, version}`.
-- Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity project · 4 refused.
-- Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md` — both are
-  rewritten from the commands. Below the marker in `EPOCH.md` is yours.
-- Name ideas and epochs like a title, a few words: `clarity-ctl idea add "status
-  crash on missing repo"`. The why, the evidence and the context go in a note
-  right after — the first note is the detail. Folder and branch names come from
-  the name.
-- Start work with `clarity-ctl epoch start <id> --repo <repo|all|none> --brief "<goal and
-  limits>"`; it takes an idea straight to active, and the brief is what whoever picks the
-  epoch up reads first. Name the repos you will change; a project that lists repos asks.
-  Then work in that epoch's folder: `clarity-ctl path <id>`.
-- Every command that acts on an epoch takes its id, always: `clarity-ctl note 7
-  "..."`. Clarity never infers which epoch you mean and will refuse without one.
-- Claim before you work: `clarity-ctl claim <id> --as <your name>`; release with the same
-  name when done: `clarity-ctl release <id> --as <your name>`.
-- Splitting an epoch across agents: give each agent's part a subepoch, only when it
-  needs a branch of its own — quick work is a note on the epoch. `clarity-ctl epoch
-  spawn <id> "<name>" --brief "<goal and limits>"` gives `<id>.1`, `<id>.2`, branched
-  from the epoch's branch. The part's agent claims it with `--as`, writes a `HANDOFF:`
-  note and releases when it stops, and does not close it. Whoever owns the epoch notes
-  any feedback on the subepoch, merges its branch into the epoch's, and closes it.
-- Stopping before the work is done — including a part the user leaves for a later
-  session: keep the epoch active and write a note starting `HANDOFF:` — what is
-  finished, what is left, what the next agent should do first. Don't file the rest as
-  an idea; an idea reads as optional, a handoff as next.
-- Close an epoch as soon as its work is merged: `clarity-ctl epoch close <id>
-  "<outcome>"`. When the user rejects an approach, `epoch close <id> --drop "<why>"`.
-  An epoch left open after its work landed reads as unfinished to every later session.
+  write. Start from it; you don't need `status` or `--help` to get going.
+  `clarity-ctl show <id>` has every note on an item.
+- Start work: `clarity-ctl epoch start "<name, a few words>" --brief "<goal and limits>"
+  --as <your name>`, or an idea's id in place of the name. One call: it branches, makes
+  the worktree, claims the epoch for you and prints where to work.
+- Commands that act on an epoch take its id, always: `clarity-ctl note 7 "..."`.
+- Note the moment a decision changes — a reversal, an approach you rejected, a result
+  that surprised you: `clarity-ctl note <id> "..."`. Not at the end: the notes are what
+  the next session has instead of this conversation.
 - A decision that outlives the epoch — a rule, a constraint, something we won't build
-  and why: a note starting `DECISION:` on the item you're on. Every one is listed below
-  for every later session; anywhere else it is buried in one epoch's notes.
-- Write a note the moment a decision changes — a reversal, an approach you
-  rejected, a result that surprised you: `clarity-ctl note <id> "..."`. Not when
-  work completes; in a long session it never does, and the record is what the
-  next session has instead of this conversation."""
+  and why: a note starting `DECISION:`. Every one is listed below for later sessions.
+- Merged: `clarity-ctl epoch close <id> "<outcome>"`, which also releases it. Rejected:
+  `epoch close <id> --drop "<why>"`. An epoch left open reads as unfinished.
+- Stopping before it's done, including a part left for a later session: keep the epoch
+  active and write a note starting `HANDOFF:` — what's done, what's left, what to do
+  first. Not an idea: an idea reads as optional, a handoff as next.
+- Later, not now: `clarity-ctl idea add "<name>"`.
+- Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.
+- Splitting work across agents, taking over another agent's epoch, repos: `clarity-ctl
+  --help`. If `.clarity/adopt.md` exists, adoption is unfinished: read it first."""
 
 # Written into a file inside the project. It sits next to the worklog, so it can
 # say so plainly — hedging here would only teach an agent to doubt the repo it is

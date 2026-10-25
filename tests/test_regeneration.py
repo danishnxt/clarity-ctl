@@ -77,7 +77,7 @@ def test_an_unchanged_render_does_not_touch_the_file(project, repo):
 def test_the_cli_refuses_a_bad_id_and_prints_a_claim(project, repo, monkeypatch, capsys):
     monkeypatch.chdir(repo)
     # every id path goes through as_id, so a typo is exit 4 and never a traceback
-    for argv in (["path", "nope"], ["show", "nope"], ["epoch", "start", "nope"]):
+    for argv in (["path", "nope"], ["show", "nope"]):
         assert main(argv) == 4
 
     # a lease carries no expiry; the CLI must not reach for one

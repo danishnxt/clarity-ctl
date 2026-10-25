@@ -5,7 +5,7 @@ import json
 import pytest
 
 from clarity import ClarityError, Project
-from clarity import gitops
+from clarity import gitops, lease
 from clarity.cli import main
 from clarity.store import load_yaml
 
@@ -289,3 +289,27 @@ def test_a_repo_whose_folder_is_gone_is_named_not_a_traceback(workspace, ws_root
     assert main(["repo", "remove", "workspace/harness"]) == 0
     [warning] = Project.find(root).missing_warnings()
     assert f"epoch {item.id} branches it" in warning and "repo remove" not in warning
+
+
+def test_start_takes_a_name_and_claims_under_the_name_it_is_given(ws_root, monkeypatch, capsys):
+    """One call from nothing to working: the idea, the start and the claim."""
+    monkeypatch.chdir(ws_root)
+    project = Project.find(ws_root)
+    project.repo_add(str(ws_root / "workspace" / "agent"))
+
+    # one listed repo: --repo can be left out, there is only one thing it could mean
+    assert main(["epoch", "start", "port the lexer", "--as", "lexer-agent"]) == 0
+    out = capsys.readouterr().out
+    item = Project.find(ws_root).worklog.items[-1]
+    assert item.name == "port the lexer" and item.status == "active"
+    assert f"work in: {item.folder}/wt/agent" in out
+    held = lease.read(ws_root / item.folder)
+    assert held["owner"] == "lexer-agent"
+
+
+def test_a_refused_start_by_name_leaves_no_stray_idea(workspace, ws_root, monkeypatch):
+    monkeypatch.chdir(ws_root)
+    before = len(workspace.worklog.items)
+    # two listed repos: which to branch still has to be said
+    assert main(["epoch", "start", "port the lexer"]) == 2
+    assert len(Project.find(ws_root).worklog.items) == before

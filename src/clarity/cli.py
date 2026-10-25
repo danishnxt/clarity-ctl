@@ -162,12 +162,17 @@ def _repo_choice(project, item_id: int, repos: list[str] | None,
     """--repo as (repos, no_repos) for Project.start: `all` is every listed repo, `none`
     is --no-repos. In a project that lists repos, leaving the choice out is refused —
     a default that branches everything is the mistake an agent makes without noticing,
-    and the refusal names all three answers, so it doubles as the reminder."""
+    and the refusal names all three answers, so it doubles as the reminder.
+
+    Unless there is exactly one: then "everything" is the one repo the agent means, and
+    a refusal only costs it a turn to say so."""
     if repos and len(repos) == 1 and repos[0] in ("all", "none"):
         return None, repos[0] == "none"
     if repos and {"all", "none"} & set(repos):
         raise ClarityError("--repo all and --repo none stand alone — not with other repos",
                            code=2)
+    if not repos and not no_repos and len(project.worklog.repos) == 1:
+        return list(project.worklog.repos), False
     if not repos and not no_repos and project.worklog.repos:
         listed = ", ".join(project.worklog.repos)
         raise ClarityError(
@@ -338,7 +343,10 @@ def build_parser() -> argparse.ArgumentParser:
                     "epoch add-repo brings repos in when the code starts.\n\n"
                     "Splitting the work across agents? epoch spawn <id> starts a subepoch "
                     "of an active epoch.")
-    _id_arg(p_start, "the item to start")
+    p_start.add_argument("id", help="id of the idea to start — or a name, a few words like a "
+                                     "title, to add it as an idea and start it in one go")
+    p_start.add_argument("--as", dest="as_name", metavar="<name>",
+                         help="who holds the lease start takes, as claim --as; no claim needed after")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
     p_start.add_argument("--brief", metavar="<text|file>",
                          help="what the work is for and what limits apply — the text, or a "
@@ -558,6 +566,8 @@ def _started_text(item, verb: str, warnings: list[str]) -> str:
     lines = [f"epoch {item.id} {verb} on {item.branch or 'no branch'} — {item.folder}"]
     if item.branch:
         lines.append(_repos_line(item))
+        for r in item.repos or []:
+            lines.append(f"  work in: {item.folder}/wt/{Path(r).name}")
     elif item.repos == []:
         lines.append(f"  no repos yet — when code starts: "
                      f"clarity-ctl epoch add-repo {item.id} <repo>")
@@ -678,14 +688,20 @@ def run(args) -> int:
 
     elif args.command == "epoch":
         if action == "start":
-            item_id = project.resolve_id(args.id)
-            repos, no_repos = _repo_choice(project, item_id, args.repos, args.no_repos)
+            # A name rather than an id: the idea and its start are one step, because an
+            # agent about to work has no use for the idea on its own.
+            # Added only once the checks pass, so a refused start leaves no stray idea.
+            item_id = None if parse_id(args.id) is None else project.resolve_id(args.id)
+            repos, no_repos = _repo_choice(project, item_id or f'"{args.id}"', args.repos,
+                                           args.no_repos)
             if no_repos and args.branch:
                 raise ClarityError("--branch names the branch to make, and --repo none "
                                    "makes none — pass one", code=2)
+            if item_id is None:
+                item_id = project.add(args.id).id
             item, warnings = project.start(item_id, branch=args.branch,
                                            repos=repos, no_repos=no_repos,
-                                           brief=args.brief)
+                                           brief=args.brief, as_name=args.as_name)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:
