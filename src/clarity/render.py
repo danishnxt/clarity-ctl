@@ -468,7 +468,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
 
 # How much of the history the digest carries. Bounded, so a project's thousandth
 # epoch costs every session no more than its tenth; the rest is a command away.
-DIGEST_CLOSED = 10
+DIGEST_CLOSED = 30
 DIGEST_IDEAS = 12
 DIGEST_DECISIONS = 20
 DIGEST_TEXT = 240  # characters of any one note, brief or outcome

@@ -104,11 +104,12 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   the next session has instead of this conversation.
 - A decision that outlives the epoch — a rule, a constraint, something we won't build
   and why: a note starting `DECISION:`. Every one is listed below for later sessions.
-- Merged: `clarity-ctl epoch close <id> "<outcome>"`, which also releases it. Rejected:
-  `epoch close <id> --drop "<why>"`. An epoch left open reads as unfinished.
-- Stopping before it's done, including a part left for a later session: keep the epoch
-  active and write a note starting `HANDOFF:` — what's done, what's left, what to do
-  first. Not an idea: an idea reads as optional, a handoff as next.
+- The whole task done and merged: `clarity-ctl epoch close <id> "<outcome>"`, which
+  also releases it. The outcome says what changed and why — for a bug, what was wrong.
+  Rejected: `epoch close <id> --drop "<why>"`. An epoch left open reads as unfinished.
+- Part of it left for later, even with the rest merged: don't close it. Keep it active
+  and write a note starting `HANDOFF:` — what's done, what's left, what to do first.
+  Not an idea: an idea reads as optional, a handoff as next.
 - Later, not now: `clarity-ctl idea add "<name>"`.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.
 - Splitting work across agents, taking over another agent's epoch, repos: `clarity-ctl
