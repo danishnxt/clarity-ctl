@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -71,6 +72,15 @@ SCRUB = [
 
 # Our own snapshots, worktree links included; the default filter would strip them on 3.14.
 TRUSTED = {"filter": "fully_trusted"} if hasattr(tarfile, "fully_trusted_filter") else {}
+
+# What a usage or rate limit says. Hitting one stops the run instead of recording it:
+# every call after it would fail the same way, and look like a finished session.
+LIMITED = re.compile(r"hit your (session|usage|weekly) limit|usage limit|rate limit|overloaded", re.I)
+
+
+class Limited(Exception):
+    pass
+
 
 READS = ("cat ", "head ", "tail ", "sed -n", "less ")
 CLARITY = re.compile(r"(?:^|[\s;&|(`])clarity-ctl(?=\s|$)")  # the command, not a path with the name in it
@@ -214,8 +224,11 @@ class Bench:
         trace.write_text("\n".join(json.dumps({"name": t["name"], "input": {
             k: (v[:300] if isinstance(v, str) else v) for k, v in t["input"].items()}}) for t in tools_used))
         res = res or {"is_error": True, "result": tail or "no result event", "usage": {}}
+        if res.get("is_error") and LIMITED.search(str(res.get("result", "")) + tail):
+            raise Limited(str(res.get("result") or tail).strip()[:200])
         u = res.get("usage") or {}
         return {
+            "id": uuid.uuid4().hex[:12],
             "input": u.get("input_tokens", 0),
             "cache_write": u.get("cache_creation_input_tokens", 0),
             "cache_read": u.get("cache_read_input_tokens", 0),
@@ -235,9 +248,20 @@ class Bench:
             f.write(json.dumps(row) + "\n")
 
     def rows(self):
+        """Every result, the latest attempt only: a retried call replaces the one before."""
         if not self.results.exists():
             return []
-        return [json.loads(l) for l in self.results.read_text().splitlines() if l.strip()]
+        latest = {}
+        for line in self.results.read_text().splitlines():
+            if line.strip():
+                r = json.loads(line)
+                latest[(r["phase"], r["arm"], r.get("ckpt"), r["step"], r.get("rep"))] = r
+        return list(latest.values())
+
+    def done(self, phase):
+        """Keys of the calls in `phase` that finished. One that errored runs again on resume."""
+        return {(r["arm"], r.get("ckpt"), r["step"], r.get("rep")) for r in self.rows()
+                if r["phase"] == phase and not r.get("error")}
 
     # -------------------------------------------------------------- build
 
@@ -272,7 +296,7 @@ class Bench:
     # --------------------------------------------------------------- work
 
     def work(self, arms):
-        done = {(r["arm"], r["step"]) for r in self.rows() if r["phase"] == "work"}
+        done = {(arm, step) for arm, _, step, _ in self.done("work")}
         n = len(self.scen.sessions)
 
         def run(arm):
@@ -300,7 +324,7 @@ class Bench:
     # ------------------------------------------------------------- ripout
 
     def ripout(self):
-        done = {r["ckpt"] for r in self.rows() if r["phase"] == "ripout"}
+        done = {ckpt for _, ckpt, _, _ in self.done("ripout")}
 
         def one(c):
             if c in done or not self.snap("clarity", c).exists():
@@ -346,7 +370,7 @@ class Bench:
     # -------------------------------------------------------------- probe
 
     def probe(self, arms, reps):
-        done = {(r["arm"], r["ckpt"], r["step"], r["rep"]) for r in self.rows() if r["phase"] == "probe"}
+        done = self.done("probe")
         last = len(self.scen.sessions)
 
         def run(arm, ckpts):
@@ -378,10 +402,11 @@ class Bench:
     # -------------------------------------------------------------- grade
 
     def grade(self):
-        graded = {(r["arm"], r["ckpt"], r["step"], r["rep"]) for r in self.rows() if r["phase"] == "grade"}
+        graded = {r.get("of") for r in self.rows() if r["phase"] == "grade" and not r.get("error")}
         rubric = {(c, p.id): p for c, ps in self.scen.checkpoints.items() for p in ps}
-        todo = [r for r in self.rows() if r["phase"] == "probe" and rubric[(r["ckpt"], r["step"])].facts
-                and (r["arm"], r["ckpt"], r["step"], r["rep"]) not in graded]
+        # A grade belongs to one answer: a probe that was run again needs grading again.
+        todo = [r for r in self.rows() if r["phase"] == "probe" and not r["error"]
+                and rubric[(r["ckpt"], r["step"])].facts and r.get("id") not in graded]
         neutral = self.out / "grader"
         neutral.mkdir(exist_ok=True)
         env = {k: v for k, v in os.environ.items() if k not in SCRUB}
@@ -399,9 +424,11 @@ class Bench:
                 notes = v.get("notes", "")
             except (ValueError, KeyError, TypeError):
                 hits, notes = [], f"unparseable: {g['result'][:200]}"
+                g["error"] = True  # graded again on resume
             score = sum(hits) / len(p.facts) if hits else 0.0
             self.record(phase="grade", arm=r["arm"], ckpt=r["ckpt"], step=r["step"], rep=r["rep"],
-                        hits=hits, score=score, notes=notes, cost_usd=g["cost_usd"])
+                        of=r.get("id"), hits=hits, score=score, notes=notes, cost_usd=g["cost_usd"],
+                        error=g["error"])
             log(f"grade: {r['arm']} @{r['ckpt']} {r['step']} #{r['rep']} = {score:.2f}")
 
         with ThreadPoolExecutor(8) as ex:
@@ -440,10 +467,10 @@ def report(outs: list[Path]):
     b = Bench(outs[0], "", "", False)
     nrep = len({r["replicate"] for r in rows}) or 1
     cfg = json.loads((b.out / "config.json").read_text())
-    graded = {(r["replicate"], r["arm"], r["ckpt"], r["step"], r["rep"]): r["score"]
-              for r in rows if r["phase"] == "grade"}
-    probes = [dict(r, score=graded.get((r["replicate"], r["arm"], r["ckpt"], r["step"], r["rep"]), 0.0))
-              for r in rows if r["phase"] == "probe" and r["step"] != "ok"]
+    graded = {r["of"]: r["score"] for r in rows if r["phase"] == "grade" and r.get("of")}
+    errored = [r for r in rows if r.get("error") and r["phase"] in ("work", "ripout", "probe")]
+    probes = [dict(r, score=graded.get(r.get("id"), 0.0))
+              for r in rows if r["phase"] == "probe" and r["step"] != "ok" and not r["error"]]
     arms = [a for a in ALL_ARMS if any(r["arm"] == a for r in rows)]
 
     def med(xs):
@@ -460,6 +487,9 @@ def report(outs: list[Path]):
            "- **ctx tokens**: everything the model read across all its turns (input + cache write + cache read).",
            "- **per correct answer**: total over every graded probe ÷ total score. Lower is better. "
            "Brackets are a 90% bootstrap interval.", ""]
+    if errored:
+        out += [f"**{len(errored)} call(s) errored and are left out**; resume the run to retry them: "
+                + ", ".join(f"{r['phase']} {r['arm']} {r['step']}" for r in errored[:10]), ""]
 
     # Headline: what it takes to get up to speed at each size.
     out += ["## Tokens to get up to speed, by project size", "",
@@ -594,6 +624,16 @@ def main():
               a.replicate)
     arms = a.arms.split(",")
     phases = ["build", "work", "ripout", "probe", "grade"] if a.phase == "all" else [a.phase]
+    try:
+        run_phases(b, phases, arms, a.reps)
+    except Limited as e:
+        sys.exit(f"stopped at a usage limit: {e}\nnothing after it was recorded; "
+                 f"run the same command again once it resets to carry on")
+    if a.phase == "all":
+        report(a.out)
+
+
+def run_phases(b, phases, arms, reps):
     for ph in phases:
         if ph == "build":
             b.build()
@@ -602,11 +642,9 @@ def main():
         elif ph == "ripout" and "ripout" in arms:
             b.ripout()
         elif ph == "probe":
-            b.probe(arms, a.reps)
+            b.probe(arms, reps)
         elif ph == "grade":
             b.grade()
-    if a.phase == "all":
-        report(a.out)
 
 
 if __name__ == "__main__":
