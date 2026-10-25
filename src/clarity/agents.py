@@ -95,7 +95,9 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   `clarity-ctl show <id>` has every note on an item.
 - Start work: `clarity-ctl epoch start "<name, a few words>" --brief "<goal and limits>"
   --as <your name>`, or an idea's id in place of the name. One call: it branches, makes
-  the worktree, claims the epoch for you and prints where to work.
+  the worktree, claims the epoch for you and prints where to work. A small change that
+  goes straight to main: add `--in-place` — no branch or worktree, commit where you are.
+  Keep the worktree for experiments and anything that may be thrown away.
 - Commands that act on an epoch take its id, always: `clarity-ctl note 7 "..."`.
 - Note the moment a decision changes — a reversal, an approach you rejected, a result
   that surprised you: `clarity-ctl note <id> "..."`. Not at the end: the notes are what

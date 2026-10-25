@@ -313,3 +313,31 @@ def test_a_refused_start_by_name_leaves_no_stray_idea(workspace, ws_root, monkey
     # two listed repos: which to branch still has to be said
     assert main(["epoch", "start", "port the lexer"]) == 2
     assert len(Project.find(ws_root).worklog.items) == before
+
+
+def test_an_in_place_epoch_has_no_branch_and_closes_like_any_other(ws_root, monkeypatch, capsys,
+                                                                    git):
+    """A small change straight onto the checkout: the record, without the merge."""
+    monkeypatch.chdir(ws_root)
+    project = Project.find(ws_root)
+    project.repo_add(str(ws_root / "workspace" / "agent"))
+    branches = git(["branch", "--list"], ws_root / "workspace" / "agent")
+
+    assert main(["epoch", "start", "fix a typo", "--in-place", "--as", "me"]) == 0
+    assert "work in: workspace/agent — in place" in capsys.readouterr().out
+    project = Project.find(ws_root)
+    item = project.worklog.items[-1]
+    assert item.status == "active" and item.branch is None
+    assert not (ws_root / item.folder / "wt" / "agent").exists()
+    assert git(["branch", "--list"], ws_root / "workspace" / "agent") == branches
+    assert "(in place, in `workspace/agent`)" in project.state_digest()
+
+    assert main(["epoch", "close", str(item.id), "fixed"]) == 0
+    assert Project.find(ws_root).worklog.by_id(item.id).status == "done"
+
+
+def test_in_place_refuses_what_would_contradict_it(ws_root, monkeypatch):
+    monkeypatch.chdir(ws_root)
+    Project.find(ws_root).repo_add(str(ws_root / "workspace" / "agent"))
+    assert main(["epoch", "start", "x", "--in-place", "--branch", "b"]) == 2
+    assert main(["epoch", "start", "x", "--in-place", "--repo", "none"]) == 2
