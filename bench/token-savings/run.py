@@ -90,8 +90,9 @@ def summarise_tools(tools, root: Path, out: Path):
     """Counts that say how a session found things out, from its tool calls.
 
     `escapes` counts calls that reach outside the arm's project into the run folder
-    (other arms, results, traces) or this repo (the scenario and its answers). Any
-    non-zero count means that session's answers may not be its own.
+    (other arms, results, traces) or this repo (the scenario and its answers). The
+    shared venvs are fine to touch. Any other count means that session's answers may
+    not be its own.
     """
     cmds = [t["input"].get("command", "") for t in tools if t["name"] == "Bash"]
     first = tools[0] if tools else None
@@ -99,7 +100,7 @@ def summarise_tools(tools, root: Path, out: Path):
     def escapes(t):
         text = json.dumps(t["input"])
         outside = [m for m in re.findall(re.escape(str(out)) + r"[^\s\"'`;|&<>()]*", text)
-                   if not m.startswith(str(root))]
+                   if not m.startswith(str(root)) and not m.startswith(str(out / "venv-"))]
         return bool(outside) or str(REPO) in text or "../.." in text
 
     return {
@@ -319,12 +320,18 @@ class Bench:
             r = self.claude(scenario.RIPOUT_PROMPT, proj, env, self.out / "traces" / f"ripout-{c}.jsonl")
             self.record(phase="ripout", arm="ripout", ckpt=c, step="write", **r)
             sh(["clarity-ctl", "install", "--remove"], cwd=proj, env=env, check=False)
-            for wt in wts:
-                sh(["git", "worktree", "remove", "--force", wt], cwd=code, env=env, check=False)
-            sh(["git", "worktree", "prune"], cwd=code, env=env, check=False)
             for name in [".clarity", "EPOCHS", "ARCHIVE", "LEARNINGS", ".git", "worklog.yaml"]:
                 p = proj / name
                 shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+            # The worktrees went with EPOCHS. Forget them outright: `worktree remove` and
+            # `prune` keep any entry whose path still exists, and the clarity arm's does,
+            # so `git worktree list` would point this arm straight at it.
+            shutil.rmtree(code / ".git" / "worktrees", ignore_errors=True)
+            for cache in proj.rglob("__pycache__"):
+                shutil.rmtree(cache, ignore_errors=True)
+            leak = sh(["grep", "-rIl", str(self.project("clarity")), "."], cwd=proj, check=False)
+            if leak.strip():
+                sys.exit(f"ripout {c}: still points at the clarity arm: {leak.split()}")
             agents = proj / "AGENTS.md"
             if agents.exists() and not agents.read_text().strip():
                 agents.unlink()
