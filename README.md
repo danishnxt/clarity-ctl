@@ -144,13 +144,19 @@ reused, and `show <id>` still reads them.
 `init` writes a short block of rules into `AGENTS.md`, and `CLAUDE.md` imports it. The
 rules tell an agent to:
 
-- ask clarity for the state (`clarity-ctl status`, `clarity-ctl show active --json`)
-  instead of reading the whole tree;
+- start from the state at the end of the block: the objective, active epochs and
+  their handoffs, what's queued, standing decisions and recent outcomes. clarity
+  rewrites it on every write, so it is always current, and an agent gets it without
+  running a command. For anything else it asks clarity (`clarity-ctl status`,
+  `clarity-ctl show <id> --json`) instead of reading the whole tree;
 - claim an epoch before working on it, under its own name (`clarity-ctl claim <id> --as
   <name>`, `release <id> --as <name>`);
 - write a note the moment a decision changes;
 - stop with a **handoff**: a note starting `HANDOFF:` that says what's done, what's
-  stuck, and what to do first. `show <id>` puts the latest one up front.
+  stuck, and what to do first. `show <id>` puts the latest one up front;
+- record a **decision** that outlives the epoch (a rule, or something we won't
+  build and why) as a note starting `DECISION:`. Every one is listed in the block;
+- close an epoch as soon as its work is merged, or drop it with the reason.
 
 Give an epoch a **brief** when you start it: `epoch start <id> --brief "<goal and
 limits>"`, as text or a file. It's the first thing whoever picks the epoch up reads.

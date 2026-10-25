@@ -19,8 +19,9 @@ There used to be a second file, .clarity/RULES.md, that this block pointed at.
 It is gone. It was generated from config.yaml and the current objective, which
 made it a cached copy of state that already lives in worklog.yaml — a second
 place to keep in sync, and one that quietly fell behind its own generator. The
-block below is a constant instead, so there is nothing to regenerate and nothing
-to go stale. The objective is not in it: `clarity-ctl status` prints that, live.
+rules in the block are a constant instead. The block's state section, below, is
+generated — but on every write, under the worklog lock, from nothing but the
+worklog, so it has no way to fall behind (see "Why the state is in the block").
 
 AGENTS.md carries the block. CLAUDE.md carries a one-line import of AGENTS.md
 rather than a copy, so there is exactly one body of text to read or change. The
@@ -38,6 +39,20 @@ That is why adopt gets one conditional line rather than its procedure. The
 procedure is long and is read once; it lives in .clarity/adopt.md, which the
 adopting agent deletes when it is done. After that the line costs a glance at a
 path that isn't there.
+
+## Why the state is in the block
+
+It used to say "run `clarity-ctl status`" and stop there. Measured against a
+CLAUDE.md the agent keeps by hand (bench/token-savings), that lost: the file is in
+context before the first turn, while every clarity call is another turn, and every
+turn re-reads the whole context. Clarity's record was as good — a CLAUDE.md written
+from it scored best — it just cost more to get at.
+
+So the block ends with `render.state_digest`: the objective, active epochs with
+their handoffs, the queue, standing decisions and recent outcomes. It is bounded —
+ten outcomes, twenty decisions, a line each — so it costs a large project no more
+than a small one, and the rest stays a command away. It carries nothing that changes
+without a command running (leases, git), which is what would make it go stale.
 
 ## Why the note rule names a moment, not a cadence
 
@@ -75,7 +90,9 @@ from .store import write_atomic
 START = "<!-- CLARITY:START -->"
 END = "<!-- CLARITY:END -->"
 
-_BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it first and do
+_BODY = """- Where things stand is at the end of this block, current as of the last clarity
+  write. Start there; query clarity for more rather than crawling the tree.
+- If `.clarity/adopt.md` exists, adoption is unfinished: read it first and do
   what it says. It ends by telling you to delete it.
 - `clarity-ctl status` — objective, what's active, what's next.
   `clarity-ctl --help` — every command.
@@ -102,8 +119,16 @@ _BODY = """- If `.clarity/adopt.md` exists, adoption is unfinished: read it firs
   from the epoch's branch. The part's agent claims it with `--as`, writes a `HANDOFF:`
   note and releases when it stops, and does not close it. Whoever owns the epoch notes
   any feedback on the subepoch, merges its branch into the epoch's, and closes it.
-- Stopping before the work is done: write a note starting `HANDOFF:` — what is finished,
-  what is stuck, what the next agent should do first. `show <id>` reads the latest one.
+- Stopping before the work is done — including a part the user leaves for a later
+  session: keep the epoch active and write a note starting `HANDOFF:` — what is
+  finished, what is left, what the next agent should do first. Don't file the rest as
+  an idea; an idea reads as optional, a handoff as next.
+- Close an epoch as soon as its work is merged: `clarity-ctl epoch close <id>
+  "<outcome>"`. When the user rejects an approach, `epoch close <id> --drop "<why>"`.
+  An epoch left open after its work landed reads as unfinished to every later session.
+- A decision that outlives the epoch — a rule, a constraint, something we won't build
+  and why: a note starting `DECISION:` on the item you're on. Every one is listed below
+  for every later session; anywhere else it is buried in one epoch's notes.
 - Write a note the moment a decision changes — a reversal, an approach you
   rejected, a result that surprised you: `clarity-ctl note <id> "..."`. Not when
   work completes; in a long session it never does, and the record is what the
@@ -120,6 +145,13 @@ don't write its files by hand.
 
 {_BODY}
 {END}"""
+
+
+def local_block(state: str | None = None) -> str:
+    """LOCAL_BLOCK with the project's state digest at the end, inside the markers."""
+    if not state:
+        return LOCAL_BLOCK
+    return LOCAL_BLOCK[:-len(END)] + f"\n{state}\n{END}"
 
 # CLAUDE.md gets this instead of a copy. One body of text, imported rather than
 # duplicated — two copies would be two things to keep in step, which is the whole
@@ -148,20 +180,20 @@ LOCAL_TARGETS: list[tuple[str, bool]] = [
     (".github/copilot-instructions.md", False),
 ]
 
-def block_for(path: Path | None = None) -> str:
+def block_for(path: Path | None = None, state: str | None = None) -> str:
     """What a given file gets. CLAUDE.md imports AGENTS.md instead of copying it."""
     if path is not None and path.name == "CLAUDE.md":
         return SHIM_BLOCK
-    return LOCAL_BLOCK
+    return local_block(state)
 
 
-def upsert(path: Path) -> str:
+def upsert(path: Path, state: str | None = None) -> str:
     """Put the block in `path`, preserving everything outside the markers.
 
     Returns created · updated · unchanged · skipped, so a caller can report
     honestly and a re-run of install is quiet rather than claiming work it did not do.
     """
-    body = block_for(path)
+    body = block_for(path, state)
     if path.is_symlink():
         # Someone pointed this file somewhere deliberately. Writing would replace
         # their link with our file, so we don't — there is nothing here we own.
@@ -213,14 +245,15 @@ def local_paths(root: Path) -> list[Path]:
             if always or (root / name).exists()]
 
 
-def install(paths: list[Path], remove_instead: bool = False) -> list[tuple[Path, str]]:
+def install(paths: list[Path], remove_instead: bool = False,
+            state: str | None = None) -> list[tuple[Path, str]]:
     """Write (or strip) the block across `paths`, reporting what each one did."""
     if remove_instead:
         return [(path, remove(path)) for path in paths]
-    return [(path, upsert(path)) for path in paths]
+    return [(path, upsert(path, state)) for path in paths]
 
 
-def refresh(paths: list[Path]) -> list[Path]:
+def refresh(paths: list[Path], state: str | None = None) -> list[Path]:
     """Bring existing blocks up to this version's text. Returns the files it rewrote.
 
     Only a file that already has a block is touched — this keeps a block current,
@@ -232,6 +265,6 @@ def refresh(paths: list[Path]) -> list[Path]:
             continue
         text = path.read_text(encoding="utf-8")
         start, end = text.find(START), text.find(END)
-        if start != -1 and end > start and upsert(path) == "updated":
+        if start != -1 and end > start and upsert(path, state) == "updated":
             out.append(path)
     return out

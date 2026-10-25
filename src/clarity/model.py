@@ -47,6 +47,10 @@ class Note:
 
 # The tag that makes a note a handoff. Plain text, so it survives in every view.
 HANDOFF = "HANDOFF:"
+# The tag that makes a note a standing decision: a rule, a constraint, something we
+# won't build and why. It outlives the epoch it was written on, so the agent block
+# lists every one, whichever epoch holds it.
+DECISION = "DECISION:"
 
 def parse_id(value) -> int | str | None:
     """An id as given — 7, or "7.1" for a subepoch — in its one stored form, or None.
@@ -148,6 +152,11 @@ class Item:
             if note.text.startswith(HANDOFF):
                 return note.text[len(HANDOFF):].strip()
         return None
+
+    @property
+    def decisions(self) -> list[Note]:
+        """Every note on this item written as a standing decision, oldest first."""
+        return [n for n in self.notes if n.text.startswith(DECISION)]
 
     @property
     def slug(self) -> str:

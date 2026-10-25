@@ -6,6 +6,11 @@ There is deliberately no STATUS.md renderer. The status view mixes the worklog w
 leases and git ahead/behind — machine-local facts that change with no command running
 — so a committed file could only ever be wrong about them. `clarity-ctl status` composes
 it on every run instead, which is the one place all three inputs are live.
+
+`state_digest` is the exception that proves it: the worklog part alone, no leases and
+no git, written into the agent block on every write. Everything in it changes only
+when a command runs, so it cannot go stale — and an agent gets it with zero tool
+calls, where every `clarity-ctl` call is a turn that re-reads the whole context.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import textwrap
 import unicodedata
 from datetime import datetime
 
-from .model import CLOSED, FUTURE, IN_FLIGHT, Item, Objectives, id_key
+from .model import CLOSED, DECISION, FUTURE, IN_FLIGHT, Item, Objectives, id_key
 
 # Wrapped here, not by the terminal, so zooming or resizing never re-flows the output.
 # Capped rather than fixed: a terminal narrower than the cap would wrap it again itself,
@@ -459,6 +464,71 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
         out.append(paint("no repo for epochs to branch — they get a folder, but no branch "
                          "or worktree", "dim"))
     return "\n".join(out).rstrip() + "\n"
+
+
+# How much of the history the digest carries. Bounded, so a project's thousandth
+# epoch costs every session no more than its tenth; the rest is a command away.
+DIGEST_CLOSED = 10
+DIGEST_IDEAS = 12
+DIGEST_DECISIONS = 20
+DIGEST_TEXT = 240  # characters of any one note, brief or outcome
+
+
+def _line(text: str, limit: int = DIGEST_TEXT) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def state_digest(objectives: Objectives, items: list[Item]) -> str:
+    """Where things stand, as markdown for the agent block: the worklog's part of
+    status, plus what status leaves to `show` — handoffs and standing decisions.
+
+    `items` should be live and archived together: a decision does not stop standing
+    because its epoch was archived.
+    """
+    def finished_order(i: Item):
+        return (i.closed_seq or 0, i.ended or i.created or "", id_key(i.id))
+
+    out = ["### Where things stand", "",
+           "Generated from the worklog on every clarity write, so it is current. "
+           "`clarity-ctl status` adds branches and leases; `clarity-ctl show <id>` has every note.", "",
+           f"**Objective:** {_line(objectives.overall or '— not set —')}", "", "**Active**"]
+
+    active = sorted((i for i in items if i.status in IN_FLIGHT), key=lambda i: id_key(i.id))
+    for i in active:
+        latest = next((n.text for n in reversed(i.notes) if not n.text.startswith(DECISION)), None)
+        if i.handoff:
+            what = f"handoff: {_line(i.handoff)}"
+        elif latest:
+            what = f"last note: {_line(latest)}"
+        else:
+            what = f"brief: {_line(i.brief)}" if i.brief else "no notes yet"
+        out.append(f"- #{i.id} {i.name} — {what}")
+    if not active:
+        out.append("- none")
+
+    ideas = sorted((i for i in items if i.status in FUTURE), key=lambda i: id_key(i.id))
+    shown = " · ".join(f"#{i.id} {i.name}" for i in ideas[:DIGEST_IDEAS]) or "none"
+    more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next`" if len(ideas) > DIGEST_IDEAS else ""
+    out += ["", f"**Up next:** {shown}{more}"]
+
+    decisions = sorted(((n, i) for i in items for n in i.decisions),
+                       key=lambda d: d[0].at, reverse=True)
+    if decisions:
+        out += ["", "**Standing decisions**, newest first"]
+        out += [f"- {_line(n.text[len(DECISION):].strip())} (#{i.id})"
+                for n, i in decisions[:DIGEST_DECISIONS]]
+        if len(decisions) > DIGEST_DECISIONS:
+            out.append(f"- {len(decisions) - DIGEST_DECISIONS} older, in the notes of the epochs they name")
+
+    closed = sorted((i for i in items if i.status in CLOSED), key=finished_order, reverse=True)
+    if closed:
+        out += ["", "**Recently closed**, newest first"]
+        out += [f"- #{i.id} {'✓' if i.status == 'done' else '✗ dropped'} {i.name}"
+                f"{' — ' + _line(i.outcome) if i.outcome else ''}" for i in closed[:DIGEST_CLOSED]]
+        if len(closed) > DIGEST_CLOSED:
+            out.append(f"- {len(closed) - DIGEST_CLOSED} older: `clarity-ctl status --all --limit 0`")
+    return "\n".join(out)
 
 
 def epoch_md(item: Item, existing: str | None = None) -> str:

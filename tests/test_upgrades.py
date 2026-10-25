@@ -104,7 +104,7 @@ def test_a_write_refreshes_a_stale_agent_block_and_leaves_a_removed_one(project,
 
     project.add("anything")
     assert "clarity-ctl q " not in path.read_text()
-    assert agents.BLOCK in path.read_text()
+    assert agents.block_for(path, project.state_digest()) in path.read_text()
 
     # but a block the user removed stays removed
     project.install_agents(remove=True)

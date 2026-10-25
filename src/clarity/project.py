@@ -267,7 +267,8 @@ class Project:
         another process committed since this one started is picked up first.
 
         The agent block is refreshed here too, so the first write after an upgrade
-        brings the project's instructions up to what this binary does.
+        brings the project's instructions up to what this binary does, and every write
+        rewrites the state digest at the block's end.
         """
         with file_lock(self.lock_path):
             self.worklog = Worklog.load(self.root / WORKLOG)
@@ -277,7 +278,7 @@ class Project:
             yield
             self.worklog.save()
             self.render_views(since=before)
-            agents.refresh(agents.local_paths(self.root))
+            agents.refresh(agents.local_paths(self.root), self.state_digest())
 
     # ---------- which epoch does a command mean ----------
 
@@ -337,7 +338,12 @@ class Project:
 
     def install_agents(self, remove: bool = False) -> list[tuple[Path, str]]:
         """Put the clarity block in this project's agent files, or take it out."""
-        return agents.install(agents.local_paths(self.root), remove_instead=remove)
+        return agents.install(agents.local_paths(self.root), remove_instead=remove,
+                              state=self.state_digest())
+
+    def state_digest(self) -> str:
+        """Where things stand, for the agent block: worklog facts only, so never stale."""
+        return render.state_digest(self.worklog.objectives, self.worklog.all_items())
 
     @staticmethod
     def _plans(folder: Path) -> list[str]:

@@ -5,7 +5,7 @@ same promise: we own what is between our markers and nothing else.
 Run: .venv/bin/python -m pytest -q
 """
 
-from clarity import Project, agents
+from clarity import Project, agents, render
 
 MINE = "# My rules\n\nAlways rebase.\n"
 
@@ -121,14 +121,51 @@ def test_claude_imports_agents_instead_of_copying_it(project, repo):
     assert "clarity-ctl status" not in claude_md      # and does not repeat it
 
 
-def test_no_file_carries_a_copy_of_the_objective(repo):
-    """The objective lives in worklog.yaml. clarity-ctl status prints it; nothing caches it."""
+def test_the_digest_follows_every_write_and_claude_md_only_imports_it(repo):
+    """The state in the block is regenerated on each write, so it never trails the
+    worklog. CLAUDE.md still carries no copy: it imports AGENTS.md."""
     Project.create(repo, name="proj", overall="ship the parser")
     project = Project.find(repo)
     project.set_objective("ship the parser, then benchmarks")
 
-    for name in ("AGENTS.md", "CLAUDE.md"):
-        text = (repo / name).read_text()
-        assert "ship the parser" not in text and "benchmarks" not in text
+    agents_md = (repo / "AGENTS.md").read_text()
+    assert "**Objective:** ship the parser, then benchmarks" in agents_md
+    assert "**Objective:** ship the parser\n" not in agents_md
+    assert "ship the parser" not in (repo / "CLAUDE.md").read_text()
     assert not (repo / ".clarity" / "RULES.md").exists()
-    assert "ship the parser, then benchmarks" in project.status_text()
+
+
+def test_the_digest_puts_handoffs_decisions_and_outcomes_up_front(project, repo):
+    """What a fresh session would otherwise spend turns on `show` to find."""
+    tried = project.add("split parser")
+    project.start(tried.id)
+    project.note(tried.id, "DECISION: stdlib only — ops boxes have no pip")
+    project.close(tried.id, "mis-parses agents with spaces", dropped=True)
+    landed = project.add("since flag")
+    project.start(landed.id)
+    project.note(landed.id, "parsing ISO in UTC")
+    project.note(landed.id, "HANDOFF: --since done; --until is next")
+    project.add("gzip input")
+
+    text = (repo / "AGENTS.md").read_text()
+    digest = text[text.index("### Where things stand"):text.index(agents.END)]
+    assert f"#{landed.id} since flag — handoff: --since done; --until is next" in digest
+    assert "stdlib only — ops boxes have no pip" in digest      # outlives its dropped epoch
+    assert f"#{tried.id} ✗ dropped split parser — mis-parses agents with spaces" in digest
+    assert "gzip input" in digest.split("**Up next:**")[1]
+
+
+def test_the_digest_stays_the_same_size_however_long_the_history(project, repo):
+    """A thousandth epoch must cost every session what a tenth does."""
+    def digest_size():
+        return len(project.state_digest())
+
+    for n in range(render.DIGEST_CLOSED):
+        item = project.add(f"attempt {n:03d}")
+        project.close(item.id, "x" * 1000)                       # long outcomes get cut
+    small = digest_size()
+    for n in range(100, 140):
+        item = project.add(f"attempt {n:03d}")
+        project.close(item.id, "x" * 1000)
+    assert digest_size() <= small + 100                          # only the "N older" line
+    assert "40 older" in project.state_digest()
