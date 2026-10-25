@@ -111,7 +111,8 @@ def summarise_tools(tools, root: Path, out: Path):
         text = json.dumps(t["input"])
         outside = [m for m in re.findall(re.escape(str(out)) + r"[^\s\"'`;|&<>()]*", text)
                    if not m.startswith(str(root)) and not m.startswith(str(out / "venv-"))]
-        return bool(outside) or str(REPO) in text or "../.." in text
+        # Not `../..`: from the code folder that is just the project root, still inside.
+        return bool(outside) or str(REPO) in text
 
     return {
         "tool_calls": len(tools),
