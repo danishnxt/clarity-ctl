@@ -152,7 +152,7 @@ class Bench:
     def save_config(self):
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "config.json").write_text(json.dumps(
-            {"replicate": self.replicate, "blocks": self.blocks, "checkpoints": self.cp_blocks, "model": self.model,
+            {"replicate": self.replicate, "arms": getattr(self, "arms", ALL_ARMS), "blocks": self.blocks, "checkpoints": self.cp_blocks, "model": self.model,
              "grader": self.grader, "bypass": self.bypass,
              "claude_code": sh(["claude", "--version"], check=False).strip(),
              "clarity": sh(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, check=False).strip()}, indent=2))
@@ -611,7 +611,7 @@ def main():
     ap.add_argument("--checkpoints", default="1,3,8", help="probe after these blocks")
     ap.add_argument("--model", default="claude-sonnet-5-5", help="model for work and probes")
     ap.add_argument("--grader", default="claude-sonnet-5-5")
-    ap.add_argument("--arms", default=",".join(ALL_ARMS))
+    ap.add_argument("--arms", help="comma-separated; default all, or what the run started with")
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--replicate", type=int, default=1, help="which replicate this folder is, for combining")
     ap.add_argument("--bypass", action="store_true",
@@ -623,7 +623,11 @@ def main():
         sys.exit("only report takes more than one --out")
     b = Bench(a.out[0], a.model, a.grader, a.bypass, a.blocks, [int(x) for x in a.checkpoints.split(",")],
               a.replicate)
-    arms = a.arms.split(",")
+    # A resumed run keeps the arms it started with, unless told otherwise.
+    cfg = a.out[0].resolve() / "config.json"
+    saved = json.loads(cfg.read_text()).get("arms") if cfg.exists() else None
+    arms = a.arms.split(",") if a.arms else saved or ALL_ARMS
+    b.arms = arms
     phases = ["build", "work", "ripout", "probe", "grade"] if a.phase == "all" else [a.phase]
     try:
         run_phases(b, phases, arms, a.reps)
