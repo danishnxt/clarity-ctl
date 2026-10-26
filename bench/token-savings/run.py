@@ -272,7 +272,7 @@ class Bench:
             if not (self.out / venv).exists():
                 sh(["uv", "venv", "-q", str(self.out / venv)])
                 sh(["uv", "pip", "install", "-q", "--python", str(self.out / venv / "bin" / "python"), *pkgs])
-        for arm in WORK_ARMS:
+        for arm in [a for a in WORK_ARMS if a in getattr(self, "arms", WORK_ARMS)]:
             proj = self.project(arm)
             if proj.exists():
                 continue
@@ -370,7 +370,7 @@ class Bench:
 
     # -------------------------------------------------------------- probe
 
-    def probe(self, arms, reps):
+    def probe(self, arms, reps, only=None):
         done = self.done("probe")
         last = len(self.scen.sessions)
 
@@ -391,12 +391,13 @@ class Bench:
             if arm != "ripout" and self.snap(arm, last).exists():
                 self.restore(arm, last)
 
+        ckpts = [c for c in self.ckpts if not only or c in only]
         jobs = []
         for arm in arms:
             if arm == "ripout":  # each checkpoint's ripout is its own folder, so they can run in parallel
-                jobs += [("ripout", [c]) for c in self.ckpts if self.snap("ripout", c, c).exists()]
+                jobs += [("ripout", [c]) for c in ckpts if self.snap("ripout", c, c).exists()]
             elif arm in WORK_ARMS:
-                jobs.append((arm, [c for c in self.ckpts if self.snap(arm, c).exists()]))
+                jobs.append((arm, [c for c in ckpts if self.snap(arm, c).exists()]))
         with ThreadPoolExecutor(max(1, len(jobs))) as ex:
             list(ex.map(lambda j: run(*j), jobs))
 
@@ -613,6 +614,8 @@ def main():
     ap.add_argument("--grader", default="claude-sonnet-5-5")
     ap.add_argument("--arms", help="comma-separated; default all, or what the run started with")
     ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--probe-at", help="ask only the questions at these checkpoints, in sessions "
+                                       "(e.g. 24); the others are skipped, not lost")
     ap.add_argument("--replicate", type=int, default=1, help="which replicate this folder is, for combining")
     ap.add_argument("--bypass", action="store_true",
                     help="skip permission checks; only in a throwaway container or CI runner")
@@ -630,7 +633,8 @@ def main():
     b.arms = arms
     phases = ["build", "work", "ripout", "probe", "grade"] if a.phase == "all" else [a.phase]
     try:
-        run_phases(b, phases, arms, a.reps)
+        run_phases(b, phases, arms, a.reps,
+                   [int(x) for x in a.probe_at.split(",")] if a.probe_at else None)
     except Limited as e:
         sys.exit(f"stopped at a usage limit: {e}\nnothing after it was recorded; "
                  f"run the same command again once it resets to carry on")
@@ -638,7 +642,7 @@ def main():
         report(a.out)
 
 
-def run_phases(b, phases, arms, reps):
+def run_phases(b, phases, arms, reps, probe_at=None):
     for ph in phases:
         if ph == "build":
             b.build()
@@ -647,7 +651,7 @@ def run_phases(b, phases, arms, reps):
         elif ph == "ripout" and "ripout" in arms:
             b.ripout()
         elif ph == "probe":
-            b.probe(arms, reps)
+            b.probe(arms, reps, probe_at)
         elif ph == "grade":
             b.grade()
 
