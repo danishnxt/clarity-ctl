@@ -348,9 +348,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--as", dest="as_name", metavar="<name>",
                          help="who holds the lease start takes, as claim --as; no claim needed after")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
-    p_start.add_argument("--in-place", action="store_true",
-                         help="a small change committed straight onto the repo's own "
-                              "checkout: no branch, no worktree, nothing to merge")
     p_start.add_argument("--brief", metavar="<text|file>",
                          help="what the work is for and what limits apply — the text, or a "
                               "file holding it; shown first to whoever picks the epoch up")
@@ -571,9 +568,6 @@ def _started_text(item, verb: str, warnings: list[str]) -> str:
         lines.append(_repos_line(item))
         for r in item.repos or []:
             lines.append(f"  work in: {item.folder}/wt/{Path(r).name}")
-    elif item.extra.get("in_place"):
-        for r in item.extra["in_place"]:
-            lines.append(f"  work in: {r} — in place: no branch, commit where you are")
     elif item.repos == []:
         lines.append(f"  no repos yet — when code starts: "
                      f"clarity-ctl epoch add-repo {item.id} <repo>")
@@ -703,15 +697,11 @@ def run(args) -> int:
             if no_repos and args.branch:
                 raise ClarityError("--branch names the branch to make, and --repo none "
                                    "makes none — pass one", code=2)
-            if args.in_place and (args.branch or no_repos):
-                raise ClarityError("--in-place makes no branch and works in a repo — not "
-                                   "with --branch or --repo none", code=2)
             if item_id is None:
                 item_id = project.add(args.id).id
             item, warnings = project.start(item_id, branch=args.branch,
                                            repos=repos, no_repos=no_repos,
-                                           brief=args.brief, as_name=args.as_name,
-                                           in_place=args.in_place)
+                                           brief=args.brief, as_name=args.as_name)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:

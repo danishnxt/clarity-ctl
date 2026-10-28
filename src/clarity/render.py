@@ -506,7 +506,6 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
             what = f"brief: {_line(i.brief)}" if i.brief else "no notes yet"
         where = "".join(f" (work in `{i.folder}/wt/{r.rsplit('/', 1)[-1]}`)"
                         for r in (i.repos or []) if i.folder and i.branch)
-        where += "".join(f" (in place, in `{r}`)" for r in i.extra.get("in_place") or [])
         out.append(f"- #{i.id} {i.name}{where} — {what}")
     if not active:
         out.append("- none")

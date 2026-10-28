@@ -536,8 +536,7 @@ class Project:
               repos: list[str] | None = None,
               no_repos: bool = False,
               brief: str | None = None,
-              as_name: str | None = None,
-              in_place: bool = False) -> tuple[Item, list[str]]:
+              as_name: str | None = None) -> tuple[Item, list[str]]:
         """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
 
         A closed epoch needs `reopen`, so picking work back up is deliberate rather
@@ -556,11 +555,6 @@ class Project:
 
         `as_name` is who the lease is for, as `claim --as` takes it — so the agent that
         starts an epoch holds it under its own name, and needs no claim after.
-
-        `in_place` is for a small change that goes straight onto the repo's own
-        checkout: the epoch gets its folder, lease, notes and outcome, but no branch and
-        no worktree, so there is nothing to merge. The repos it works in are kept in
-        `extra["in_place"]`, for where-to-work hints only; nothing else acts on them.
         """
         warnings: list[str] = []
         if brief and Path(brief).is_file():
@@ -587,8 +581,6 @@ class Project:
                     "a reopen takes back the repos the epoch had — add one after with:\n"
                     f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
             chosen = self.pick_repos(repos) if repos else None
-            if in_place and (reopen or item.branch):
-                raise ClarityError("only a new epoch starts in place", code=4)
             if no_repos and self.branches_root():
                 raise ClarityError(
                     "this project branches its root, not a list of repos — there would be "
@@ -608,11 +600,7 @@ class Project:
             # refused lease leaves no half-started epoch and no worktree we may not use.
             if take_lease:
                 lease.claim(folder, label=item.name, name=as_name)
-            if in_place:
-                item.repos = []
-                item.extra["in_place"] = (chosen or list(self.worklog.repos)
-                                          or (["."] if self.branches_root() else []))
-            elif no_repos and item.repos is None and item.branch is None:
+            if no_repos and item.repos is None and item.branch is None:
                 item.repos = []
             elif item.repos is None and item.branch is None and self.worklog.repos:
                 # first time this epoch touches git: the repos asked for, else the
