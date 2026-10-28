@@ -50,7 +50,7 @@ from it scored best — it just cost more to get at.
 
 So the block ends with `render.state_digest`: the objective, active epochs with
 their handoffs, the queue, standing decisions and recent outcomes. It is bounded —
-ten outcomes, twenty decisions, a line each — so it costs a large project no more
+thirty outcomes, twenty decisions, a line each — so it costs a large project no more
 than a small one, and the rest stays a command away. It carries nothing that changes
 without a command running (leases, git), which is what would make it go stale.
 
@@ -110,6 +110,8 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   Not an idea: an idea reads as optional, a handoff as next.
 - Later, not now: `clarity-ctl idea add "<name>"`.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.
+- Every read takes `--json` and answers `{ok, command, data, warnings, version}`.
+  Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity project · 4 refused.
 - Splitting work across agents, taking over another agent's epoch, repos: `clarity-ctl
   --help`. If `.clarity/adopt.md` exists, adoption is unfinished: read it first."""
 
