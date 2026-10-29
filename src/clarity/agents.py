@@ -50,7 +50,7 @@ from it scored best — it just cost more to get at.
 
 So the block ends with `render.state_digest`: the objective, active epochs with
 their handoffs, the queue, standing decisions and recent outcomes. It is bounded —
-thirty outcomes, twenty decisions, a line each — so it costs a large project no more
+ten outcomes, twenty decisions, a line each — so it costs a large project no more
 than a small one, and the rest stays a command away. It carries nothing that changes
 without a command running (leases, git), which is what would make it go stale.
 
