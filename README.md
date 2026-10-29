@@ -1,41 +1,40 @@
 # clarity-ctl
 
-**Project state you can read in one command, and your coding agent can query without crawling the tree.**
-
-clarity-ctl is a small command-line tool that records what a project is trying to do,
-what has been tried, and what came of it. It is for people who work with coding agents
-like Claude Code or Codex on anything bigger than a toy, and want to stay in charge.
-
-## Why
+**Your automatic project manager, setup in 2 commmands.**
 
 A coding agent can easily overtake your own thoughts and plans in a project and run away
-with its own reasoning. That leaves you with:
+with its own reasoning. This gets especially bad if you are running multiple projects in parallel.
+
+It leaves you with:
 
 1. Gaps in your understanding.
+2. Project structures with random files all over the place (try to look for 2nd last analysis.md file you generated, I dare you)
 2. Logs too long to read, that confuse more than they explain.
 3. Experiment results, good and bad, that can't be tied back to a cause.
-4. Tokens burned on catching up. Every session starts with you re-explaining where
-   things stand, and the agent re-reading the tree to find out for itself.
+4. Tokens burned on catching up, re-reading code or having to remmember to dump
+  a handoff file at end of every session.
 
 clarity-ctl is a small CLI and a few simple rules for your agent that keep you in the
-loop. Good prompting can do this too; clarity-ctl makes it close to automatic.
+loop. Good prompting can do this too; clarity-ctl makes it close to automatic. The automatic
+project structing means you can peruse your project yourself as well without needing an agent 
+to go back in.
 
 ## How it works
 
-A project has three kinds of things:
+A project is a collections of ideas and epochs. 
 
-- **An objective**: one line saying what the project is for.
-- **Ideas**: things you might do. One line each; no folder, no branch.
-- **Epochs**: one attempt at one thing, such as a feature, a fix or an experiment.
-  Starting an idea turns it into an epoch.
 
-When an epoch starts, it gets its own folder, its own git branch, and a **worktree**: a
-second checkout of your repo in that folder, so two attempts in parallel never touch
-each other's files.
+- **Ideas**: An idea is added when a thought occurs to you, to be worked on in the future.
+- **Epochs**: An epoch begins when an work on an idea begins. A single epoch would map to a
+feature, or a bug fix, or a analysis, or an experiment, etc.
 
-As you work, you write **notes**: what you tried, and why a decision changed. When
-you're done, you **close** the epoch with a one-line outcome. All of it lives in one
-file, `worklog.yaml`, written only by the CLI.
+When an epoch starts, it gets its own folder, its own plan/analysis/logs/viz directories, and its own **worktrees** of relevant repos you're working on. This way two epochs can work on the same repos in different epochs without overlap.
+
+Clarity-ctl rules guide your agent for when to add **notes** to your epoch, this is to document when a decision is made, or when an expriement result arrives.
+
+All project state lives in one lock protected file, `worklog.yaml`, written to only by the CLI. This is  available to query in agent-friendly json format or human readable format. Every clarity-ctl command can be queried in both modes.
+
+In the future and in the interest of performance and to avoid locking, we may move this single state file to a per epoch file. 
 
 ## Install
 
@@ -45,7 +44,6 @@ clarity-ctl installs from GitHub; it is not on PyPI.
 
 ```sh
 uv tool install git+https://github.com/danishnxt/clarity-ctl          # latest main
-uv tool install git+https://github.com/danishnxt/clarity-ctl@v0.1.0   # a release
 uv tool upgrade clarity-ctl                                           # pull the newest
 ```
 
