@@ -485,3 +485,20 @@ def test_ago_reads_like_a_person_would_say_it():
     assert render._ago("2026-10-20", now) == "today"
     assert render._ago("2026-10-19", now) == "yesterday"
     assert render._ago("2026-01-01", now) == "2026-01-01"   # far enough back, the date
+
+
+def test_show_puts_each_numbered_point_of_a_note_on_its_own_line(project):
+    """A note written as (1) … (2) … reads as one block unless show splits it."""
+    item = project.add("points")
+    project.note(item.id, "Context: (1) first point (2) second point, see (1) above (3) third")
+    page = render.item_text(Project.find(project.root).query("item", str(item.id)))
+    lines = [line.strip() for line in page.splitlines()]
+    assert "1. " in page  # notes are numbered
+    assert "Context:" in lines
+    assert "(1) first point" in lines and "(3) third" in lines
+    assert "(2) second point, see (1) above" in lines  # a back-reference is prose
+
+
+def test_a_note_without_a_run_of_points_is_left_as_written():
+    assert render.note_points("see (3) for why") == ["see (3) for why"]
+    assert render.note_points("only (1) one") == ["only (1) one"]

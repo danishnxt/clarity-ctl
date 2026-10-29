@@ -331,6 +331,24 @@ def _ago(at: str, now: datetime | None = None) -> str:
     return f"{minutes // 1440}d ago" if minutes < 60 * 24 * 31 else at[:10]
 
 
+_POINT = re.compile(r"\((\d+)\)\s+")
+
+
+def note_points(text: str) -> list[str]:
+    """A note's text split at its own numbering — `(1) … (2) … (3) …` — so show can
+    put each point on a line of its own. Only a run counting up from 1 counts, so a
+    stray "(3)" in prose stays where it is. No run, one piece: the text as written."""
+    cuts, want = [], 1
+    for m in _POINT.finditer(text):
+        if int(m.group(1)) == want:
+            cuts.append(m.start())
+            want += 1
+    if len(cuts) < 2:
+        return [text]
+    pieces = [text[:cuts[0]]] + [text[a:b] for a, b in zip(cuts, cuts[1:] + [len(text)])]
+    return [p.strip() for p in pieces if p.strip()]
+
+
 def item_text(data: dict, marks: dict | None = None) -> str:
     """`show <id>`: one item as a page, the way gh issue view and brew info read.
 
@@ -427,11 +445,21 @@ def item_text(data: dict, marks: dict | None = None) -> str:
     notes = data.get("notes") or []
     if notes:
         out += section(f"Notes ({len(notes)})")
-        for n, note in enumerate(notes):
-            if n:
-                out.append("")
-            out.append("  " + paint(f"{_ago(note['at'])} · {note['at'][:16]}", "dim"))
-            out += para(note["text"], 4)
+        for n, note in enumerate(notes, 1):
+            out += ["", "  " + paint(f"{n}.", "bold") + " "
+                    + paint(f"{_ago(note['at'])} · {note['at'][:16]}", "dim")]
+            for k, point in enumerate(note_points(note["text"])):
+                if k:
+                    out.append("")
+                if _POINT.match(point):
+                    # the number hangs; the point's own lines line up after it
+                    num = _POINT.match(point).group(0)
+                    body = textwrap.wrap(point[len(num):], width=cols - 4 - len(num),
+                                         break_on_hyphens=False) or [""]
+                    out += ["    " + num + body[0], *("    " + " " * len(num) + b
+                                                     for b in body[1:])]
+                else:
+                    out += para(point, 4)
     return "\n".join(out) + "\n"
 
 
