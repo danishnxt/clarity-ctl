@@ -41,15 +41,12 @@ file, `worklog.yaml`, written only by the CLI.
 
 Requires Python 3.10+ and git.
 
-```sh
-uv tool install clarity-ctl         # or: pipx install clarity-ctl
-uv tool upgrade clarity-ctl         # or: pipx upgrade clarity-ctl
-```
-
-Until the first release reaches PyPI, install from git instead:
+clarity-ctl installs from GitHub; it is not on PyPI.
 
 ```sh
-uv tool install git+https://github.com/danishnxt/clarity-ctl
+uv tool install git+https://github.com/danishnxt/clarity-ctl          # latest main
+uv tool install git+https://github.com/danishnxt/clarity-ctl@v0.1.0   # a release
+uv tool upgrade clarity-ctl                                           # pull the newest
 ```
 
 After an upgrade, the next write in each project brings its agent rules and
@@ -163,12 +160,14 @@ rules tell an agent to:
 - start work in one call: `clarity-ctl epoch start "<name>" --repo <repo> --brief "<goal>"`
   adds the idea, branches, makes the worktree and claims it. Closing
   releases it;
-- write a note the moment a decision changes;
+- write a note the moment a decision changes (see [When notes are written](#when-notes-are-written));
 - stop with a **handoff**: a note starting `HANDOFF:` that says what's done, what's
   stuck, and what to do first. `show <id>` puts the latest one up front;
 - record a **decision** that outlives the epoch (a rule, or something we won't
   build and why) as a note starting `DECISION:`. Every one is listed in the block;
-- close an epoch as soon as its work is merged, or drop it with the reason.
+- close an epoch only when the whole task is done and merged, with an outcome that
+  says what changed and why, or drop it with the reason. If part is left for later,
+  keep it active with a handoff rather than filing an idea.
 
 Give an epoch a **brief** when you start it: `epoch start <id> --brief "<goal and
 limits>"`, as text or a file. It's the first thing whoever picks the epoch up reads.
@@ -185,6 +184,25 @@ codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project
 
 Commands always take the epoch's id (`clarity-ctl note 7 "..."`). clarity never
 guesses: a guess works until a second epoch starts.
+
+### When notes are written
+
+clarity never writes a note on its own and never calls a model. The agent (or you)
+decides, following the rules in the block. A note is for something the next session
+couldn't get from the code or git:
+
+- **a decision changes**: a reversal, an approach rejected and why, a result that
+  surprised you. Written at that moment, not at the end; in a long session the end
+  never comes, and an unwritten note is lost with the conversation;
+- **a rule that outlives the epoch**: a note starting `DECISION:`, listed in the
+  block for every later session;
+- **stopping before the work is done**: a note starting `HANDOFF:`, what's done, what's
+  left, what to do first;
+- **the first note on a new idea**: the why and the evidence behind its name.
+
+Routine progress ("ran the tests", "edited parser.py") is not a note; git has it. The
+outcome is not a note either: it goes on `epoch close`. Notes are kept in order and
+never edited; a later note that corrects an earlier one should say so.
 
 ## Splitting an epoch across agents
 
@@ -217,7 +235,8 @@ While 7 is active, `status` lists its subepochs under it, one line each:
 
 ## Getting the most out of it
 
-- **Read `status` at the start of every session.** It's the whole briefing.
+- **Start from the state at the end of the block.** It's the briefing; `status` adds
+  branches and leases.
 - **One epoch per attempt.** Two ideas in one branch can't be kept or thrown away
   separately.
 - **Name things like a title.** A few words: "memory-map the input file". Put the why
@@ -255,10 +274,11 @@ uv venv && uv pip install -e . pytest
 
 1. Bump the version in `pyproject.toml`, `src/clarity/__init__.py` and
    `src/clarity/cli.py`, and commit.
-2. Tag it `v<version>` and publish a GitHub release from the tag.
-3. `.github/workflows/publish.yml` runs the tests, builds, and uploads to PyPI.
+2. Tag it `v<version>`, push the tag, and publish a GitHub release from it.
 
-PyPI never accepts the same version twice, so a bad release is fixed with a new one.
+Users install a release with `uv tool install git+https://github.com/danishnxt/clarity-ctl@v<version>`.
+Publishing to PyPI is off for now: `.github/workflows/publish.yml` runs only when
+started by hand from the Actions tab, never on a release.
 
 ## License
 

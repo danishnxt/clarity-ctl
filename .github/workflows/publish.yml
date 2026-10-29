@@ -1,12 +1,12 @@
-# Publishes to PyPI when a GitHub release is published. No token is stored:
+# Publishes to PyPI. Manual only for now: clarity-ctl installs from GitHub until we
+# decide to publish, so a GitHub release must not upload anything. No token is stored:
 # PyPI trusts this workflow directly ("trusted publishing"). One-time setup on
 # pypi.org → Account → Publishing → add a pending publisher with
 #   project: clarity-ctl · owner/repo: this repo · workflow: publish.yml · environment: pypi
 name: publish
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 jobs:
   test:
