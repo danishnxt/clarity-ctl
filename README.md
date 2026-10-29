@@ -43,7 +43,18 @@ Requires Python 3.10+ and git.
 
 ```sh
 uv tool install clarity-ctl         # or: pipx install clarity-ctl
+uv tool upgrade clarity-ctl         # or: pipx upgrade clarity-ctl
 ```
+
+Until the first release reaches PyPI, install from git instead:
+
+```sh
+uv tool install git+https://github.com/danishnxt/clarity-ctl
+```
+
+After an upgrade, the next write in each project brings its agent rules and
+`worklog.yaml` up to the new version. An older clarity-ctl that meets a newer worklog
+reads it but refuses to write until it's upgraded.
 
 ## Quick start
 
@@ -239,6 +250,15 @@ A workspace can hold several repos. List each one you change with `clarity-ctl r
 uv venv && uv pip install -e . pytest
 .venv/bin/python -m pytest -q tests
 ```
+
+### Releasing
+
+1. Bump the version in `pyproject.toml`, `src/clarity/__init__.py` and
+   `src/clarity/cli.py`, and commit.
+2. Tag it `v<version>` and publish a GitHub release from the tag.
+3. `.github/workflows/publish.yml` runs the tests, builds, and uploads to PyPI.
+
+PyPI never accepts the same version twice, so a bad release is fixed with a new one.
 
 ## License
 
