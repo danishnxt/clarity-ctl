@@ -64,8 +64,8 @@ clarity-ctl init --objective "Make the parser fast enough for 1GB inputs"
 git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
 
-clarity-ctl idea add "memory-map the input file" --type experiment
-clarity-ctl epoch start 1 --repo all      # folder, branch epoch/001-..., worktree
+clarity-ctl epoch start "memory-map the input file" --repo all
+                                           # idea 1, folder, branch, worktree, claimed
 cd $(clarity-ctl path 1)/wt/parser         # work here
 clarity-ctl note 1 "load time halved, total unchanged: the tokenizer is the bottleneck"
 clarity-ctl epoch close 1 "no gain, I/O is not the bottleneck"
@@ -181,6 +181,10 @@ which records who held it.
 Every read takes `--json` and answers `{ok, command, data, warnings, version}`. Exit
 codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project ·
 `4` refused.
+
+`clarity-ctl --help` opens with how the work goes, as commands to copy, then the
+contract above. `clarity-ctl help reference` prints every command's help on one page,
+so an agent can read the whole tool in one call instead of one `--help` per command.
 
 Commands always take the epoch's id (`clarity-ctl note 7 "..."`). clarity never
 guesses: a guess works until a second epoch starts.

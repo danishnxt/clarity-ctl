@@ -14,6 +14,7 @@ import contextlib
 import io
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 from . import render
@@ -23,22 +24,42 @@ from .store import ARCHIVE, ClarityError
 
 VERSION = "0.1.0"
 
-EPILOG = """examples:
-  clarity-ctl init --objective "Compare parser A and B"   set up here, answer two questions
-  clarity-ctl idea add "flaky test on macOS" --type fix   capture it, no folder yet
-  clarity-ctl epoch start 3                               idea -> active
-  clarity-ctl note 3 "ring buffer was 2x slower"          record what you tried
-  clarity-ctl epoch close 3 "bumped timeout"              -> done
-  clarity-ctl show active --json                          what an agent calls
+# The top of `clarity-ctl --help`: the workflow first, as commands to copy. An agent
+# reads this when the rules send it here or a command surprised it, so it says what
+# the rules in AGENTS.md say, in the same words. Lines starting `$ ` must parse —
+# tests/test_help.py runs every one through the parser.
+HOW = """How work goes
+  $ clarity-ctl epoch start "<a few words>" --repo <repo|all|none> --brief "<goal and limits>"
+      adds the idea, branches, makes the worktree, claims it and prints where to work
+  $ clarity-ctl note <id> "..."
+      when a decision changes: a reversal, an approach rejected, a result that surprised you
+  $ clarity-ctl note <id> "DECISION: ..."
+      a rule that outlives the epoch; AGENTS.md lists every one for later sessions
+  $ clarity-ctl note <id> "HANDOFF: ..."
+      stopping before it is done: what's done, what's left, what to do first
+  $ clarity-ctl epoch close <id> "<what changed and why>"
+      only once all of it is merged; --drop "<why>" when it didn't work
+  $ clarity-ctl idea add "<a few words>"
+      for later; the why and the evidence go in a note on it"""
 
-ids:
-  Every command that acts on an epoch takes its id. Clarity never infers which epoch
-  you mean — not from the directory you are in, not from an env var, not from there
-  happening to be only one active. Pass it every time.
+READ = """Read (never writes)
+  clarity-ctl status        objective, active, next; --all adds closed
+  clarity-ctl show <id>     one item with every note; show active | next | closed | all
+  clarity-ctl path <id>     an epoch's folder: cd $(clarity-ctl path 7)"""
 
-exit codes:
-  0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
-"""
+CONTRACT = """Contract
+  Commands that act on an epoch take its id. clarity never guesses which you mean: not
+  from the directory you are in, not from an env var, not from there being one active.
+  Every command takes --json and answers {ok, command, data, warnings, version}; a
+  failure has ok false, and error and code in place of data.
+  Exit codes: 0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
+  Pass every argument. A missing one is asked for at a terminal and refused elsewhere,
+  so an agent is never left waiting on a prompt."""
+
+MORE = """More
+  clarity-ctl <command> --help      one command: what it does, an example, its flags
+  clarity-ctl help reference        every command's help on one page
+  clarity-ctl --version · https://github.com/danishnxt/clarity-ctl"""
 
 SHOW_NAMES = "active | next | closed | all | objective | <id>"
 
@@ -79,49 +100,49 @@ def _section(title: str) -> list:
 ACTIONS: dict[str, list[tuple[str, str]]] = {}
 
 
-def _command_listing(width: int = 72) -> str:
-    out = ["commands"]
+def _command_listing(width: int = 88) -> str:
+    """Every command, by group: one with actions gets a line of its own
+    (`repo add|remove|list`), the rest share one. Built from the parser, so a new
+    command can't be missing from it."""
+    out = ["All commands"]
     for title, rows in SECTIONS:
-        if not rows:
-            continue
-        rule = "─" * max(4, width - len(title) - 3)
-        out.append(f"  {title} {rule}")
-        for name, help_ in rows:
-            out.append(f"    {name:<10} {help_}")
-            for action, action_help in ACTIONS.get(name, []):
-                out.append(f"    {'':<10}   -> {action:<9} {action_help}")
-        out.append("")
+        lines = [f"{name} {'|'.join(a for a, _ in ACTIONS[name])}"
+                 for name, _ in rows if name in ACTIONS]
+        plain = " · ".join(name for name, _ in rows if name not in ACTIONS)
+        lines += textwrap.wrap(plain, width - 11) if plain else []
+        out += [f"  {title if i == 0 else '':<8} {line}" for i, line in enumerate(lines)]
     return "\n".join(out)
 
 
 class _Parser(argparse.ArgumentParser):
-    """Top-level help, composed by hand: usage, commands, examples, then options.
-
-    argparse renders an empty "positional arguments:" block for a subparsers action
-    whose entries are all hidden, and always puts options above the epilog.
+    """Top-level help, composed by hand: the workflow, the reads, every command, the
+    contract. argparse would list commands as a tree of help lines and options last;
+    an agent needs how the work goes first, and -h/--version are one line in More.
     """
 
     def format_help(self) -> str:
-        head = self._get_formatter()
-        head.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
-        head.add_text(self.description)
+        return "\n\n".join([
+            f"{self.prog}: {self.description}\nusage: {self.prog} <command> ...",
+            HOW, READ, _command_listing(), CONTRACT, MORE,
+        ]) + "\n"
 
-        options = self._get_formatter()
-        for group in self._action_groups:
-            if group.title in ("options", "optional arguments"):
-                options.start_section("options")
-                options.add_arguments(group._group_actions)
-                options.end_section()
 
-        return "\n".join([
-            head.format_help().rstrip(),
-            "",
-            _command_listing(),
-            EPILOG.rstrip(),
-            "",
-            options.format_help().rstrip(),
-            "",
-        ])
+def reference_text() -> str:
+    """Every command's --help on one page, under a heading each, so an agent can read
+    the whole tool in one call rather than one --help per command."""
+    parser = build_parser()
+    out = ["# clarity-ctl reference", "", parser.format_help().rstrip()]
+
+    def walk(node, path):
+        for action in node._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for name, child in action.choices.items():
+                    out.extend(["", f"## clarity-ctl {' '.join(path + [name])}", "",
+                                child.format_help().rstrip()])
+                    walk(child, path + [name])
+
+    walk(parser, [])
+    return "\n".join(out) + "\n"
 
 
 def _leaf(parent, name: str, help_: str, description: str | None = None,
@@ -181,8 +202,8 @@ def _repo_choice(project, item_id: int, repos: list[str] | None,
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="clarity-ctl",
-        description="Project state you can read in one command, and your agent can "
-                    "query without crawling the tree.",
+        description="project state for people and agents: what's active, what's next, "
+                    "what was decided.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=VERSION)
@@ -192,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
                                 parser_class=argparse.ArgumentParser)
     SECTIONS.clear()
     setup, look, work, parallel = (
-        _section("set up"), _section("look"), _section("work"), _section("in parallel"),
+        _section("set up"), _section("read"), _section("work"), _section("leases"),
     )
 
     # ---- setup ----
@@ -268,6 +289,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_path = _leaf(sub, "path", "print an epoch's folder — cd $(clarity-ctl path 7)", section=look)
     _id_arg(p_path)
 
+    p_help = _leaf(sub, "help", "this help, or every command's on one page",
+                   "With no topic, the same as clarity-ctl --help. `help reference` prints "
+                   "every command's help, one after another under a heading each: the "
+                   "whole tool in one read. Works outside a project.\n\n"
+                   "example:\n  $ clarity-ctl help reference", section=look)
+    p_help.add_argument("topic", nargs="?", choices=["reference"],
+                        help="reference: every command's help on one page")
+
 
     # ---- objectives ----
     obj_rows: list = []
@@ -309,7 +338,15 @@ def build_parser() -> argparse.ArgumentParser:
                    section=work)
     idea = p_idea.add_subparsers(dest="action", required=True, metavar="<action>")
 
-    p_idea_add = _leaf(idea, "add", "write down something to do later", into=idea_rows)
+    p_idea_add = _leaf(idea, "add", "write down something to do later",
+                       "An idea is work not started: no folder, no branch. Name it like a "
+                       "title, a few words, and put the why and the evidence in a note on it "
+                       "straight after; lists show the name, the note is the detail. "
+                       "epoch start <id> picks it up.\n\n"
+                       "example:\n"
+                       '  $ clarity-ctl idea add "flaky test on macOS" --type fix\n'
+                       '  $ clarity-ctl note 12 "fails 1 in 5 on macOS 15 only; see CI run 4411"',
+                       into=idea_rows)
     p_idea_add.add_argument("text", metavar="<text>", help="a short title, a few words — the detail goes in a note")
     p_idea_add.add_argument("--type", default="feature", choices=TYPES,
                             help="kind of work (default: feature)")
@@ -325,19 +362,23 @@ def build_parser() -> argparse.ArgumentParser:
                     section=work)
     epoch = p_epoch.add_subparsers(dest="action", required=True, metavar="<action>")
 
-    p_start = _leaf(epoch, "start", "begin work: branch, worktree and lease", into=epoch_rows,
-                    description=
-                    "Takes an idea straight to active. Creates "
-                    "epoch/NNN-slug unless --branch names one; if that branch is already "
-                    "checked out somewhere, wt/ symlinks to it instead of adding a worktree. "
+    p_start = _leaf(epoch, "start", "begin work: an idea, or a new name, to active and claimed",
+                    into=epoch_rows, description=
+                    "One call from nothing to working. Given a name, it adds the idea "
+                    "first; given an id, it starts that idea. Either way the epoch gets a "
+                    "folder, the branch epoch/NNN-slug (unless --branch names one) with a "
+                    "worktree per repo, and a lease in your name, and start prints where "
+                    "to work. A refused start adds nothing.\n\n"
                     "When the project lists repos, say which to branch: --repo <repo> "
-                    "(repeat for more), --repo all, or --repo none; to add one later, use "
-                    "epoch add-repo.\n\n"
-                    "Just planning, or analysis with no code expected yet? --repo none "
-                    "gives the epoch its folder and lease and branches nothing; "
-                    "epoch add-repo brings repos in when the code starts.\n\n"
-                    "Splitting the work across agents? epoch spawn <id> starts a subepoch "
-                    "of an active epoch.")
+                    "(repeat for more), --repo all, or --repo none. --repo none suits "
+                    "planning or analysis with no code yet; epoch add-repo brings a repo in "
+                    "later. If the branch is already checked out somewhere, wt/ symlinks "
+                    "to it instead of adding a worktree.\n\n"
+                    "Splitting the work across agents: epoch spawn.\n\n"
+                    "example:\n"
+                    '  $ clarity-ctl epoch start "memory-map the input" --repo parser '
+                    '--brief "cut load time; leave the tokenizer alone"\n'
+                    "  $ clarity-ctl epoch start 12 --repo all")
     p_start.add_argument("id", help="id of the idea to start — or a name, a few words like a "
                                      "title, to add it as an idea and start it in one go")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
@@ -414,22 +455,42 @@ def build_parser() -> argparse.ArgumentParser:
                            help="refresh only this one of the epoch's repos, and set "
                                 "--base only for it; repeat for more")
 
-    p_close = _leaf(epoch, "close", "finish it: asks for the outcome in one line",
+    p_close = _leaf(epoch, "close", "finish it, with its outcome in one line",
                     into=epoch_rows, description=
-                    "Keeps the branch and records its SHA. Releases the lease. "
-                    "Does not merge anything — merge before closing.")
+                    "Close only when the whole task is done and merged. The outcome says "
+                    "what changed and why — for a bug, what was wrong. Part of it left for "
+                    "later: don't close; keep it active and write a HANDOFF: note.\n\n"
+                    "Keeps the branch and records its SHA, and releases the lease. Never "
+                    "merges: merge first. --drop closes it as dropped, the outcome saying "
+                    "why it didn't work.\n\n"
+                    "example:\n"
+                    '  $ clarity-ctl epoch close 7 "mmap halved load time; total unchanged, '
+                    'the tokenizer is the bottleneck"\n'
+                    '  $ clarity-ctl epoch close 8 --drop "no gain: I/O is 5% of the run"')
     _id_arg(p_close)
     p_close.add_argument("outcome", nargs="?", metavar="<outcome>",
-                         help="what happened, in one line (asked for if omitted)")
+                         help="what changed and why, in one line (asked for only at a "
+                              "terminal)")
     p_close.add_argument("--drop", action="store_true",
                          help="close as dropped rather than done")
 
     # ---- notes and leases ----
-    p_note = _leaf(sub, "note", "record what you tried, on an epoch",
-                   "The trail a one-line outcome can't hold. Write these as you go: "
-                   "they're what a fresh session reads to pick the work up.", section=work)
+    p_note = _leaf(sub, "note", "record a decision, a DECISION: rule or a HANDOFF:",
+                   "For what the next session can't get from the code or git. Write one "
+                   "the moment a decision changes — a reversal, an approach rejected and "
+                   "why, a result that surprised you — not at the end: in a long session "
+                   "the end never comes. Routine progress is not a note.\n\n"
+                   "A note starting DECISION: is a rule that outlives the epoch; AGENTS.md "
+                   "lists every one. A note starting HANDOFF: is for stopping before the "
+                   "work is done: what's done, what's left, what to do first; show <id> "
+                   "puts the latest up front.\n\n"
+                   "example:\n"
+                   '  $ clarity-ctl note 7 "mmap rejected: load is 5% of the run"\n'
+                   '  $ clarity-ctl note 7 "DECISION: stdlib only, the ops boxes have no pip"\n'
+                   '  $ clarity-ctl note 7 "HANDOFF: lexer ported; parser half done, start at '
+                   'parse_expr"', section=work)
     _id_arg(p_note)
-    p_note.add_argument("text", nargs="?", metavar="<text>", help="what you tried")
+    p_note.add_argument("text", nargs="?", metavar="<text>", help="the note")
 
     p_rename = _leaf(sub, "rename", "change an item's name after the fact",
                      "For when the scope shifts and the title stops matching the work. "
@@ -446,6 +507,8 @@ def build_parser() -> argparse.ArgumentParser:
           section=work)
 
     p_claim = _leaf(sub, "claim", "take the lease on an epoch",
+                    "epoch start already claims; claim is for taking over an epoch, or "
+                    "for the agent doing a subepoch.\n\n"
                     "Says who is working an epoch, and refuses a second claim. It is a "
                     "warning, not a lock — nothing stops another agent editing the "
                     "worktree. Leases never expire on their own: if one is stale, check "
@@ -454,7 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_claim.add_argument("--steal", action="store_true",
                          help="take over someone else's lease, recording who held it")
     p_claim.add_argument("--as", dest="as_name", metavar="<name>",
-                         help="name the holder, e.g. epoch15-opus, so status shows which "
+                         help="name the holder, e.g. epoch15-opus, so --json shows which "
                               "agent holds what; release with the same name")
 
     p_release = _leaf(sub, "release", "drop the lease", section=parallel)
@@ -497,9 +560,8 @@ def _first_run(project) -> str:
         "next — your code goes in workspace/, as its own repo:\n"
         "  git clone <url> workspace/<name>   # or git init one there\n"
         "  clarity-ctl repo add workspace/<name>\n"
-        '  clarity-ctl idea add "the first thing you want to fix"\n'
-        "  clarity-ctl epoch start 1          # -> active: branch, worktree, lease\n"
-        "  clarity-ctl --help                 # every command\n"
+        '  clarity-ctl epoch start "the first thing you want to fix" --repo all\n'
+        "  clarity-ctl --help                 # how the work goes\n"
     )
 
 
@@ -596,6 +658,11 @@ def run(args) -> int:
              {"root": str(project.root), "doc": str(doc.relative_to(project.root)),
               "moved": moved},
              _adopt_text(project, doc, moved))
+        return 0
+
+    if args.command == "help":
+        text = reference_text() if args.topic else build_parser().format_help()
+        emit(args, "help", {"topic": args.topic, "text": text}, text.rstrip())
         return 0
 
     project = Project.find()
@@ -767,7 +834,7 @@ def run(args) -> int:
     elif args.command == "note":
         target, text = _split_id_text(args.id, args.text)
         if not text:
-            raise ClarityError('nothing to note: clarity-ctl note [id] "what you tried"', code=4)
+            raise ClarityError('nothing to note: clarity-ctl note <id> "..."', code=4)
         item = project.note(target, text)
         emit(args, "note", item.to_dict(), f"noted on {item.id} ({len(item.notes)} so far)")
 
