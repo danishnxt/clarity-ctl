@@ -413,6 +413,8 @@ def item_text(data: dict, marks: dict | None = None) -> str:
             facts.append(f"{git.get('ahead', 0)} ahead, {git.get('behind', 0)} behind")
         if git.get("dirty"):
             facts.append(f"{git['dirty']} uncommitted")
+        elif git.get("dirty_error"):
+            facts.append(f"uncommitted unknown — git status failed: {git['dirty_error']}")
         if git.get("shared"):
             facts.append("shares the main checkout")
         where.append(("repo", f"{git['repo']} — {', '.join(facts)}"))

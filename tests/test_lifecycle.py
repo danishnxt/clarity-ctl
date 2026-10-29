@@ -502,3 +502,21 @@ def test_show_puts_each_numbered_point_of_a_note_on_its_own_line(project):
 def test_a_note_without_a_run_of_points_is_left_as_written():
     assert render.note_points("see (3) for why") == ["see (3) for why"]
     assert render.note_points("only (1) one") == ["only (1) one"]
+
+
+def test_show_still_prints_when_git_status_fails_in_a_worktree(project, repo, monkeypatch):
+    """A broken repo nested in a worktree once made show <id> abort. The uncommitted
+    count is for reading, so the page says it is unknown and why, and prints."""
+    from clarity import gitops
+    item, _ = project.start(project.add("nested repo").id)
+
+    def broken(root):
+        raise ClarityError("git status --porcelain: fatal: failed in submodule tmp/before")
+    monkeypatch.setattr(gitops, "is_dirty", broken)
+
+    data = Project.find(project.root).query("item", str(item.id))
+    [git] = data["git"]
+    assert git["dirty"] is None and "submodule tmp/before" in git["dirty_error"]
+    assert "uncommitted unknown" in render.item_text(data)
+    with pytest.raises(ClarityError):  # the guard still refuses: it asks git itself
+        project.refresh(item.id)

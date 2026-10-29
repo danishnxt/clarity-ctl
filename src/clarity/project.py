@@ -1321,7 +1321,14 @@ class Project:
                 except ClarityError:
                     pass
             if entry["exists"]:
-                entry["dirty"] = len(gitops.is_dirty(link))
+                # A count to show, not a guard: if git can't answer (a broken nested
+                # repo is enough), say so and let the page print. drop-repo and
+                # refresh ask git again and still refuse.
+                try:
+                    entry["dirty"] = len(gitops.is_dirty(link))
+                except ClarityError as err:
+                    entry["dirty"] = None
+                    entry["dirty_error"] = str(err).splitlines()[-1]
             out.append(entry)
         return out
 
