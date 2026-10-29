@@ -14,6 +14,8 @@ It leaves you with:
 5. Tokens burned on catching up, re-reading code or having to remember to dump
    a handoff file at the end of every session.
 
+Running agents in graphs and loops and letting them run wild is all well and good for structured tasks but for analysis experimentation where the user has to make decisions and decide you'd rather be in the loop. 
+
 clarity-ctl is a small CLI and a few simple rules for your agent that keep you in the
 loop. Good prompting can do this too; clarity-ctl makes it close to automatic. The automatic
 project structuring means you can peruse your project yourself as well without needing an agent
