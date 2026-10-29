@@ -1,6 +1,6 @@
 # clarity-ctl
 
-**Your automatic project manager, setup in 2 commmands.**
+**Your automatic project manager, set up in 2 commands.**
 
 A coding agent can easily overtake your own thoughts and plans in a project and run away
 with its own reasoning. This gets especially bad if you are running multiple projects in parallel.
@@ -8,33 +8,32 @@ with its own reasoning. This gets especially bad if you are running multiple pro
 It leaves you with:
 
 1. Gaps in your understanding.
-2. Project structures with random files all over the place (try to look for 2nd last analysis.md file you generated, I dare you)
-2. Logs too long to read, that confuse more than they explain.
-3. Experiment results, good and bad, that can't be tied back to a cause.
-4. Tokens burned on catching up, re-reading code or having to remmember to dump
-  a handoff file at end of every session.
+2. Project structures with random files all over the place (try to look for the 2nd last analysis.md file you generated, I dare you)
+3. Logs too long to read, that confuse more than they explain.
+4. Experiment results, good and bad, that can't be tied back to a cause.
+5. Tokens burned on catching up, re-reading code or having to remember to dump
+   a handoff file at the end of every session.
 
 clarity-ctl is a small CLI and a few simple rules for your agent that keep you in the
 loop. Good prompting can do this too; clarity-ctl makes it close to automatic. The automatic
-project structing means you can peruse your project yourself as well without needing an agent 
+project structuring means you can peruse your project yourself as well without needing an agent
 to go back in.
 
 ## How it works
 
-A project is a collections of ideas and epochs. 
-
+A project is a collection of ideas and epochs.
 
 - **Ideas**: An idea is added when a thought occurs to you, to be worked on in the future.
-- **Epochs**: An epoch begins when an work on an idea begins. A single epoch would map to a
-feature, or a bug fix, or a analysis, or an experiment, etc.
+- **Epochs**: An epoch begins when work on an idea begins. A single epoch would map to a
+feature, or a bug fix, or an analysis, or an experiment, etc.
 
 When an epoch starts, it gets its own folder, its own plan/analysis/logs/viz directories, and its own **worktrees** of relevant repos you're working on. This way two epochs can work on the same repos in different epochs without overlap.
 
-Clarity-ctl rules guide your agent for when to add **notes** to your epoch, this is to document when a decision is made, or when an expriement result arrives.
+Clarity-ctl rules guide your agent for when to add **notes** to your epoch, this is to document when a decision is made, or when an experiment result arrives.
 
-All project state lives in one lock protected file, `worklog.yaml`, written to only by the CLI. This is  available to query in agent-friendly json format or human readable format. Every clarity-ctl command can be queried in both modes.
+All project state lives in one lock-protected file, `worklog.yaml`, written to only by the CLI. This is available to query in agent-friendly json format or human readable format. Every clarity-ctl command can be queried in both modes.
 
-In the future and in the interest of performance and to avoid locking, we may move this single state file to a per epoch file. 
+In the future and in the interest of performance and to avoid locking, we may move this single state file to a per-epoch file.
 
 ## Install
 
