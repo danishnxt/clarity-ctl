@@ -17,6 +17,14 @@ def test_brief_text_is_stored_and_shown(project):
     assert "Brief" in page and "Do not touch the lexer." in page
 
 
+def test_a_brief_too_long_to_be_a_path_is_text(project):
+    """A long brief once crashed start with 'File name too long' instead of being stored."""
+    item = project.add("long brief")
+    brief = "Do the thing carefully. " * 20
+    project.start(item.id, brief=brief)
+    assert Project.find(project.root).query("item", str(item.id))["brief"] == brief
+
+
 def test_brief_can_come_from_a_file(project, tmp_path):
     notes = tmp_path / "brief.md"
     notes.write_text("Goal: ship the parser.\nLimit: no new deps.\n")

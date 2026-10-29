@@ -132,6 +132,14 @@ def _inside_worktree(path: Path) -> bool:
     return False
 
 
+def _is_file(value: str) -> bool:
+    """Whether a --brief names a file. Text too long to be a path is text, not an error."""
+    try:
+        return Path(value).is_file()
+    except OSError:
+        return False
+
+
 class Project:
     def __init__(self, root: Path):
         self.root = root
@@ -553,7 +561,7 @@ class Project:
         replaces the old one; left out, the brief stays.
         """
         warnings: list[str] = []
-        if brief and Path(brief).is_file():
+        if brief and _is_file(brief):
             brief = Path(brief).read_text(encoding="utf-8").strip()
         with self._write():
             item = self.worklog.by_id(item_id)

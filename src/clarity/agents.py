@@ -109,7 +109,8 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
 - Part of it left for later, even with the rest merged: don't close it. Keep it active
   and write a note starting `HANDOFF:` — what's done, what's left, what to do first.
   Not an idea: an idea reads as optional, a handoff as next.
-- Later, not now: `clarity-ctl idea add "<name>"`.
+- Later, not now: `clarity-ctl idea add "<a few words, like a title>"`, then the why and
+  the evidence in a note on it: the name is what lists show, the note is the detail.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.
 - Every read takes `--json` and answers `{ok, command, data, warnings, version}`.
   Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity project · 4 refused.

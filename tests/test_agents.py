@@ -169,3 +169,10 @@ def test_the_digest_stays_the_same_size_however_long_the_history(project, repo):
         project.close(item.id, "x" * 1000)
     assert digest_size() <= small + 100                          # only the "N older" line
     assert "40 older" in project.state_digest()
+
+
+def test_the_digest_cuts_a_name_written_as_a_paragraph(project, repo):
+    """Old ideas named in sentences must not flood the Up next line."""
+    project.add("word " * 100)
+    [line] = [l for l in project.state_digest().splitlines() if l.startswith("**Up next:**")]
+    assert len(line) < render.DIGEST_NAME + 40 and line.endswith("…")

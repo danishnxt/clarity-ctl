@@ -473,6 +473,7 @@ DIGEST_IDEAS = 12
 DIGEST_DECISIONS = 20
 DIGEST_TEXT = 240  # characters of any one note, brief or outcome
 DIGEST_HANDOFF = 600  # a handoff gets more: it is the line the next session acts on
+DIGEST_NAME = 80  # a name is a title; one written as a paragraph is cut, not carried whole
 
 
 def _line(text: str, limit: int = DIGEST_TEXT) -> str:
@@ -506,12 +507,12 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
             what = f"brief: {_line(i.brief)}" if i.brief else "no notes yet"
         where = "".join(f" (work in `{i.folder}/wt/{r.rsplit('/', 1)[-1]}`)"
                         for r in (i.repos or []) if i.folder and i.branch)
-        out.append(f"- #{i.id} {i.name}{where} — {what}")
+        out.append(f"- #{i.id} {_line(i.name, DIGEST_NAME)}{where} — {what}")
     if not active:
         out.append("- none")
 
     ideas = sorted((i for i in items if i.status in FUTURE), key=lambda i: id_key(i.id))
-    shown = " · ".join(f"#{i.id} {i.name}" for i in ideas[:DIGEST_IDEAS]) or "none"
+    shown = " · ".join(f"#{i.id} {_line(i.name, DIGEST_NAME)}" for i in ideas[:DIGEST_IDEAS]) or "none"
     more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next`" if len(ideas) > DIGEST_IDEAS else ""
     out += ["", f"**Up next:** {shown}{more}"]
 
@@ -527,7 +528,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
     closed = sorted((i for i in items if i.status in CLOSED), key=finished_order, reverse=True)
     if closed:
         out += ["", "**Recently closed**, newest first"]
-        out += [f"- #{i.id} {'✓' if i.status == 'done' else '✗ dropped'} {i.name}"
+        out += [f"- #{i.id} {'✓' if i.status == 'done' else '✗ dropped'} {_line(i.name, DIGEST_NAME)}"
                 f"{' — ' + _line(i.outcome) if i.outcome else ''}" for i in closed[:DIGEST_CLOSED]]
         if len(closed) > DIGEST_CLOSED:
             out.append(f"- {len(closed) - DIGEST_CLOSED} older: `clarity-ctl status --all --limit 0`")
