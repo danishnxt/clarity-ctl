@@ -162,17 +162,12 @@ def _repo_choice(project, item_id: int, repos: list[str] | None,
     """--repo as (repos, no_repos) for Project.start: `all` is every listed repo, `none`
     is --no-repos. In a project that lists repos, leaving the choice out is refused —
     a default that branches everything is the mistake an agent makes without noticing,
-    and the refusal names all three answers, so it doubles as the reminder.
-
-    Unless there is exactly one: then "everything" is the one repo the agent means, and
-    a refusal only costs it a turn to say so."""
+    and the refusal names all three answers, so it doubles as the reminder."""
     if repos and len(repos) == 1 and repos[0] in ("all", "none"):
         return None, repos[0] == "none"
     if repos and {"all", "none"} & set(repos):
         raise ClarityError("--repo all and --repo none stand alone — not with other repos",
                            code=2)
-    if not repos and not no_repos and len(project.worklog.repos) == 1:
-        return list(project.worklog.repos), False
     if not repos and not no_repos and project.worklog.repos:
         listed = ", ".join(project.worklog.repos)
         raise ClarityError(

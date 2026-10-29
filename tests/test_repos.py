@@ -297,8 +297,7 @@ def test_start_takes_a_name_and_claims_it(ws_root, monkeypatch, capsys):
     project = Project.find(ws_root)
     project.repo_add(str(ws_root / "workspace" / "agent"))
 
-    # one listed repo: --repo can be left out, there is only one thing it could mean
-    assert main(["epoch", "start", "port the lexer"]) == 0
+    assert main(["epoch", "start", "port the lexer", "--repo", "agent"]) == 0
     out = capsys.readouterr().out
     item = Project.find(ws_root).worklog.items[-1]
     assert item.name == "port the lexer" and item.status == "active"

@@ -93,9 +93,10 @@ END = "<!-- CLARITY:END -->"
 _BODY = """- Where things stand is at the end of this block, current as of the last clarity
   write. Start from it; you don't need `status` or `--help` to get going.
   `clarity-ctl show <id>` has every note on an item.
-- Start work: `clarity-ctl epoch start "<name, a few words>" --brief "<goal and limits>"`,
-  or an idea's id in place of the name. One call: it branches, makes the worktree,
-  claims the epoch for you and prints where to work.
+- Start work: `clarity-ctl epoch start "<name, a few words>" --repo <repo|all|none>
+  --brief "<goal and limits>"`, or an idea's id in place of the name. One call: it
+  branches the repos you name, makes the worktree, claims the epoch for you and prints
+  where to work.
 - Commands that act on an epoch take its id, always: `clarity-ctl note 7 "..."`.
 - Note the moment a decision changes — a reversal, an approach you rejected, a result
   that surprised you: `clarity-ctl note <id> "..."`. Not at the end: the notes are what
