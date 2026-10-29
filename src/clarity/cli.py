@@ -345,8 +345,6 @@ def build_parser() -> argparse.ArgumentParser:
                     "of an active epoch.")
     p_start.add_argument("id", help="id of the idea to start — or a name, a few words like a "
                                      "title, to add it as an idea and start it in one go")
-    p_start.add_argument("--as", dest="as_name", metavar="<name>",
-                         help="who holds the lease start takes, as claim --as; no claim needed after")
     p_start.add_argument("--branch", help="use this branch instead of epoch/NNN-slug")
     p_start.add_argument("--brief", metavar="<text|file>",
                          help="what the work is for and what limits apply — the text, or a "
@@ -701,7 +699,7 @@ def run(args) -> int:
                 item_id = project.add(args.id).id
             item, warnings = project.start(item_id, branch=args.branch,
                                            repos=repos, no_repos=no_repos,
-                                           brief=args.brief, as_name=args.as_name)
+                                           brief=args.brief)
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:

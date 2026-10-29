@@ -149,8 +149,8 @@ rules tell an agent to:
   rewrites it on every write, so it is always current, and an agent gets it without
   running a command. For anything else it asks clarity (`clarity-ctl status`,
   `clarity-ctl show <id> --json`) instead of reading the whole tree;
-- start work in one call: `clarity-ctl epoch start "<name>" --brief "<goal>" --as <name>`
-  adds the idea, branches, makes the worktree and claims it under that name. Closing
+- start work in one call: `clarity-ctl epoch start "<name>" --brief "<goal>"`
+  adds the idea, branches, makes the worktree and claims it. Closing
   releases it;
 - write a note the moment a decision changes;
 - stop with a **handoff**: a note starting `HANDOFF:` that says what's done, what's

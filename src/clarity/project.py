@@ -535,8 +535,7 @@ class Project:
               take_lease: bool = True, reopen: bool = False,
               repos: list[str] | None = None,
               no_repos: bool = False,
-              brief: str | None = None,
-              as_name: str | None = None) -> tuple[Item, list[str]]:
+              brief: str | None = None) -> tuple[Item, list[str]]:
         """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
 
         A closed epoch needs `reopen`, so picking work back up is deliberate rather
@@ -552,9 +551,6 @@ class Project:
 
         `brief` is the text, or the path to a file holding it. Given on a reopen, it
         replaces the old one; left out, the brief stays.
-
-        `as_name` is who the lease is for, as `claim --as` takes it — so the agent that
-        starts an epoch holds it under its own name, and needs no claim after.
         """
         warnings: list[str] = []
         if brief and Path(brief).is_file():
@@ -599,7 +595,7 @@ class Project:
             # Claim before anything else: _write() saves only if the body succeeds, so a
             # refused lease leaves no half-started epoch and no worktree we may not use.
             if take_lease:
-                lease.claim(folder, label=item.name, name=as_name)
+                lease.claim(folder, label=item.name)
             if no_repos and item.repos is None and item.branch is None:
                 item.repos = []
             elif item.repos is None and item.branch is None and self.worklog.repos:
