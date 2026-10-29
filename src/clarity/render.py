@@ -271,26 +271,27 @@ def _groups(items: list[Item], groups: list[tuple[str, set]], cols: int,
         # landed only where something can have landed: a closed epoch's work
         landed_col = title == "Closed"
         # wide enough for its widest value in terminal columns: "❌ not merged" is 13
-        widths = [1, 3, 0] + ([_dw("❌ not merged")] if landed_col else [])
-        widths[2] = cols - sum(widths) - 3 * len(widths) - 1  # borders and padding
+        # no status symbol column: every row in a group shares its status, and the
+        # heading already says it
+        widths = [3, 0] + ([_dw("❌ not merged")] if landed_col else [])
+        widths[1] = cols - sum(widths) - 3 * len(widths) - 1  # borders and padding
         rows = []
         for item in chosen:
             mark = _landed((landed or {}).get(item.id)) or ""
             text, was_cut = _fill(_cell(item, leases, stale, (landed or {}).get(item.id),
                                         kids=(kids or {}).get(item.id), expanded=children),
-                                  widths[2])
+                                  widths[1])
             cut_any = cut_any or was_cut
-            cells = [[paint(_GLYPH.get(item.status, " "), _GLYPH_STYLE.get(item.status))],
-                     [str(item.id)], text]
+            cells = [[str(item.id)], text]
             if landed_col:
                 style = ("yellow" if ":" in mark else
                          "green" if "not" not in mark else "red")
                 cells.append(_fill([("mixed" if ":" in mark else mark, style, False)],
-                                   widths[3])[0])
+                                   widths[2])[0])
             rows.append(cells)
-        header = ["", "id", "idea" if title == "Up next" else "epoch"]
+        header = ["id", "idea" if title == "Up next" else "epoch"]
         header += ["landed"] if landed_col else []
-        out += _table([[paint(h, "dim")] for h in header], rows, widths, right={1})
+        out += _table([[paint(h, "dim")] for h in header], rows, widths, right={0})
         if hidden:
             out.append(paint(f"  {hidden} older — clarity-ctl status --all --limit 0", "dim"))
         out.append("")

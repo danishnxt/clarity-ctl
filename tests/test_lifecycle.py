@@ -331,8 +331,8 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
     text = project.status_text(show_all=True)
     boxed = [line for line in text.splitlines() if line and line[0] in "┌├│└"]
     assert len({render._dw(line) for line in boxed}) == 1   # ❌ is two columns wide
-    row = {line.split("│")[3].strip(): line.split("│")[4].strip()
-           for line in text.splitlines() if line.count("│") == 5}
+    row = {line.split("│")[2].strip(): line.split("│")[3].strip()
+           for line in text.splitlines() if line.count("│") == 4}
     assert row["shipped"] == "✅ merged" and row["kept off main"] == "❌ not merged"
     closed = text.split("Closed")[1].split("Dropped")[0]
     assert closed.index("kept off") < closed.index("shipped")         # newest first
@@ -421,10 +421,10 @@ def test_status_cuts_a_long_name_and_outcome_to_a_line_and_nothing_else(project,
     text = project.status_text(show_all=True)
     rows = {}
     for line in text.splitlines():
-        if line.count("│") >= 4 and line.split("│")[2].strip():
-            current = line.split("│")[2].strip()
-        if line.count("│") >= 4:
-            rows.setdefault(current, []).append(line.split("│")[3].strip())
+        if line.count("│") >= 3 and line.split("│")[1].strip():
+            current = line.split("│")[1].strip()
+        if line.count("│") >= 3:
+            rows.setdefault(current, []).append(line.split("│")[2].strip())
     assert len(rows[str(idea.id)]) == 1 and rows[str(idea.id)][0].endswith("…")
     assert rows[str(epoch.id)][1].startswith("outcome:") and rows[str(epoch.id)][1].endswith("…")
     assert len(rows[str(epoch.id)]) == 2
