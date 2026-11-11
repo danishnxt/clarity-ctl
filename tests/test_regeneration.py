@@ -77,8 +77,9 @@ def test_an_unchanged_render_does_not_touch_the_file(project, repo):
 def test_the_cli_refuses_a_bad_id_and_prints_a_claim(project, repo, monkeypatch, capsys):
     monkeypatch.chdir(repo)
     # every id path goes through as_id, so a typo is exit 4 and never a traceback
-    for argv in (["rename", "nope", "x"], ["show", "nope"]):
+    for argv in (["rename", "nope", "x"], ["claim", "nope"]):
         assert main(argv) == 4
+    assert main(["show", "nope"]) == 2  # not an id, so an unknown view: bad argument
 
     # a lease carries no expiry; the CLI must not reach for one
     item, _ = project.start(project.add("work").id)

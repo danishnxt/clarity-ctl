@@ -553,3 +553,41 @@ def test_status_json_counts_notes_and_marks_only_what_it_lists(workspace, ws_roo
     assert main(["show", str(live.id), "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)["data"]
     assert len(shown["notes"]) == 2 and "note_count" not in shown
+
+
+def test_a_handoff_withholds_the_close_suggestion(project, repo, git, commit):
+    item, _ = project.start(project.add("half done").id)
+    commit(repo / item.folder / "wt" / repo.name, "p.txt")
+    git(["merge", "-q", "--squash", item.branch], repo)
+    git(["commit", "-qm", "land"], repo)
+    nag = f"clarity-ctl close {item.id}"
+    assert nag in project.status_text() and nag in project.agent_status_text()
+
+    project.note(item.id, "HANDOFF: the parser is left")
+
+    for text in (project.status_text(), project.agent_status_text()):
+        assert "its work is in its base" in text and nag not in text
+
+
+def test_a_refused_start_leaves_no_folder_and_no_lease(project, repo, monkeypatch):
+    idea = project.add("will fail")
+
+    def fail(*args, **kwargs):
+        raise ClarityError("git said no", code=4)
+
+    monkeypatch.setattr(Project, "_attach_all", fail)
+    with pytest.raises(ClarityError, match="git said no"):
+        project.start(idea.id)
+
+    assert not project.epochs_dir.exists() or not list(project.epochs_dir.glob("*"))
+    assert project.leases() == {}
+    assert Project.find(repo).worklog.by_id(idea.id).status == "idea"
+
+    # a closed epoch's own folder and trail stay when its restart is refused
+    monkeypatch.undo()
+    item, _ = project.start(idea.id)
+    project.close(item.id, "paused")
+    monkeypatch.setattr(Project, "_attach_all", fail)
+    with pytest.raises(ClarityError):
+        project.start(item.id)
+    assert (repo / item.folder).is_dir() and project.leases() == {}

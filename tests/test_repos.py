@@ -359,8 +359,9 @@ def test_a_closed_epoch_restarts_without_a_repo_choice_and_refuses_one(
     monkeypatch.chdir(ws_root)
     capsys.readouterr()
 
-    assert main(["start", str(item.id), "--repo", "all"]) == 4  # it keeps the repos it had
-    assert "add-repo" in capsys.readouterr().err
+    for choice in ("all", "none", "agent"):  # it keeps the repos it had: no --repo at all
+        assert main(["start", str(item.id), "--repo", choice]) == 4
+        assert "add-repo" in capsys.readouterr().err
     assert main(["start", str(item.id)]) == 0
     assert f"epoch {item.id} reopened on" in capsys.readouterr().out
     assert Project.find(ws_root).worklog.by_id(item.id).repos == ["workspace/agent"]

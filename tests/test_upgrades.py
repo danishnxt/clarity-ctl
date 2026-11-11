@@ -227,3 +227,32 @@ def test_close_is_quiet_once_merged_and_for_a_drop(workspace, ws_root, monkeypat
     assert main(["close", str(dropped.id), "--drop", "no"]) == 0
     assert "warning" not in capsys.readouterr().out
     assert Project.find(ws_root).worklog.by_id(dropped.id).status == "dropped"
+
+
+def test_a_stale_read_name_is_not_taken_as_an_idea_or_an_objective(project, repo,
+                                                                    monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+    before = len(Project.find(repo).worklog.items)
+    for argv in (["objective", "show"], ["idea", "list"], ["idea", "add"], ["idea", "Set"]):
+        assert main(argv) == 2, argv
+        err = capsys.readouterr().err
+        assert err.count("\n") == 1 and "alone is not" in err
+    assert len(Project.find(repo).worklog.items) == before
+    assert Project.find(repo).worklog.objectives.overall is None
+    assert main(["idea", "show the diff on a dirty tree"]) == 0  # a longer text is a name
+
+
+def test_init_in_a_project_rewrites_a_stale_block_instead_of_refusing(project, repo,
+                                                                        monkeypatch, capsys):
+    path = repo / "AGENTS.md"
+    text = path.read_text()
+    start, end = text.index(agents.START), text.index(agents.END) + len(agents.END)
+    path.write_text(text[:start] + f"{agents.START}\nold commands\n{agents.END}" + text[end:])
+    monkeypatch.chdir(repo)
+    capsys.readouterr()
+
+    assert main(["init"]) == 0
+    assert "updated    AGENTS.md" in capsys.readouterr().out
+    assert "old commands" not in path.read_text()
+    assert main(["init"]) == 0
+    assert "updated" not in capsys.readouterr().out  # idempotent

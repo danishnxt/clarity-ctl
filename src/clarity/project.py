@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import os
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -162,6 +163,15 @@ class Project:
             "  set one up with: clarity-ctl init",
             code=3,
         )
+
+    @staticmethod
+    def existing(root: Path) -> "Project | None":
+        """The project whose root is exactly `root`, or None. `init` uses it to refresh
+        the agent files of a project that is already there."""
+        root = root.resolve()
+        if (root / CONFIG_DIR).is_dir() and (root / WORKLOG).exists():
+            return Project(root)
+        return None
 
     @staticmethod
     def init(root: Path, name: str | None = None, overall: str | None = None) -> "Project":
@@ -580,22 +590,34 @@ class Project:
                     )
                 item.outcome = None
                 item.ended = None
+            made_folder = not (item.folder and (self.root / item.folder).is_dir())
             folder = self._make_folder(item)
-            if item.parent is not None:
-                self.ensure_gitignore(SUBEPOCH_IGNORES)  # projects set up before subepochs
-            # Claim before anything else: _write() saves only if the body succeeds, so a
-            # refused lease leaves no half-started epoch and no worktree we may not use.
-            if take_lease:
-                lease.claim(folder, label=item.name)
-            if no_repos and item.repos is None and item.branch is None:
-                item.repos = []
-            elif item.repos is None and item.branch is None and self.worklog.repos:
-                # first time this epoch touches git: the repos asked for, else the
-                # project's whole list as it is now
-                item.repos = chosen or list(self.worklog.repos)
-            targets = self._targets(item, folder)
-            if targets:
-                item.branch, warnings = self._attach_all(item, targets, branch)
+            claimed = False
+            try:
+                if item.parent is not None:
+                    self.ensure_gitignore(SUBEPOCH_IGNORES)  # projects set up before subepochs
+                # Claim before anything else: _write() saves only if the body succeeds, so a
+                # refused lease leaves no half-started epoch and no worktree we may not use.
+                if take_lease:
+                    lease.claim(folder, label=item.name)
+                    claimed = True
+                if no_repos and item.repos is None and item.branch is None:
+                    item.repos = []
+                elif item.repos is None and item.branch is None and self.worklog.repos:
+                    # first time this epoch touches git: the repos asked for, else the
+                    # project's whole list as it is now
+                    item.repos = chosen or list(self.worklog.repos)
+                targets = self._targets(item, folder)
+                if targets:
+                    item.branch, warnings = self._attach_all(item, targets, branch)
+            except Exception:
+                # a refused start leaves nothing on disk: not the lease it took, and not a
+                # folder it made (a closed epoch's own folder and trail stay)
+                if claimed:
+                    lease.release(folder, force=True)
+                if made_folder:
+                    shutil.rmtree(folder, ignore_errors=True)
+                raise
             item.status = "active"
             item.started = item.started or today()
         return item, warnings
@@ -1281,7 +1303,7 @@ class Project:
         if name not in views:
             raise ClarityError(
                 f"unknown view {name!r}; try: {', '.join(self.SHOW_NAMES)}, or an id",
-                code=4,
+                code=2,
             )
         return {"items": [i.to_dict() for i in self.worklog.with_status(views[name])]}
 
@@ -1365,7 +1387,8 @@ class Project:
         titles = {"active": ["Active"], "next": ["Up next"], "closed": ["Closed"],
                   "all": ["Active", "Up next", "Closed"]}[name]
         return render.agent_view(self.worklog.all_items(), titles, self.stale_map(),
-                                 self.landed_map(), kids=self.children_by_parent())
+                                 self.landed_map(), kids=self.children_by_parent(),
+                                 leases=self.leases())
 
     def agent_status_text(self, show_all: bool = False, oldest_first: bool = False,
                           landed: dict | None = None, limit: int = render.CLOSED_LIMIT,
@@ -1375,7 +1398,8 @@ class Project:
             stale=self.stale_map(),
             landed=self.landed_map() if landed is None else landed,
             oldest_first=oldest_first, limit=limit,
-            kids=self.children_by_parent(), children=children)
+            kids=self.children_by_parent(), children=children,
+            leases=self.leases(), archived=len(self.worklog.archived))
 
     def status_text(self, show_all: bool = False, oldest_first: bool = False,
                     landed: dict | None = None, limit: int = render.CLOSED_LIMIT,
@@ -1389,6 +1413,7 @@ class Project:
             limit=limit,
             kids=self.children_by_parent(),
             children=children,
+            archived=len(self.worklog.archived),
         )
 
     def children_by_parent(self) -> dict[int, list[Item]]:

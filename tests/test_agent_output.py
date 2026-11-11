@@ -130,7 +130,7 @@ def test_show_closed_agent_includes_archived_items_so_the_blocks_pointer_is_true
     workspace.archive()                      # both closed items leave the live worklog
     assert not [i for i in workspace.worklog.items if i.status in ("done", "dropped")]
     assert "Closed (2), newest first" in agent(capsys, "show", "closed")
-    assert "2 closed or dropped: `clarity-ctl show closed --agent`" in agent(capsys, "status")
+    assert "2 closed or dropped (2 archived): `clarity-ctl show closed --agent`" in agent(capsys, "status")
 
 
 def test_only_status_show_and_search_take_agent_and_writes_reject_it(worked):
@@ -145,8 +145,27 @@ def test_only_status_show_and_search_take_agent_and_writes_reject_it(worked):
     taking = {" ".join(path) for path, p in leaves(cli.build_parser())
               if any("--agent" in a.option_strings for a in p._actions)}
     assert taking == {"status", "show", "search"}
-    for argv in (["note", str(worked["live"]), "x"], ["idea", "list"], ["path", "1"],
+    for argv in (["note", str(worked["live"]), "x"], ["idea", "a title"], ["rename", "1", "x"],
                  ["close", "1", "x"]):
         with pytest.raises(SystemExit) as stop:
             cli.build_parser().parse_args([*argv, "--agent"])
         assert stop.value.code == 2
+
+
+def test_show_agent_leads_with_the_handoff_and_status_says_who_holds_the_lease(worked, capsys):
+    lines = agent(capsys, "show", str(worked["live"])).splitlines()
+    at = lines.index("brief: cut load time")
+    assert lines[at + 1] == "handoff: lexer done"
+    assert any(line.startswith("lease: ") for line in lines)
+    assert any(line.startswith("  lease: ") for line in agent(capsys, "status").splitlines())
+
+
+def test_every_pointer_in_the_block_asks_for_agent_text(project):
+    import re
+    for n in range(14):
+        project.add(f"idea {n}")
+    done = project.add("finished")
+    project.close(done.id, "done")
+
+    pointers = re.findall(r"`(clarity-ctl [^`]*)`", project.state_digest())
+    assert len(pointers) >= 3 and all("--agent" in p for p in pointers), pointers

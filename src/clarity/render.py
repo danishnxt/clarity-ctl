@@ -23,7 +23,7 @@ import textwrap
 import unicodedata
 from datetime import datetime
 
-from .model import CLOSED, DECISION, FUTURE, IN_FLIGHT, Item, Objectives, id_key
+from .model import CLOSED, DECISION, FUTURE, HANDOFF, IN_FLIGHT, Item, Objectives, id_key
 
 # Wrapped here, not by the terminal, so zooming or resizing never re-flows the output.
 # Capped rather than fixed: a terminal narrower than the cap would wrap it again itself,
@@ -161,8 +161,9 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
         paras.append((f"⚠ {quiet} — clarity-ctl note {item.id} \"...\"", "yellow", False))
     if item.status in IN_FLIGHT and marks and set(marks.values()) == {"merged"}:
         # only this one: unmerged is every epoch in flight, so saying it is noise
-        paras.append((f"✓ its work is in its base — clarity-ctl close {item.id} \"...\"",
-                      "green", False))
+        # a HANDOFF note says work is left, so closing is not the next step
+        close = "" if item.handoff else f" — clarity-ctl close {item.id} \"...\""
+        paras.append((f"✓ its work is in its base{close}", "green", False))
     for trail in (stale or {}).get(item.id, []):
         # the base moving under an epoch is the thing you want to notice
         paras.append((f"⚠ {trail}", "yellow", False))
@@ -472,8 +473,11 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
                 leases: dict | None = None, branches: bool = True,
                 stale: dict | None = None, landed: dict | None = None,
                 oldest_first: bool = False, limit: int = CLOSED_LIMIT,
-                kids: dict | None = None, children: bool = False) -> str:
-    """The one-screen view. Printed, never written down — see the module docstring."""
+                kids: dict | None = None, children: bool = False,
+                archived: int = 0) -> str:
+    """The one-screen view. Printed, never written down — see the module docstring.
+    `archived` is how many closed items live in ARCHIVE/: the tables leave them out, the
+    count does not."""
     cols = width()
     out = []
     lines = _wrap(objectives.overall or "— not set —", " " * 11, " " * 11, cols)
@@ -491,8 +495,10 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
     if cut_any:
         out.append(paint(CUT_HINT, "dim"))
     if not show_all:
-        closed = len([i for i in items if i.status in CLOSED])
-        out.append(paint(f"{closed} closed or dropped — clarity-ctl status --all", "dim"))
+        # every closed item, archived ones too, as --agent counts them
+        closed = len([i for i in items if i.status in CLOSED]) + archived
+        more = f" ({archived} archived)" if archived else ""
+        out.append(paint(f"{closed} closed or dropped{more} — clarity-ctl status --all", "dim"))
     if not branches:
         out.append(paint("no repo for epochs to branch — they get a folder, but no branch "
                          "or worktree", "dim"))
@@ -514,7 +520,8 @@ DIGEST_NAME = 80  # a name is a title; one written as a paragraph is cut, not ca
 DIGEST_BUDGET = 8000
 DIGEST_CLOSED_NAME = 50  # a closed item is one `#id ✓ name` entry; the name is cut at this
 DIGEST_CLOSED = 10  # how many of the newest closed items the digest lists; the rest is a command
-CLOSED_HEADING = "**Closed**, newest first — `clarity-ctl show <id>` for the outcome and notes"
+CLOSED_HEADING = ("**Closed**, newest first — `clarity-ctl show <id> --agent` for the outcome "
+                  "and notes")
 CLOSED_MORE = "`clarity-ctl show closed --agent`"  # lists every closed item, by id and name
 
 
@@ -576,7 +583,8 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
     """
     out = ["### Where things stand", "",
            "Generated from the worklog on every clarity write, so it is current. "
-           "`clarity-ctl status` adds branches and leases; `clarity-ctl show <id>` has every note.", "",
+           "`clarity-ctl status --agent` adds leases and branch warnings; "
+           "`clarity-ctl show <id> --agent` has every note.", "",
            f"**Objective:** {_line(objectives.overall or '— not set —')}", "", "**Active**"]
 
     active = sorted((i for i in items if i.status in IN_FLIGHT), key=lambda i: id_key(i.id))
@@ -596,7 +604,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
 
     ideas = sorted((i for i in items if i.status in FUTURE), key=lambda i: id_key(i.id))
     shown = " · ".join(f"#{i.id} {_line(i.name, DIGEST_NAME)}" for i in ideas[:DIGEST_IDEAS]) or "none"
-    more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next`" if len(ideas) > DIGEST_IDEAS else ""
+    more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next --agent`" if len(ideas) > DIGEST_IDEAS else ""
     out += ["", f"**Up next:** {shown}{more}"]
 
     decisions = sorted(((n, i) for i in items for n in i.decisions),
@@ -611,7 +619,8 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
             lines += [f"- {_line(n.text[len(DECISION):].strip())} (#{i.id})"
                       for n, i in decisions[:count]]
             if len(decisions) > count:
-                lines.append(f"- {len(decisions) - count} older, in the notes of the epochs they name")
+                lines.append(f"- {len(decisions) - count} older: "
+                             "`clarity-ctl search DECISION --agent`")
         return "\n".join(lines)
 
     section = _closed_index(closed)
@@ -632,10 +641,17 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
 AGENT_OLDER = "older: `clarity-ctl show closed --agent`"
 
 
+def _lease(held: dict | None) -> str | None:
+    """`lease: owner, 5m ago` — who is working it, for an agent deciding whether to claim."""
+    if not held:
+        return None
+    return f"lease: {held.get('owner', '?')}" + (f", {held['age']}" if held.get("age") else "")
+
+
 def _agent_active(items: list[Item], stale: dict | None, landed: dict | None,
-                  kids: dict | None, children: bool) -> list[str]:
-    """`- #id name — folder`, then what status warns about on indented lines: how far
-    behind its base, work already landed, a quiet record, subepochs."""
+                  kids: dict | None, children: bool, leases: dict | None = None) -> list[str]:
+    """`- #id name — folder`, then what status warns about on indented lines: who holds
+    the lease, how far behind its base, work already landed, a quiet record, subepochs."""
     chosen = sorted((i for i in items if i.status in IN_FLIGHT and (children or i.parent is None)),
                     key=lambda i: id_key(i.id), reverse=True)
     out = [f"Active ({len(chosen)})"]
@@ -645,6 +661,8 @@ def _agent_active(items: list[Item], stale: dict | None, landed: dict | None,
         rest = paras[2 if item.folder else 1:]
         where = f" — {item.folder}" if item.folder else ""
         out.append(f"- #{item.id} {_line(item.name, DIGEST_NAME)}{where}")
+        held = _lease((leases or {}).get(item.id))
+        out += [f"  {text}" for text in ([held] if held else [])]
         out += [f"  {text}" for text, _, _ in rest]
     return out + (["- none"] if not chosen else [])
 
@@ -674,11 +692,12 @@ def agent_closed(items: list[Item], limit: int = 0, oldest_first: bool = False) 
 
 def agent_view(items: list[Item], titles: list[str], stale: dict | None = None,
                landed: dict | None = None, kids: dict | None = None,
-               children: bool = False) -> str:
+               children: bool = False, leases: dict | None = None) -> str:
     """`show active|next|closed|all --agent`: the sections of `titles`, in status's order."""
     parts = []
     for title in titles:
-        parts.append(_agent_active(items, stale, landed, kids, children) if title == "Active"
+        parts.append(_agent_active(items, stale, landed, kids, children, leases)
+                     if title == "Active"
                      else _agent_next(items, children) if title == "Up next"
                      else agent_closed(items))
     return "\n\n".join("\n".join(p) for p in parts)
@@ -687,17 +706,19 @@ def agent_view(items: list[Item], titles: list[str], stale: dict | None = None,
 def agent_status(objectives: Objectives, items: list[Item], show_all: bool = False,
                  stale: dict | None = None, landed: dict | None = None,
                  oldest_first: bool = False, limit: int = CLOSED_LIMIT,
-                 kids: dict | None = None, children: bool = False) -> str:
+                 kids: dict | None = None, children: bool = False,
+                 leases: dict | None = None, archived: int = 0) -> str:
     """`status --agent`: objective, Active, Up next, then a count of what is closed and
     the command that lists it — or, with --all, the closed index itself (`limit` newest)."""
     parts = [[f"Objective: {objectives.overall or '— not set —'}"],
-             _agent_active(items, stale, landed, kids, children),
+             _agent_active(items, stale, landed, kids, children, leases),
              _agent_next(items, children)]
     if show_all:
         parts.append(agent_closed(items, limit, oldest_first))
     else:
-        closed = len([i for i in items if i.status in CLOSED])
-        parts.append([f"{closed} closed or dropped: `clarity-ctl show closed --agent`"])
+        closed = len([i for i in items if i.status in CLOSED])  # items hold the archived too
+        more = f" ({archived} archived)" if archived else ""
+        parts.append([f"{closed} closed or dropped{more}: `clarity-ctl show closed --agent`"])
     return "\n\n".join("\n".join(p) for p in parts)
 
 
@@ -733,9 +754,17 @@ def agent_item(data: dict, marks: dict | None = None) -> str:
     if data.get("archived"):
         facts.append(f"archived in {data['archived']} (read-only)")
     out.append(" · ".join(facts))
-    for key in ("brief", "outcome"):
-        if data.get(key):
-            out.append(f"{key}: {data[key]}")
+    if data.get("brief"):
+        out.append(f"brief: {data['brief']}")
+    latest = next((n["text"][len(HANDOFF):].strip() for n in reversed(data.get("notes") or [])
+                   if n["text"].startswith(HANDOFF)), None)
+    if latest:
+        out.append(f"handoff: {latest}")  # as the human page does: up front, not at note 9
+    if data.get("outcome"):
+        out.append(f"outcome: {data['outcome']}")
+    held = _lease(data.get("lease"))
+    if held:
+        out.append(held)
     if data.get("branch"):
         out.append(f"branch: {data['branch']}")
     if data.get("folder"):

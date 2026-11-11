@@ -2,7 +2,9 @@
 has to agree with the rules."""
 
 import argparse
+import re
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -77,3 +79,39 @@ def test_note_and_close_help_say_what_the_rules_say():
     assert "what you tried" not in reference  # the rules: a note is a decision changing
     assert "asks for the outcome" not in reference
     assert "Close only when the whole task is done and merged" in reference
+
+
+PROSE = {"than", "would", "still", "reference"}  # "a newer clarity-ctl than this one"; a heading
+
+
+def _invocations(text: str):
+    """Every `clarity-ctl ...` in a text, as the words after it, placeholders filled in."""
+    for found in re.finditer(r"clarity-ctl ([^\n`]*)", text):
+        line = re.split(r" — |  #|; |\\n", found.group(1))[0]
+        line = re.sub(r"<[^>|]*\|[^>]*>", "all", re.sub(r"<[^>]*>", "1", line))
+        line = re.sub(r"\{[^}]*\}", "1", line).replace('"..."', "x")
+        words = [w.strip("\"'.,:;)(") for w in line.split()]
+        words = [w for w in words if w]
+        if words and words[0] not in PROSE and not words[0].startswith(("1", "-")):
+            yield words
+
+
+def test_every_command_and_flag_the_product_names_exists():
+    """The rules, the help, the hints and nags in src and adopt.md all tell an agent what to
+    type. One that names a command or flag the parser lacks is how a rename leaves dead
+    instructions behind."""
+    leaves = _leaves(cli.build_parser())
+    reference = re.sub(r"^(#|usage:).*$", "", cli.reference_text(), flags=re.M)  # headings and usage lines are not uses
+    texts = [reference] + [p.read_text() for p in Path(cli.__file__).parent.glob("*.py")]
+    seen = 0
+    for text in texts:
+        for words in _invocations(text):
+            name = " ".join(words[:2]) if words[0] == "repo" else words[0]
+            assert name in leaves, f"clarity-ctl {' '.join(words)}: no command {name!r}"
+            allowed = {o for a in leaves[name]._actions for o in a.option_strings}
+            for word in words:
+                if word.startswith("--"):
+                    assert word.split("=")[0] in allowed, \
+                        f"clarity-ctl {' '.join(words)}: {name} has no {word}"
+            seen += 1
+    assert seen > 80

@@ -179,6 +179,18 @@ def _read_flags(node, agent: str) -> None:
                            "the state block's style; not with --json")
 
 
+# Words the commands used to take after `idea` and `objective`: alone, they are a stale
+# command, not a name, and a worklog entry called "list" helps nobody.
+RESERVED = ("show", "list", "add", "set")
+
+
+def _name_text(command: str, text: str) -> str:
+    if text.strip().lower() in RESERVED:
+        raise ClarityError(f"{command} takes the text itself, and {text!r} alone is not "
+                           f"one — see: clarity-ctl {command} --help", code=2)
+    return text
+
+
 def _id_arg(node, what: str = "the epoch"):
     node.add_argument("id", help=f"id of {what}")
 
@@ -477,8 +489,9 @@ def build_parser() -> argparse.ArgumentParser:
                    "Creates .clarity/, EPOCHS/, worklog.yaml, puts the clarity block in "
                    "AGENTS.md and points CLAUDE.md at it — keeping whatever those files "
                    "already say. Refuses inside a git repo: clarity's files stay out of "
-                   "your code, and adopt is the command that moves the code aside. Every "
-                   "later write keeps the block current.",
+                   "your code, and adopt is the command that moves the code aside. In a "
+                   "project that already exists it instead rewrites the agent files to this "
+                   "version and says what changed.",
                    section=setup)
     p_init.add_argument("--name", help="project name (default: this folder's name)")
     p_init.add_argument("--objective", help="the overall objective — what this project is for")
@@ -632,6 +645,12 @@ def _refresh_text(item, report: dict) -> str:
 
 def run(args) -> int:
     if args.command == "init":
+        here = Project.existing(Path.cwd())
+        if here:
+            done = here.install_agents()
+            print("already a clarity project — agent files:\n"
+                  + "\n".join(f"  {action:<10} {path.name}" for path, action in done))
+            return 0
         project = Project.init(Path.cwd(), name=args.name, overall=args.objective)
         print(_first_run(project))
         return 0
@@ -684,7 +703,7 @@ def run(args) -> int:
             if name not in Project.SHOW_NAMES:
                 raise ClarityError(
                     f"unknown view {name!r}; try: {', '.join(Project.SHOW_NAMES)}, or an id",
-                    code=4)
+                    code=2)
             data = project.query(name)
             if name == "objective":
                 human = f"OBJECTIVE  {data['overall'] or '— not set —'}"
@@ -704,7 +723,7 @@ def run(args) -> int:
         emit(args, "search", data, render.search_text(hits, plain=args.agent))
 
     elif args.command == "objective":
-        project.set_objective(args.text)
+        project.set_objective(_name_text("objective", args.text))
         print(project.status_text())
 
     elif args.command == "repo":
@@ -713,7 +732,8 @@ def run(args) -> int:
         print(_repos_view(repos, indent="  "))
 
     elif args.command == "idea":
-        item = project.add(args.text, type_=args.type, evidence=args.evidence)
+        item = project.add(_name_text("idea", args.text), type_=args.type,
+                           evidence=args.evidence)
         print(f"idea {item.id}: {item.name}\n"
               f"  start it with: clarity-ctl start {item.id}"
               + (" --repo <repo|all|none>" if project.worklog.repos else ""))
