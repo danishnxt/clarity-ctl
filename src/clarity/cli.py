@@ -42,17 +42,19 @@ HOW = """How work goes
   $ clarity-ctl idea add "<a few words>"
       for later; the why and the evidence go in a note on it"""
 
-READ = """Read (never writes)
+READ = """Read (never writes) — agents add --agent: plain text, a fraction of the size
   clarity-ctl status        objective, active, next; --all adds closed
   clarity-ctl show <id>     one item with every note; show active | next | closed | all
+  clarity-ctl show closed --agent  every closed item, by id and name
   clarity-ctl search <words>  items by keyword, in names, outcomes, briefs and notes
   clarity-ctl path <id>     an epoch's folder: cd $(clarity-ctl path 7)"""
 
 CONTRACT = """Contract
   Commands that act on an epoch take its id. clarity never guesses which you mean: not
   from the directory you are in, not from an env var, not from there being one active.
-  Every command takes --json and answers {ok, command, data, warnings, version}; a
-  failure has ok false, and error and code in place of data.
+  Every command takes --json, for scripts, and answers {ok, command, data, warnings,
+  version}; a failure has ok false, and error and code in place of data. Reads also take
+  --agent: plain text for an agent to read, in the style of the state block. Not both.
   Exit codes: 0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
   Pass every argument. A missing one is asked for at a terminal and refused elsewhere,
   so an agent is never left waiting on a prompt."""
@@ -148,7 +150,7 @@ def reference_text() -> str:
 
 def _leaf(parent, name: str, help_: str, description: str | None = None,
           section: list | None = None, into: list | None = None):
-    """A command or action, always with --json."""
+    """A command or action, always with --json and --agent."""
     if into is not None:
         into.append((name, help_))
     kwargs = {}
@@ -163,7 +165,10 @@ def _leaf(parent, name: str, help_: str, description: str | None = None,
         **kwargs,
     )
     node.add_argument("--json", action="store_true",
-                      help="print the machine-readable envelope instead of text")
+                      help="print the machine-readable envelope, for scripts, instead of text")
+    node.add_argument("--agent", action="store_true",
+                      help="print plain text for an agent to read — no boxes or colour, "
+                           "the state block's style; not with --json")
     return node
 
 
@@ -264,7 +269,9 @@ def build_parser() -> argparse.ArgumentParser:
                      "its work has landed there. None of "
                      "that is written down, so none of it can go stale.\n\n"
                      "--json lists each item with a note_count, not its notes: "
-                     "`show <id> --json` has those.", section=look)
+                     "`show <id> --json` has those. --agent prints the same facts as "
+                     "plain text, the state block's style: no boxes or colour, closed "
+                     "work as one `#id ✓ name` line.", section=look)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
     p_status.add_argument("--limit", type=int, default=15, metavar="N",
@@ -286,7 +293,10 @@ def build_parser() -> argparse.ArgumentParser:
                    "  objective  what the project is for\n"
                    "  <id>       one item: status, branch, repos, notes, plans; lease in --json\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`, which carries a "
-                   "note count per item, not the notes: `show <id> --json` has them.",
+                   "note count per item, not the notes: `show <id> --json` has them.\n\n"
+                   "--agent prints plain text for an agent: `show closed --agent` is every "
+                   "closed item as `#id ✓ name` (✗ dropped), newest first; `show <id> "
+                   "--agent` is the page with every note in full.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
 
@@ -707,9 +717,9 @@ def run(args) -> int:
         landed = project.landed_map()
         # who holds which epoch — data only; the tables leave it out
         data["leases"] = project.leases()
-        text = project.status_text(
-            show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
-            landed=landed, children=args.children)
+        make = project.agent_status_text if args.agent else project.status_text
+        text = make(show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
+                    landed=landed, children=args.children)
         # the JSON is the index, not the archive: a count in place of the notes (show <id>
         # has them), and marks only for the items it lists
         listed = {i["id"] for i in data["items"]}
@@ -725,7 +735,8 @@ def run(args) -> int:
             marks = project.landed_map(only=data["id"]).get(data["id"])
             if marks:
                 data["landed"] = marks  # per repo, as status --json carries it
-            emit(args, "show.item", data, render.item_text(data, marks))
+            page = render.agent_item if args.agent else render.item_text
+            emit(args, "show.item", data, page(data, marks))
         else:
             if name not in Project.SHOW_NAMES:
                 raise ClarityError(
@@ -735,7 +746,7 @@ def run(args) -> int:
             if name == "objective":
                 human = f"OBJECTIVE  {data['overall'] or '— not set —'}"
             else:
-                human = project.view_text(name)
+                human = (project.agent_view_text if args.agent else project.view_text)(name)
             emit(args, f"show.{name}", data, human)
 
     elif args.command == "search":
@@ -745,7 +756,7 @@ def run(args) -> int:
                 "hits": [{"id": h.id, "name": h.name, "status": h.status,
                           "score": round(h.score, 2), "field": h.field,
                           "snippet": h.snippet} for h in hits]}
-        emit(args, "search", data, render.search_text(hits))
+        emit(args, "search", data, render.search_text(hits, plain=args.agent))
 
     elif args.command == "path":
         folder = project.path_of(args.id)
@@ -904,15 +915,23 @@ def run(args) -> int:
     return 0
 
 
+BOTH = "--agent and --json are two formats for two readers — pass one (--json for scripts, --agent for reading)"
+
+
 def _parse(argv: list[str]):
     """parse_args, except that a caller who asked for --json gets an envelope for
-    a typo too, rather than usage text it cannot parse. Exit 2, as argparse's own."""
+    a typo too, rather than usage text it cannot parse. Exit 2, as argparse's own.
+    --agent with --json is such a mistake: one output format at a time."""
     if "--json" not in argv:
         return build_parser().parse_args(argv)
     caught = io.StringIO()
     try:
         with contextlib.redirect_stderr(caught):
-            return build_parser().parse_args(argv)
+            args = build_parser().parse_args(argv)
+        if getattr(args, "agent", False):
+            caught.write(f"clarity-ctl: error: {BOTH}\n")
+            raise SystemExit(2)
+        return args
     except SystemExit as stop:
         if stop.code in (0, None):
             raise  # --help asked for, and printed

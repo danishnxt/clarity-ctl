@@ -1395,6 +1395,23 @@ class Project:
                                 self.stale_map(), self.landed_map(),
                                 kids=self.children_by_parent())
 
+    def agent_view_text(self, name: str) -> str:
+        """`show <view> --agent`: the same groups as view_text, as plain lines."""
+        titles = {"active": ["Active"], "next": ["Up next"], "closed": ["Closed"],
+                  "all": ["Active", "Up next", "Closed"]}[name]
+        return render.agent_view(self.worklog.items, titles, self.stale_map(),
+                                 self.landed_map(), kids=self.children_by_parent())
+
+    def agent_status_text(self, show_all: bool = False, oldest_first: bool = False,
+                          landed: dict | None = None, limit: int = render.CLOSED_LIMIT,
+                          children: bool = False) -> str:
+        return render.agent_status(
+            self.worklog.objectives, self.worklog.items, show_all,
+            stale=self.stale_map(),
+            landed=self.landed_map() if landed is None else landed,
+            oldest_first=oldest_first, limit=limit,
+            kids=self.children_by_parent(), children=children)
+
     def status_text(self, show_all: bool = False, oldest_first: bool = False,
                     landed: dict | None = None, limit: int = render.CLOSED_LIMIT,
                     children: bool = False) -> str:

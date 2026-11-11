@@ -168,11 +168,12 @@ reused, and `show <id>` still reads them.
 rules tell an agent to:
 
 - start from the state at the end of the block: the objective, active epochs and
-  their handoffs, what's queued, standing decisions and every closed epoch by id.
-  clarity rewrites it on every write, so it is always current, and an agent gets it
-  without running a command. For anything else it asks clarity instead of reading the
-  whole tree: `clarity-ctl search <words>` finds the item, and often the note, that
-  holds a fact, and `clarity-ctl show <id>` reads it;
+  their handoffs, what's queued, standing decisions and the ten newest closed epochs
+  by id. clarity rewrites it on every write, so it is always current, and an agent
+  gets it without running a command. For anything else it asks clarity instead of
+  reading the whole tree: `clarity-ctl show closed --agent` lists every closed epoch,
+  `clarity-ctl search <words> --agent` finds the item, and often the note, that holds
+  a fact, and `clarity-ctl show <id> --agent` reads it;
 - start work in one call: `clarity-ctl epoch start "<name>" --repo <repo> --brief "<goal>"`
   adds the idea, branches, makes the worktree and claims it. Closing
   releases it;
@@ -194,9 +195,22 @@ A claim is a **lease**: a marker saying who is working on an epoch (`epoch start
 one for you). It is a warning, not a lock; taking over someone else's needs `--steal`,
 which records who held it.
 
-Every read takes `--json` and answers `{ok, command, data, warnings, version}`. Exit
-codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project ·
-`4` refused.
+Every command takes `--json`, for scripts, and answers `{ok, command, data, warnings,
+version}`. Exit codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity
+project · `4` refused.
+
+Every read also takes `--agent`: plain text in the style of the state block, with no
+boxes, colour or padding, a fraction of the size of what a person reads. `status --agent`
+is the objective, active epochs (with their warnings), the queue and a count of what is
+closed; `show closed --agent` is every closed item as `#id ✓ name` (`✗` dropped), newest
+first; `show <id> --agent` is the page with every note in full. `--agent` and `--json`
+together are refused (exit 2).
+
+```
+$ clarity-ctl show closed --agent
+Closed (2), newest first
+#2 ✓ ring buffer for the tokenizer · #1 ✓ memory-map the input file
+```
 
 `status --json` lists each item with a `note_count`, not its notes; `show <id> --json` has them.
 

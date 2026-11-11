@@ -53,11 +53,11 @@ def test_the_budget_is_two_thousand_tokens_at_four_characters():
     assert render.DIGEST_BUDGET == 8000
 
 
-def test_a_thousand_closed_items_stay_within_the_budget():
-    text = digest(worklog(closed=1000))
-    assert len(text) <= render.DIGEST_BUDGET
-    # it is still nearly full: the list uses what the rest leaves it
-    assert len(text) > render.DIGEST_BUDGET - 200
+def test_a_thousand_closed_items_cost_no_more_than_ten():
+    # the closed list is bounded: ten entries and a pointer, however many were closed
+    big, small = digest(worklog(closed=1000)), digest(worklog(closed=11))
+    assert len(big) <= render.DIGEST_BUDGET
+    assert len(big) - len(small) <= 40   # only the pointer's count and the ids differ
 
 
 def test_sixty_long_decisions_and_three_hundred_ideas_stay_within_the_budget():
@@ -69,12 +69,12 @@ def test_sixty_long_decisions_and_three_hundred_ideas_stay_within_the_budget():
         assert len(text) <= render.DIGEST_BUDGET, shape
 
 
-def test_the_closed_list_is_cut_before_the_decisions():
-    # 20 decisions of 240 characters fit, the closed list takes what is left
+def test_the_closed_list_never_costs_a_decision():
+    # 20 decisions of 240 characters and a thousand closed items: both fit
     text = digest(worklog(closed=1000, decisions=20))
     assert text.count("\n- ") >= 20 and "decision 20 " in text
     assert "older, in the notes of the epochs they name" not in text
-    assert "older: `clarity-ctl status --all --limit 0`" in closed_section(text)
+    assert closed_section(text).endswith("990 older: `clarity-ctl show closed --agent`")
 
 
 def test_the_oldest_decisions_go_when_the_closed_list_has_no_room_at_all():
@@ -89,7 +89,7 @@ def test_the_oldest_decisions_go_when_the_closed_list_has_no_room_at_all():
     assert older and 20 < int(older.group(1)) <= 40   # cut below the 20 that are usually shown
     assert "decision 40 " in text and "decision 1 " not in text   # the newest are kept
     assert render.CLOSED_HEADING in text              # a list was still possible
-    assert re.search(r"\d+ older: `clarity-ctl status --all --limit 0`$", text)
+    assert re.search(r"\d+ older: `clarity-ctl show closed --agent`$", text)
     # the active work is never cut
     assert all(f"#{n} active {n}" in text for n in range(101, 109))
 
@@ -104,45 +104,37 @@ def test_active_work_alone_past_the_budget_is_not_cut_and_carries_no_closed_list
     assert all(f"#{n} active {n}" in text for n in range(101, 121))
 
 
-def test_the_closed_list_is_newest_first_with_marks_and_says_how_many_are_older():
+def test_the_closed_list_is_the_ten_newest_with_marks_and_says_how_many_are_older():
     items = worklog(closed=1000)
-    items[500].status = "dropped"  # id 501
+    items[995].status = "dropped"  # id 996
     text = digest(items)
     entries = closed_section(text).split(" · ")
+    assert len(entries) == render.DIGEST_CLOSED + 1
     ids = [int(re.match(r"#(\d+) ", e).group(1)) for e in entries[:-1]]
-    assert ids == list(range(ids[0], ids[0] - len(ids), -1))      # newest first, no gaps
-    assert ids[0] == 1000
-    assert all(re.match(r"#\d+ ✓ ", e) for e in entries[:-1] if not e.startswith("#501 "))
+    assert ids == list(range(1000, 990, -1))                       # newest first, no gaps
+    assert all(re.match(r"#\d+ ✓ ", e) for e in entries[:-1] if not e.startswith("#996 "))
+    assert entries[4].startswith("#996 ✗ ")
     assert all(len(e.split(" ", 2)[2]) <= render.DIGEST_CLOSED_NAME for e in entries[:-1])
-    older = re.fullmatch(r"(\d+) older: `clarity-ctl status --all --limit 0`", entries[-1])
-    assert older and int(older.group(1)) + len(ids) == 1000
+    assert entries[-1] == "990 older: `clarity-ctl show closed --agent`"
 
 
 def test_a_dropped_item_is_marked_with_a_cross():
     items = worklog(closed=30)
-    items[4].status = "dropped"
-    items[5].status = "dropped"
+    items[24].status = "dropped"
+    items[25].status = "dropped"
     text = digest(items)
-    assert "#5 ✗ " in text and "#6 ✗ " in text and "#7 ✓ " in text
+    assert "#25 ✗ " in text and "#26 ✗ " in text and "#27 ✓ " in text
 
 
-def test_everything_listed_fits_so_nothing_says_older():
-    text = digest(worklog(closed=25))
+def test_ten_or_fewer_closed_items_are_all_listed_and_nothing_says_older():
+    text = digest(worklog(closed=10))
     assert "older" not in closed_section(text)
-    shown = re.findall(r"#(\d+) ", closed_section(text))
-    assert shown == [str(n) for n in range(25, 0, -1)]
+    assert re.findall(r"#(\d+) ", closed_section(text)) == [str(n) for n in range(10, 0, -1)]
 
 
 def test_closed_work_is_listed_by_id_and_name_only_not_outcome():
     text = digest(worklog(closed=5))
     assert "outcome 3" not in text and "#3 ✓ epoch 3" in text
-
-
-def test_a_closed_item_the_block_already_names_is_not_listed_again():
-    items = worklog(closed=20, decisions=1)     # #1's decision cites it as (#1)
-    text = digest(items)
-    assert "(#1)" in text
-    assert "#1 ✓" not in text and "#2 ✓" in text
 
 
 def test_no_closed_items_means_no_list():

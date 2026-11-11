@@ -512,18 +512,20 @@ DIGEST_NAME = 80  # a name is a title; one written as a paragraph is cut, not ca
 # the project, so it is what gets cut first (see state_digest).
 DIGEST_BUDGET = 8000
 DIGEST_CLOSED_NAME = 50  # a closed item is one `#id ✓ name` entry; the name is cut at this
+DIGEST_CLOSED = 10  # how many of the newest closed items the digest lists; the rest is a command
 CLOSED_HEADING = "**Closed**, newest first — `clarity-ctl show <id>` for the outcome and notes"
-CLOSED_MORE = "`clarity-ctl status --all --limit 0`"
+CLOSED_MORE = "`clarity-ctl show closed --agent`"  # lists every closed item, by id and name
 
 
-def search_text(hits) -> str:
+def search_text(hits, plain: bool = False) -> str:
     """What `clarity-ctl search` prints: per hit a `#id status name` line and, when
-    something other than the name matched, a dim `  field: snippet` line."""
+    something other than the name matched, a dim `  field: snippet` line. `plain`
+    (--agent) is never painted."""
     lines = []
     for h in hits:
         lines.append(f"#{h.id} {h.status} {_line(h.name, 80)}")
         if h.snippet:
-            lines.append(paint(f"  {h.field}: {h.snippet}", "dim"))
+            lines.append(paint(f"  {h.field}: {h.snippet}", None if plain else "dim"))
     return "\n".join(lines) or "no matches"
 
 
@@ -532,55 +534,45 @@ def _line(text: str, limit: int = DIGEST_TEXT) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
-def _closed_index(closed: list[Item], room: int) -> str | None:
-    """The closed-list section: `#id ✓ name` entries (`✗` for dropped, names cut at
-    DIGEST_CLOSED_NAME) joined by ` · `, as many of `closed` as fit in `room`
-    characters including the heading. When some are left out the last entry says how
-    many and where to find them. None if there is nothing to list or not even the
-    heading and that last entry fit."""
-    sep = " · "
-    entries = [f"#{i.id} {'✓' if i.status == 'done' else '✗'} {_line(i.name, DIGEST_CLOSED_NAME)}"
-               for i in closed]
-    n = len(entries)
-    older = lambda k: f"{n - k} older: {CLOSED_MORE}"  # noqa: E731
-    head = len(CLOSED_HEADING) + 1  # and its newline
-    # prefix[k] is the length of the first k entries joined
-    prefix = [0]
-    for e in entries:
-        prefix.append(prefix[-1] + len(e) + (len(sep) if prefix[-1] else 0))
-    for k in range(n, -1, -1):
-        body = prefix[k]
-        if k < n:
-            body += (len(sep) if k else 0) + len(older(k))
-        elif k == 0:
-            return None  # nothing to list
-        if head + body <= room:
-            parts = entries[:k] + ([older(k)] if k < n else [])
-            return f"{CLOSED_HEADING}\n" + sep.join(parts)
-    return None
+def closed_entry(item: Item) -> str:
+    """One closed item as `#id ✓ name` (`✗` for dropped), the name cut at DIGEST_CLOSED_NAME."""
+    return f"#{item.id} {'✓' if item.status == 'done' else '✗'} {_line(item.name, DIGEST_CLOSED_NAME)}"
+
+
+def finished_order(item: Item):
+    """Sort key for closed items: when each was closed, older first."""
+    return (item.closed_seq or 0, item.ended or item.created or "", id_key(item.id))
+
+
+def _closed_index(closed: list[Item]) -> str | None:
+    """The closed-list section: the DIGEST_CLOSED newest of `closed` (newest first) as
+    `#id ✓ name` entries joined by ` · `, then, when more were closed, a last entry
+    saying how many and the command that lists every one. None if nothing is closed."""
+    if not closed:
+        return None
+    entries = [closed_entry(i) for i in closed[:DIGEST_CLOSED]]
+    if len(closed) > DIGEST_CLOSED:
+        entries.append(f"{len(closed) - DIGEST_CLOSED} older: {CLOSED_MORE}")
+    return f"{CLOSED_HEADING}\n" + " · ".join(entries)
 
 
 def state_digest(objectives: Objectives, items: list[Item]) -> str:
     """Where things stand, as markdown for the agent block: the worklog's part of
-    status, plus what status leaves to `show` — handoffs, standing decisions, and a
-    list of every closed item by id and name.
+    status, plus what status leaves to `show` — handoffs, standing decisions, and the
+    newest closed items by id and name.
 
     `items` should be live and archived together: a decision does not stop standing
     because its epoch was archived.
 
-    The block is held within DIGEST_BUDGET characters. The closed list is the only part
-    that grows with the project, so it is cut first, from the oldest end, ending with
-    "N older: ..." when it is. It lists the closed items the rest of the block does not
-    already name (a `#id` anywhere in the text counts as naming it). Only if the
-    objective, active work, Up next and decisions leave it no room at all are the
-    oldest standing decisions cut, one at a time, each cut ending in an "N older" line
-    too. The objective and active work are never cut: with enough active epochs of
+    The block is held within DIGEST_BUDGET characters. Nothing in it grows with the
+    project except the standing decisions, which are capped at DIGEST_DECISIONS: the
+    closed list is DIGEST_CLOSED entries and a pointer to `show closed --agent` for the
+    rest. If the objective, active work, Up next and decisions leave that list no room,
+    the oldest standing decisions are cut one at a time, each cut ending in an "N older"
+    line. The objective and active work are never cut: with enough active epochs of
     full-length lines (more than about ten) the block can pass the budget on those
     alone, and then it carries no closed list.
     """
-    def finished_order(i: Item):
-        return (i.closed_seq or 0, i.ended or i.created or "", id_key(i.id))
-
     out = ["### Where things stand", "",
            "Generated from the worklog on every clarity write, so it is current. "
            "`clarity-ctl status` adds branches and leases; `clarity-ctl show <id>` has every note.", "",
@@ -621,17 +613,163 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
                 lines.append(f"- {len(decisions) - count} older, in the notes of the epochs they name")
         return "\n".join(lines)
 
+    section = _closed_index(closed)
+    tail = f"\n\n{section}" if section else ""
     for count in range(min(len(decisions), DIGEST_DECISIONS), -1, -1):
         text = block(count)
-        left = [i for i in closed if not re.search(rf"#{re.escape(str(i.id))}(?![\d.])", text)]
-        if not left:
-            if len(text) <= DIGEST_BUDGET:
-                return text
-            continue
-        section = _closed_index(left, DIGEST_BUDGET - len(text) - len("\n\n"))
-        if section is not None:
-            return text + "\n\n" + section
+        if len(text + tail) <= DIGEST_BUDGET:
+            return text + tail
     return block(0)  # the objective and active work alone pass the budget
+
+
+# ---- --agent: plain text for an agent to read ----------------------------------------
+#
+# The state block's own style, for every read command: no boxes, no colour, no padding,
+# no wrapping, so the same facts cost a fraction of the characters. Never painted, whatever
+# the terminal or FORCE_COLOR says. `--json` stays the format for scripts.
+
+AGENT_OLDER = "older: `clarity-ctl show closed --agent`"
+
+
+def _agent_active(items: list[Item], stale: dict | None, landed: dict | None,
+                  kids: dict | None, children: bool) -> list[str]:
+    """`- #id name — folder`, then what status warns about on indented lines: how far
+    behind its base, work already landed, a quiet record, subepochs."""
+    chosen = sorted((i for i in items if i.status in IN_FLIGHT and (children or i.parent is None)),
+                    key=lambda i: id_key(i.id), reverse=True)
+    out = [f"Active ({len(chosen)})"]
+    for item in chosen:
+        paras = _cell(item, None, stale, (landed or {}).get(item.id),
+                      kids=(kids or {}).get(item.id), expanded=children)
+        rest = paras[2 if item.folder else 1:]
+        where = f" — {item.folder}" if item.folder else ""
+        out.append(f"- #{item.id} {_line(item.name, DIGEST_NAME)}{where}")
+        out += [f"  {text}" for text, _, _ in rest]
+    return out + (["- none"] if not chosen else [])
+
+
+def _agent_next(items: list[Item], children: bool) -> list[str]:
+    chosen = sorted((i for i in items if i.status in FUTURE and (children or i.parent is None)),
+                    key=lambda i: id_key(i.id), reverse=True)
+    return [f"Up next ({len(chosen)})",
+            *(f"- #{i.id} {_line(i.name, DIGEST_NAME)}" for i in chosen)] + (
+        ["- none"] if not chosen else [])
+
+
+def agent_closed(items: list[Item], limit: int = 0, oldest_first: bool = False) -> list[str]:
+    """Every closed item, subepochs too, as the block's closed index: a heading with the
+    count, then `#id ✓ name` entries (`✗` for dropped) joined by ` · `, newest first.
+    `limit` shows only that many of the newest, ending in "N older: ..."; 0 shows all."""
+    closed = sorted((i for i in items if i.status in CLOSED), key=finished_order, reverse=True)
+    shown = closed[:limit] if limit > 0 else closed
+    if oldest_first:
+        shown = shown[::-1]
+    heading = f"Closed ({len(closed)}), {'oldest' if oldest_first else 'newest'} first"
+    entries = [closed_entry(i) for i in shown]
+    if len(shown) < len(closed):
+        entries.append(f"{len(closed) - len(shown)} {AGENT_OLDER}")
+    return [heading, " · ".join(entries) if entries else "none"]
+
+
+def agent_view(items: list[Item], titles: list[str], stale: dict | None = None,
+               landed: dict | None = None, kids: dict | None = None,
+               children: bool = False) -> str:
+    """`show active|next|closed|all --agent`: the sections of `titles`, in status's order."""
+    parts = []
+    for title in titles:
+        parts.append(_agent_active(items, stale, landed, kids, children) if title == "Active"
+                     else _agent_next(items, children) if title == "Up next"
+                     else agent_closed(items))
+    return "\n\n".join("\n".join(p) for p in parts)
+
+
+def agent_status(objectives: Objectives, items: list[Item], show_all: bool = False,
+                 stale: dict | None = None, landed: dict | None = None,
+                 oldest_first: bool = False, limit: int = CLOSED_LIMIT,
+                 kids: dict | None = None, children: bool = False) -> str:
+    """`status --agent`: objective, Active, Up next, then a count of what is closed and
+    the command that lists it — or, with --all, the closed index itself (`limit` newest)."""
+    parts = [[f"Objective: {objectives.overall or '— not set —'}"],
+             _agent_active(items, stale, landed, kids, children),
+             _agent_next(items, children)]
+    if show_all:
+        parts.append(agent_closed(items, limit, oldest_first))
+    else:
+        closed = len([i for i in items if i.status in CLOSED])
+        parts.append([f"{closed} closed or dropped: `clarity-ctl show closed --agent`"])
+    return "\n\n".join("\n".join(p) for p in parts)
+
+
+def _landed_plain(marks: dict | None, bases: dict | None) -> str | None:
+    """`merged into main`, `not merged`, or one per repo when they differ."""
+    marks = {repo: m for repo, m in (marks or {}).items() if m != "unknown"}
+    if not marks:
+        return None
+    words = {"merged": "merged", "unmerged": "not merged"}
+    if len(set(marks.values())) == 1:
+        word = words[next(iter(marks.values()))]
+        into = sorted(set((bases or {}).values()))
+        return word + (f" into {into[0]}" if word == "merged" and len(into) == 1 else "")
+    return ", ".join(f"{repo}: {words[m]}" for repo, m in marks.items())
+
+
+def agent_item(data: dict, marks: dict | None = None) -> str:
+    """`show <id> --agent`: the page as plain lines. Every note in full, numbered, with
+    its timestamp; nothing wrapped, cut or decorated."""
+    status = data["status"]
+    out = [f"#{data['id']} {data['name']}"]
+    facts = [f"status: {status}", f"type: {data.get('type', '')}"]
+    for key in ("created", "started", "ended"):
+        if data.get(key):
+            facts.append(f"{key} {data[key]}")
+    if data.get("ended") and not data.get("started") and not data.get("branch"):
+        facts.append("closed without starting")
+    landed = _landed_plain(marks, data.get("bases"))
+    if landed:
+        facts.append(landed)
+    if data.get("parent") is not None:
+        facts.append(f"subepoch of {data['parent']}")
+    if data.get("archived"):
+        facts.append(f"archived in {data['archived']} (read-only)")
+    out.append(" · ".join(facts))
+    for key in ("brief", "outcome"):
+        if data.get(key):
+            out.append(f"{key}: {data[key]}")
+    if data.get("branch"):
+        out.append(f"branch: {data['branch']}")
+    if data.get("folder"):
+        out.append(f"folder: {data['folder']}")
+    for git in data.get("git") or []:
+        facts = [f"base {git['base']}" if git.get("base") else "no base"]
+        if status not in CLOSED and (git.get("behind") or git.get("ahead")):
+            facts.append(f"{git.get('ahead', 0)} ahead, {git.get('behind', 0)} behind")
+        if git.get("dirty"):
+            facts.append(f"{git['dirty']} uncommitted")
+        elif git.get("dirty_error"):
+            facts.append(f"uncommitted unknown — git status failed: {git['dirty_error']}")
+        if git.get("shared"):
+            facts.append("shares the main checkout")
+        out.append(f"repo: {git['repo']} — {', '.join(facts)}")
+    if not data.get("git"):
+        out += [f"repo: {r}" for r in data.get("repos") or []]
+    out += [f"plan: {p}" for p in data.get("plans") or []]
+    if data.get("evidence"):
+        out.append(f"from: {data['evidence']}")
+    kids = data.get("children") or []
+    if kids:
+        out.append(f"Subepochs ({len(kids)})")
+        for kid in kids:
+            line = f"- #{kid['id']} {kid['name']} — {kid['status']}"
+            if kid["status"] in CLOSED and kid.get("outcome"):
+                line += f"; outcome: {kid['outcome']}"
+            elif kid.get("handoff"):
+                line += f"; handoff: {kid['handoff']}"
+            out.append(line)
+    notes = data.get("notes") or []
+    if notes:
+        out.append(f"Notes ({len(notes)})")
+        out += [f"{n}. [{note['at'][:16]}] {note['text']}" for n, note in enumerate(notes, 1)]
+    return "\n".join(out)
 
 
 def epoch_md(item: Item, existing: str | None = None) -> str:
