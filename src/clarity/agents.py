@@ -58,9 +58,7 @@ on two real project histories. The previous block, which carried the last ten
 outcomes, answered 7-14% of questions about the project's past from the block alone,
 and a question cost about 6,000 and 4,800 estimated tokens: mostly the listing a
 session read to find an id. Listing every closed item by id, plus `clarity-ctl
-search`, cut that to about 1,900-2,900. The block has since cut its closed list to the
-ten newest: the other ids are one `show closed --agent` away, which prints them as plain
-`#id ✓ name` entries rather than the boxed tables a person reads.
+search`, cut that to about 1,900-2,900.
 
 ## Why the note rule names a moment, not a cadence
 
@@ -99,11 +97,10 @@ START = "<!-- CLARITY:START -->"
 END = "<!-- CLARITY:END -->"
 
 _BODY = """- Where things stand is at the end of this block, current as of the last clarity
-  write. Start from it; you don't need `status` or `--help` to get going. Add `--agent`
-  to every read (`status`, `show`, `search`): plain text, and much smaller for lists.
-  `clarity-ctl show <id> --agent` has every note on an item; `show closed --agent`
-  lists every closed item. A fact not in the block: `clarity-ctl search <words> --agent`
-  finds the item (often the note too), then `show <id> --agent`.
+  write; you don't need `status` or `--help` to get going. Add `--agent` to every read
+  (`status`, `show`, `search`): `show <id>` has every note, `show closed` every closed
+  item. A fact not in the block: `search <words>` finds the item (often the note too),
+  then `show <id>`.
 - Start work: `clarity-ctl epoch start "<name, a few words>" --repo <repo|all|none>
   --brief "<goal and limits>"`, or an idea's id in place of the name. One call: it
   branches the repos you name, makes the worktree, claims the epoch for you and prints
@@ -124,8 +121,8 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
 - Later, not now: `clarity-ctl idea add "<a few words, like a title>"`, then the why and
   the evidence in a note on it: the name is what lists show, the note is the detail.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.
-- `--json` is for scripts: it answers `{ok, command, data, warnings, version}`; read
-  with `--agent`. Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity project · 4 refused.
+- `--json` is for scripts. Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity
+  project · 4 refused.
 - Splitting work across agents, taking over another agent's epoch, repos: `clarity-ctl
   --help`. If `.clarity/adopt.md` exists, adoption is unfinished: read it first."""
 

@@ -120,7 +120,8 @@ def test_human_text_is_unchanged_by_the_flag_existing(worked, capsys):
 
 def test_the_rules_send_agents_to_agent_for_reads():
     from clarity import agents
-    for needed in ("`--agent`", "show closed --agent", "search <words> --agent", "--json` is for scripts"):
+    for needed in ("Add `--agent` to every read", "`show closed` every closed",
+                   "`--json` is for scripts"):
         assert needed in agents.LOCAL_BLOCK
 
 
@@ -130,3 +131,22 @@ def test_show_closed_agent_includes_archived_items_so_the_blocks_pointer_is_true
     assert not [i for i in workspace.worklog.items if i.status in ("done", "dropped")]
     assert "Closed (2), newest first" in agent(capsys, "show", "closed")
     assert "2 closed or dropped: `clarity-ctl show closed --agent`" in agent(capsys, "status")
+
+
+def test_only_status_show_and_search_take_agent_and_writes_reject_it(worked):
+    def leaves(parser, path=()):
+        subs = [a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction"]
+        if not subs:
+            yield path, parser
+        for sub in subs:
+            for name, child in sub.choices.items():
+                yield from leaves(child, (*path, name))
+
+    taking = {" ".join(path) for path, p in leaves(cli.build_parser())
+              if any("--agent" in a.option_strings for a in p._actions)}
+    assert taking == {"status", "show", "search"}
+    for argv in (["note", str(worked["live"]), "x"], ["idea", "list"], ["path", "1"],
+                 ["epoch", "close", "1", "x"]):
+        with pytest.raises(SystemExit) as stop:
+            cli.build_parser().parse_args([*argv, "--agent"])
+        assert stop.value.code == 2

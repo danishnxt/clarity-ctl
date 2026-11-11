@@ -199,10 +199,9 @@ Every command takes `--json`, for scripts, and answers `{ok, command, data, warn
 version}`. Exit codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity
 project · `4` refused.
 
-Every read also takes `--agent`: plain text in the style of the state block, with no
+`status`, `show` and `search` also take `--agent`: plain text in the style of the state block, with no
 boxes, colour or padding: lists are about a seventh of the size a person reads, a note-heavy
-`show <id>` barely smaller. `status --agent`
-is the objective, active epochs (with their warnings), the queue and a count of what is
+`show <id>` barely smaller. `status --agent` is the objective, active epochs (with their warnings), the queue and a count of what is
 closed; `show closed --agent` is every closed item as `#id ✓ name` (`✗` dropped), newest
 first; `show <id> --agent` is the page with every note in full. `--agent` and `--json`
 together are refused (exit 2).

@@ -53,8 +53,9 @@ CONTRACT = """Contract
   Commands that act on an epoch take its id. clarity never guesses which you mean: not
   from the directory you are in, not from an env var, not from there being one active.
   Every command takes --json, for scripts, and answers {ok, command, data, warnings,
-  version}; a failure has ok false, and error and code in place of data. Reads also take
-  --agent: plain text for an agent to read, in the style of the state block. Not both.
+  version}; a failure has ok false, and error and code in place of data. status, show
+  and search also take --agent: plain text for an agent, in the state block's style.
+  Not both.
   Exit codes: 0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
   Pass every argument. A missing one is asked for at a terminal and refused elsewhere,
   so an agent is never left waiting on a prompt."""
@@ -150,7 +151,7 @@ def reference_text() -> str:
 
 def _leaf(parent, name: str, help_: str, description: str | None = None,
           section: list | None = None, into: list | None = None):
-    """A command or action, always with --json and --agent."""
+    """A command or action, always with --json."""
     if into is not None:
         into.append((name, help_))
     kwargs = {}
@@ -166,10 +167,14 @@ def _leaf(parent, name: str, help_: str, description: str | None = None,
     )
     node.add_argument("--json", action="store_true",
                       help="print the machine-readable envelope, for scripts, instead of text")
+    return node
+
+
+def _agent_flag(node) -> None:
+    """--agent, only on the reads whose text it changes: status, show, search."""
     node.add_argument("--agent", action="store_true",
                       help="print plain text for an agent to read — no boxes or colour, "
                            "the state block's style; not with --json")
-    return node
 
 
 def _id_arg(node, what: str = "the epoch"):
@@ -272,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
                      "`show <id> --json` has those. --agent prints the same facts as "
                      "plain text, the state block's style: no boxes or colour, closed "
                      "work as one `#id ✓ name` line.", section=look)
+    _agent_flag(p_status)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
     p_status.add_argument("--limit", type=int, default=15, metavar="N",
@@ -299,6 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
                    "--agent` is the page with every note in full.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
+    _agent_flag(p_show)
 
     p_search = _leaf(sub, "search", "find items by keyword — the id of the one that holds a fact",
                      "Keyword search over every item, live and archived: its name, outcome, "
@@ -310,6 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
                      "rare the word is across the worklog; a word in the name counts 1.5x. "
                      "Ties go to the newer item.\n\n"
                      "example:\n  $ clarity-ctl search lease host", section=look)
+    _agent_flag(p_search)
     p_search.add_argument("words", nargs="+", metavar="<word>",
                           help="what to look for; a word starting with - goes after --")
     p_search.add_argument("--limit", type=int, default=5, metavar="N",
