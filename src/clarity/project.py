@@ -601,7 +601,9 @@ class Project:
                     "a reopen takes back the repos the epoch had — add one after with:\n"
                     f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
             chosen = self.pick_repos(repos) if repos else None
-            if no_repos and self.branches_root():
+            # A project that lists repos branches those, even with a git root: --repo none
+            # is how an epoch starts there with nothing yet, and add-repo brings code in.
+            if no_repos and self.branches_root() and not self.worklog.repos:
                 raise ClarityError(
                     "this project branches its root, not a list of repos — there would be "
                     "nothing to add later. Start it without --no-repos", code=4)
@@ -687,10 +689,14 @@ class Project:
         try:
             return self.start(item.id, take_lease=False, brief=brief)
         except Exception:
-            # a subepoch that never started is not an idea anyone queued — take it back
-            with self._write():
-                self.worklog.items = [i for i in self.worklog.items if i.id != item.id]
+            self.forget(item.id)
             raise
+
+    def forget(self, item_id: int | str) -> None:
+        """Take back an item that was just added for a start that was then refused: it
+        is not an idea anyone queued."""
+        with self._write():
+            self.worklog.items = [i for i in self.worklog.items if i.id != item_id]
 
     def children_of(self, item_id: int) -> list[Item]:
         """Every child of an epoch, archived ones too: a finished child still counts."""

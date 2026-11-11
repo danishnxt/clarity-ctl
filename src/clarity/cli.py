@@ -785,11 +785,17 @@ def run(args) -> int:
             if no_repos and args.branch:
                 raise ClarityError("--branch names the branch to make, and --repo none "
                                    "makes none — pass one", code=2)
-            if item_id is None:
+            made = item_id is None
+            if made:
                 item_id = project.add(args.id).id
-            item, warnings = project.start(item_id, branch=args.branch,
-                                           repos=repos, no_repos=no_repos,
-                                           brief=args.brief)
+            try:
+                item, warnings = project.start(item_id, branch=args.branch,
+                                               repos=repos, no_repos=no_repos,
+                                               brief=args.brief)
+            except Exception:
+                if made:
+                    project.forget(item_id)  # start's own checks can still refuse
+                raise
             if args.json:
                 print(envelope("epoch.start", item.to_dict(), warnings))
             else:

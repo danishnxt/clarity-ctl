@@ -311,3 +311,27 @@ def test_a_refused_start_by_name_leaves_no_stray_idea(workspace, ws_root, monkey
     # two listed repos: which to branch still has to be said
     assert main(["epoch", "start", "port the lexer"]) == 2
     assert len(Project.find(ws_root).worklog.items) == before
+
+
+# ---- a git root that lists repos branches those, not itself ----
+
+def test_repo_none_works_when_the_root_is_a_repo_that_lists_repos(project, new_repo,
+                                                                  monkeypatch):
+    nested = new_repo(project.root / "workspace" / "agent")
+    project.repo_add(str(nested))
+    assert gitops.is_repo(project.root) and not project.worklog.state_repo
+    monkeypatch.chdir(project.root)
+
+    assert main(["epoch", "start", "planning", "--repo", "none"]) == 0
+    item = Project.find(project.root).worklog.items[-1]
+    assert item.status == "active" and item.repos == [] and item.branch is None
+    assert not list((project.root / item.folder / "wt").glob("*"))
+
+
+def test_a_root_that_branches_itself_still_refuses_no_repos_and_leaves_no_idea(
+        project, monkeypatch):
+    monkeypatch.chdir(project.root)
+    before = len(project.worklog.items)
+
+    assert main(["epoch", "start", "planning", "--no-repos"]) == 4
+    assert len(Project.find(project.root).worklog.items) == before
