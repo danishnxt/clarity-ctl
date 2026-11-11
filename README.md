@@ -198,6 +198,8 @@ Every read takes `--json` and answers `{ok, command, data, warnings, version}`. 
 codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project ·
 `4` refused.
 
+`status --json` lists each item with a `note_count`, not its notes; `show <id> --json` has them.
+
 `clarity-ctl --help` opens with how the work goes, as commands to copy, then the
 contract above. `clarity-ctl help reference` prints every command's help on one page,
 so an agent can read the whole tool in one call instead of one `--help` per command.

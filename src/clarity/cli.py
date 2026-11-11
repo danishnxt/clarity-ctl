@@ -262,7 +262,9 @@ def build_parser() -> argparse.ArgumentParser:
                      "from the worklog plus what is true on this machine right now — "
                      "who holds a lease (in --json), how far each branch trails its base, and whether "
                      "its work has landed there. None of "
-                     "that is written down, so none of it can go stale.", section=look)
+                     "that is written down, so none of it can go stale.\n\n"
+                     "--json lists each item with a note_count, not its notes: "
+                     "`show <id> --json` has those.", section=look)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
     p_status.add_argument("--limit", type=int, default=15, metavar="N",
@@ -283,7 +285,8 @@ def build_parser() -> argparse.ArgumentParser:
                    "  all        everything\n"
                    "  objective  what the project is for\n"
                    "  <id>       one item: status, branch, repos, notes, plans; lease in --json\n\n"
-                   "What `status` prints, as data, is `clarity-ctl status --json`.",
+                   "What `status` prints, as data, is `clarity-ctl status --json`, which carries a "
+                   "note count per item, not the notes: `show <id> --json` has them.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
 
@@ -701,12 +704,19 @@ def run(args) -> int:
         # the ⚠ lines status prints about bases, as data — keyed by id, like leases
         data["stale"] = project.stale_map()
         # whether each epoch's work reached its base, per repo — merged, unmerged, unknown
-        data["landed"] = project.landed_map()
+        landed = project.landed_map()
         # who holds which epoch — data only; the tables leave it out
         data["leases"] = project.leases()
-        emit(args, "status", data, project.status_text(
+        text = project.status_text(
             show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
-            landed=data["landed"], children=args.children))
+            landed=landed, children=args.children)
+        # the JSON is the index, not the archive: a count in place of the notes (show <id>
+        # has them), and marks only for the items it lists
+        listed = {i["id"] for i in data["items"]}
+        data["landed"] = {k: v for k, v in landed.items() if k in listed}
+        for item in data["items"]:
+            item["note_count"] = len(item.pop("notes", []))
+        emit(args, "status", data, text)
 
     elif args.command == "show":
         name = args.name

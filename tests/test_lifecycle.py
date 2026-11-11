@@ -520,3 +520,37 @@ def test_show_still_prints_when_git_status_fails_in_a_worktree(project, repo, mo
     assert "uncommitted unknown" in render.item_text(data)
     with pytest.raises(ClarityError):  # the guard still refuses: it asks git itself
         project.refresh(item.id)
+
+
+def test_status_json_counts_notes_and_marks_only_what_it_lists(workspace, ws_root, commit,
+                                                              monkeypatch, capsys):
+    import json
+    from clarity.cli import main
+
+    done, _ = workspace.start(workspace.add("old work").id, repos=["agent"])
+    live, _ = workspace.start(workspace.add("live work").id, repos=["agent"])
+    commit(ws_root / live.folder / "wt" / "agent", "x.txt")  # something to land: unmerged
+    workspace.note(live.id, "a decision")
+    workspace.note(live.id, "HANDOFF: stopped here")
+    workspace.close(done.id, "shipped")
+    monkeypatch.chdir(ws_root)
+
+    def status(*flags):
+        assert main(["status", "--json", *flags]) == 0
+        return json.loads(capsys.readouterr().out)["data"]
+
+    data = status()
+    [item] = [i for i in data["items"] if i["id"] == live.id]
+    assert item["note_count"] == 2 and "notes" not in item
+    assert done.id not in {i["id"] for i in data["items"]}
+    assert set(data["landed"]) == {str(live.id)}  # JSON keys are strings
+
+    # with --all the closed epoch is listed, and its mark comes back
+    everything = status("--all")
+    assert str(done.id) in everything["landed"]
+    assert all("notes" not in i for i in everything["items"])
+
+    # the notes themselves are still one call away
+    assert main(["show", str(live.id), "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)["data"]
+    assert len(shown["notes"]) == 2 and "note_count" not in shown
