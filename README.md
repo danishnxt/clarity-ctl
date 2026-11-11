@@ -79,11 +79,11 @@ clarity-ctl init --objective "Make the parser fast enough for 1GB inputs"
 git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
 
-clarity-ctl epoch start "memory-map the input file" --repo all
-                                           # idea 1, folder, branch, worktree, claimed
-cd $(clarity-ctl path 1)/wt/parser         # work here
+clarity-ctl start "memory-map the input file" --repo all
+                    # idea 1, folder, branch, worktree, claimed; prints where to work:
+                    #   work in: EPOCHS/001_<date>__memory-map-the-input-file/wt/parser
 clarity-ctl note 1 "load time halved, total unchanged: the tokenizer is the bottleneck"
-clarity-ctl epoch close 1 "no gain, I/O is not the bottleneck"
+clarity-ctl close 1 "no gain, I/O is not the bottleneck"
 ```
 
 Already have a repo? Run `clarity-ctl adopt` inside it instead
@@ -155,7 +155,7 @@ memory-map the input file  #1
 ```
 
 Closing never merges and never deletes a branch: merge first if the work should land,
-or don't. For an attempt that failed outright, `epoch close <id> --drop "why"` records
+or don't. For an attempt that failed outright, `close <id> --drop "why"` records
 it as dropped instead of done.
 
 When the closed list gets long, `clarity-ctl archive` moves every closed epoch out of
@@ -174,7 +174,7 @@ rules tell an agent to:
   reading the whole tree: `clarity-ctl show closed --agent` lists every closed epoch,
   `clarity-ctl search <words> --agent` finds the item, and often the note, that holds
   a fact, and `clarity-ctl show <id> --agent` reads it;
-- start work in one call: `clarity-ctl epoch start "<name>" --repo <repo> --brief "<goal>"`
+- start work in one call: `clarity-ctl start "<name>" --repo <repo> --brief "<goal>"`
   adds the idea, branches, makes the worktree and claims it. Closing
   releases it;
 - write a note the moment a decision changes (see [When notes are written](#when-notes-are-written));
@@ -186,20 +186,22 @@ rules tell an agent to:
   says what changed and why, or drop it with the reason. If part is left for later,
   keep it active with a handoff rather than filing an idea.
 
-Give an epoch a **brief** when you start it: `epoch start <id> --brief "<goal and
+Give an epoch a **brief** when you start it: `start <id> --brief "<goal and
 limits>"`, as text or a file. It's the first thing whoever picks the epoch up reads.
 
-`clarity-ctl install` puts the block back if it's lost; `install --remove` takes it out.
+`init` and `adopt` write the block, and every later write keeps it current. Starting a
+closed epoch again (`start <id>`) brings it back to active, with its old outcome kept
+as a note.
 
-A claim is a **lease**: a marker saying who is working on an epoch (`epoch start` takes
-one for you). It is a warning, not a lock; taking over someone else's needs `--steal`,
-which records who held it.
+A claim is a **lease**: a marker saying who is working on an epoch (`start` takes
+one for you, `close` lets it go). It is a warning, not a lock; taking over someone
+else's needs `claim <id> --steal`, which records who held it.
 
-Every command takes `--json`, for scripts, and answers `{ok, command, data, warnings,
-version}`. Exit codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity
-project · `4` refused.
+`status`, `show` and `search` take `--json`, for scripts, and answer `{ok, command,
+data, warnings, version}`; the other commands print text. Exit codes: `0` ok · `1`
+error · `2` validation failed · `3` not a clarity project · `4` refused.
 
-`status`, `show` and `search` also take `--agent`: plain text in the style of the state block, with no
+They also take `--agent`: plain text in the style of the state block, with no
 boxes, colour or padding: lists are about a seventh of the size a person reads, a note-heavy
 `show <id>` barely smaller. `status --agent` is the objective, active epochs (with their warnings), the queue and a count of what is
 closed; `show closed --agent` is every closed item as `#id ✓ name` (`✗` dropped), newest
@@ -237,7 +239,7 @@ couldn't get from the code or git:
 - **the first note on a new idea**: the why and the evidence behind its name.
 
 Routine progress ("ran the tests", "edited parser.py") is not a note; git has it. The
-outcome is not a note either: it goes on `epoch close`. Notes are kept in order and
+outcome is not a note either: it goes on `close`. Notes are kept in order and
 never edited; a later note that corrects an earlier one should say so.
 
 ## Splitting an epoch across agents
@@ -245,19 +247,19 @@ never edited; a later note that corrects an earlier one should say so.
 When one epoch is too big for one agent, its owner spawns a **subepoch** for each part
 that needs a branch of its own:
 
-    clarity-ctl epoch spawn 7 "port expressions" --brief "Expressions only. Don't touch the lexer."
+    clarity-ctl spawn 7 "port expressions" --brief "Expressions only. Don't touch the lexer."
 
 Subepochs are numbered under their parent (7.1, 7.2) and sit together under
 `EPOCHS/subepochs/`. Each branches from 7's branch and merges back into it; only 7
 merges to main. Quick work that needs no branch, like a search or a review, is a note
 on 7 instead.
 
-1. The part's agent claims it (`claim 7.1 --as expr-agent`), works in `path 7.1`, and
+1. The part's agent claims it (`claim 7.1 --as expr-agent`), works in the folder `spawn` printed, and
    stops with a `HANDOFF:` note. It doesn't close the subepoch.
 2. 7's owner reviews. Feedback goes in a note on 7.1, so it's still there when the
    agent's session isn't.
 3. 7's owner merges 7.1's branch into 7's and closes 7.1. `close` prints the merge
-   command if it's missing, and `epoch refresh 7.2` brings the merged work into a
+   command if it's missing, and `refresh 7.2` brings the merged work into a
    sibling.
 
 While 7 is active, `status` lists its subepochs under it, one line each:
@@ -296,8 +298,8 @@ Run `clarity-ctl adopt` in the folder.
   your approval.
 
 A workspace can hold several repos. List each one you change with `clarity-ctl repo add
-<path>`. Then `epoch start` asks which to branch: `--repo <name>` (repeat for more),
-`--repo all`, or `--repo none` for planning or analysis.
+<path>`. Then `start` asks which to branch: `--repo <name>` (repeat for more),
+`--repo all`, or `--repo none` for planning or analysis. `clarity-ctl show repos` lists them.
 
 ## Development
 
