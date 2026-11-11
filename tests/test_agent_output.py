@@ -122,3 +122,11 @@ def test_the_rules_send_agents_to_agent_for_reads():
     from clarity import agents
     for needed in ("`--agent`", "show closed --agent", "search <words> --agent", "--json` is for scripts"):
         assert needed in agents.LOCAL_BLOCK
+
+
+def test_show_closed_agent_includes_archived_items_so_the_blocks_pointer_is_true(
+        worked, workspace, capsys):
+    workspace.archive()                      # both closed items leave the live worklog
+    assert not [i for i in workspace.worklog.items if i.status in ("done", "dropped")]
+    assert "Closed (2), newest first" in agent(capsys, "show", "closed")
+    assert "2 closed or dropped: `clarity-ctl show closed --agent`" in agent(capsys, "status")

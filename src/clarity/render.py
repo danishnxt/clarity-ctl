@@ -508,8 +508,9 @@ DIGEST_HANDOFF = 600  # a handoff gets more: it is the line the next session act
 DIGEST_NAME = 80  # a name is a title; one written as a paragraph is cut, not carried whole
 # The most the whole digest may be, in characters: 2,000 tokens at the usual 4 characters
 # a token. It is loaded on every turn of every session, so this is what the block
-# costs however large the project grows. The closed list is the part that grows with
-# the project, so it is what gets cut first (see state_digest).
+# costs however large the project grows. Only the standing decisions can push it toward
+# the limit (the closed list is DIGEST_CLOSED entries), and the oldest go first (see
+# state_digest).
 DIGEST_BUDGET = 8000
 DIGEST_CLOSED_NAME = 50  # a closed item is one `#id ✓ name` entry; the name is cut at this
 DIGEST_CLOSED = 10  # how many of the newest closed items the digest lists; the rest is a command

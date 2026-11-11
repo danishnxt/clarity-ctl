@@ -42,7 +42,7 @@ HOW = """How work goes
   $ clarity-ctl idea add "<a few words>"
       for later; the why and the evidence go in a note on it"""
 
-READ = """Read (never writes) — agents add --agent: plain text, a fraction of the size
+READ = """Read (never writes) — agents add --agent: plain text, far smaller for lists
   clarity-ctl status        objective, active, next; --all adds closed
   clarity-ctl show <id>     one item with every note; show active | next | closed | all
   clarity-ctl show closed --agent  every closed item, by id and name

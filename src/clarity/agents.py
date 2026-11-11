@@ -100,7 +100,7 @@ END = "<!-- CLARITY:END -->"
 
 _BODY = """- Where things stand is at the end of this block, current as of the last clarity
   write. Start from it; you don't need `status` or `--help` to get going. Add `--agent`
-  to every read (`status`, `show`, `search`): plain text, a fraction of the size.
+  to every read (`status`, `show`, `search`): plain text, and much smaller for lists.
   `clarity-ctl show <id> --agent` has every note on an item; `show closed --agent`
   lists every closed item. A fact not in the block: `clarity-ctl search <words> --agent`
   finds the item (often the note too), then `show <id> --agent`.

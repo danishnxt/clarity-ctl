@@ -200,7 +200,8 @@ version}`. Exit codes: `0` ok · `1` error · `2` validation failed · `3` not a
 project · `4` refused.
 
 Every read also takes `--agent`: plain text in the style of the state block, with no
-boxes, colour or padding, a fraction of the size of what a person reads. `status --agent`
+boxes, colour or padding: lists are about a seventh of the size a person reads, a note-heavy
+`show <id>` barely smaller. `status --agent`
 is the objective, active epochs (with their warnings), the queue and a count of what is
 closed; `show closed --agent` is every closed item as `#id ✓ name` (`✗` dropped), newest
 first; `show <id> --agent` is the page with every note in full. `--agent` and `--json`
