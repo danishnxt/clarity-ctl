@@ -432,7 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
                      description="Sets a done or dropped epoch active again, recreating "
                      "its worktree and taking the lease. The old outcome is kept as a note "
                      "rather than overwritten, so the trail still shows what you thought "
-                     "when you closed it.")
+                     "when you closed it. Something closed without ever being started goes "
+                     "back to an idea instead.")
     _id_arg(p_reopen, "the closed epoch")
     p_reopen.add_argument("--branch", help="use this branch instead of the recorded one")
 
@@ -473,6 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_close = _leaf(epoch, "close", "finish it, with its outcome in one line",
                     into=epoch_rows, description=
+                    "Takes an idea too: one already done elsewhere or not wanted is closed "
+                    "without starting it, so no folder or branch is made.\n\n"
                     "Close only when the whole task is done and merged. The outcome says "
                     "what changed and why — for a bug, what was wrong. Part of it left for "
                     "later: don't close; keep it active and write a HANDOFF: note.\n\n"
@@ -810,6 +813,9 @@ def run(args) -> int:
                                            reopen=True)
             if args.json:
                 print(envelope("epoch.reopen", item.to_dict(), warnings))
+            elif item.status == "idea":
+                print(f"idea {item.id} reopened — it was never started, so it is an idea "
+                      f"again\n  start it with: clarity-ctl epoch start {item.id}")
             else:
                 print(_started_text(item, "reopened", warnings))
         elif action == "add-repo":
@@ -838,10 +844,14 @@ def run(args) -> int:
             warnings = [] if args.drop else project.unmerged(project.resolve_id(target))
             item = project.close(target, outcome, dropped=args.drop)
             if args.json:
-                print(envelope("epoch.close", item.to_dict(), warnings))
+                data = item.to_dict()
+                if item.never_started:
+                    data["repo_work"] = False  # closed from an idea: nothing was branched
+                print(envelope("epoch.close", data, warnings))
             else:
-                print("\n".join([f"epoch {item.id} {item.status}: {outcome}",
-                                  *(f"warning: {w}" for w in warnings)]))
+                head = (f"idea {item.id} {item.status} without starting: {outcome}"
+                        if item.never_started else f"epoch {item.id} {item.status}: {outcome}")
+                print("\n".join([head, *(f"warning: {w}" for w in warnings)]))
 
     elif args.command == "rename":
         item = project.rename(args.id, args.name)

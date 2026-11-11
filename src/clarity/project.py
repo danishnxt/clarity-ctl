@@ -554,6 +554,9 @@ class Project:
         analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
         add_repos, so no command does two jobs depending on the epoch's state.
 
+        Reopening something closed without ever being started (see close) puts it back
+        as an idea and starts nothing.
+
         A subepoch (see spawn) starts only while its parent is active, and a reopen
         of one asks the same.
 
@@ -580,6 +583,19 @@ class Project:
                     f"  clarity-ctl epoch reopen {item_id}",
                     code=4,
                 )
+            if closed and item.never_started:
+                # closed straight from an idea: nothing to take back, so it goes back to
+                # being the idea it was — starting it is a separate, deliberate step
+                if branch:
+                    raise ClarityError(
+                        f"item {item.id} was closed without ever being started, so it has "
+                        f"no branch to go back to — reopening makes it an idea again",
+                        code=4)
+                if item.outcome:
+                    item.notes.append(
+                        Note(at=today(), text=f"reopened — previous outcome: {item.outcome}"))
+                item.status, item.outcome, item.ended, item.closed_seq = "idea", None, None, None
+                return item, warnings
             if repos and reopen:
                 raise ClarityError(
                     "a reopen takes back the repos the epoch had — add one after with:\n"
@@ -1183,6 +1199,13 @@ class Project:
                 for repo, wt in self._targets(parent, folder)}
 
     def close(self, item_id: int | None, outcome: str, dropped: bool = False) -> Item:
+        """active -> done or dropped, or idea -> done or dropped.
+
+        An idea closed directly was done already (under another epoch) or is not wanted:
+        it gets the outcome, `ended` and `closed_seq` and nothing else — no folder,
+        branch, worktree, lease or end shas, and no repo is touched. It has no
+        subepochs (only a started epoch can spawn one), so the guard below passes.
+        """
         with self._write():
             item = self.worklog.by_id(self.resolve_id(item_id))
             if item.status in CLOSED:

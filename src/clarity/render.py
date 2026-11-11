@@ -387,6 +387,8 @@ def item_text(data: dict, marks: dict | None = None) -> str:
         facts.append(paint(f"subepoch of {data['parent']}", "dim"))
     if data.get("ended"):
         when = f"closed {_ago(data['ended'])}"
+        if not data.get("started") and not data.get("branch"):
+            when += " without starting"  # an idea closed directly: Item.never_started
     elif data.get("started"):
         when = f"started {_ago(data['started'])}"
     else:

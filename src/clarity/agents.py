@@ -111,7 +111,8 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   and why: a note starting `DECISION:`. Every one is listed below for later sessions.
 - The whole task done and merged: `clarity-ctl epoch close <id> "<outcome>"`, which
   also releases it. The outcome says what changed and why — for a bug, what was wrong.
-  Rejected: `epoch close <id> --drop "<why>"`. An epoch left open reads as unfinished.
+  Rejected: `epoch close <id> --drop "<why>"`. An idea already built or unwanted closes
+  the same way, unstarted. An epoch left open reads as unfinished.
 - Part of it left for later, even with the rest merged: don't close it. Keep it active
   and write a note starting `HANDOFF:` — what's done, what's left, what to do first.
   Not an idea: an idea reads as optional, a handoff as next.
