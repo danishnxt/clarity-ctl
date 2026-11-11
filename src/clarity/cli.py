@@ -17,7 +17,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from . import render
+from . import render, search
 from .model import TYPES, parse_id
 from .project import Project
 from .store import ARCHIVE, ClarityError
@@ -45,6 +45,7 @@ HOW = """How work goes
 READ = """Read (never writes)
   clarity-ctl status        objective, active, next; --all adds closed
   clarity-ctl show <id>     one item with every note; show active | next | closed | all
+  clarity-ctl search <words>  items by keyword, in names, outcomes, briefs and notes
   clarity-ctl path <id>     an epoch's folder: cd $(clarity-ctl path 7)"""
 
 CONTRACT = """Contract
@@ -285,6 +286,21 @@ def build_parser() -> argparse.ArgumentParser:
                    "What `status` prints, as data, is `clarity-ctl status --json`.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
+
+    p_search = _leaf(sub, "search", "find items by keyword — the id of the one that holds a fact",
+                     "Keyword search over every item, live and archived: its name, outcome, "
+                     "brief and every note. Prints the best matches, each with the id and the "
+                     "line that matched, so `show <id>` reads the right one. Read-only, and "
+                     "nothing is indexed, so it is never stale.\n\n"
+                     "Each distinct word of the query scores its best match in an item "
+                     "(the same word 1, a stem like lease/leases 0.7, a typo 0.5), times how "
+                     "rare the word is across the worklog; a word in the name counts 1.5x. "
+                     "Ties go to the newer item.\n\n"
+                     "example:\n  $ clarity-ctl search lease host", section=look)
+    p_search.add_argument("words", nargs="+", metavar="<word>",
+                          help="what to look for; a word starting with - goes after --")
+    p_search.add_argument("--limit", type=int, default=5, metavar="N",
+                          help="the N best matches (default 5; 0 for all)")
 
     p_path = _leaf(sub, "path", "print an epoch's folder — cd $(clarity-ctl path 7)", section=look)
     _id_arg(p_path)
@@ -708,6 +724,15 @@ def run(args) -> int:
             else:
                 human = project.view_text(name)
             emit(args, f"show.{name}", data, human)
+
+    elif args.command == "search":
+        by_id = {i.id: i for i in project.worklog.all_items()}
+        hits = search.search(list(by_id.values()), args.words, args.limit)
+        data = {"query": search.terms(args.words),
+                "hits": [{"id": h.id, "name": h.name, "status": h.status,
+                          "score": round(h.score, 2), "field": h.field,
+                          "snippet": h.snippet} for h in hits]}
+        emit(args, "search", data, render.search_text(hits))
 
     elif args.command == "path":
         folder = project.path_of(args.id)

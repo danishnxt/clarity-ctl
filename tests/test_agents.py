@@ -135,12 +135,15 @@ def test_the_digest_follows_every_write_and_claude_md_only_imports_it(repo):
     assert not (repo / ".clarity" / "RULES.md").exists()
 
 
-def test_the_digest_puts_handoffs_decisions_and_outcomes_up_front(project, repo):
-    """What a fresh session would otherwise spend turns on `show` to find."""
+def test_the_digest_puts_handoffs_decisions_and_the_closed_list_up_front(project, repo):
+    """What a fresh session would otherwise spend turns on `show` to find: the id."""
     tried = project.add("split parser")
     project.start(tried.id)
     project.note(tried.id, "DECISION: stdlib only — ops boxes have no pip")
     project.close(tried.id, "mis-parses agents with spaces", dropped=True)
+    shipped = project.add("first cut")
+    project.start(shipped.id)
+    project.close(shipped.id, "a long outcome that is only on show")
     landed = project.add("since flag")
     project.start(landed.id)
     project.note(landed.id, "parsing ISO in UTC")
@@ -151,24 +154,22 @@ def test_the_digest_puts_handoffs_decisions_and_outcomes_up_front(project, repo)
     digest = text[text.index("### Where things stand"):text.index(agents.END)]
     assert f"#{landed.id} since flag — handoff: --since done; --until is next" in digest
     assert "stdlib only — ops boxes have no pip" in digest      # outlives its dropped epoch
-    assert f"#{tried.id} ✗ dropped split parser — mis-parses agents with spaces" in digest
     assert "gzip input" in digest.split("**Up next:**")[1]
+    # every closed item is listed by id and name; its outcome is a `show` away
+    closed = digest.split("**Closed**")[1]
+    assert f"#{shipped.id} ✓ first cut" in closed
+    assert "a long outcome" not in digest and "mis-parses" not in digest
 
 
-def test_the_digest_stays_the_same_size_however_long_the_history(project, repo):
-    """A thousandth epoch must cost every session what a tenth does."""
-    def digest_size():
-        return len(project.state_digest())
-
-    for n in range(render.DIGEST_CLOSED):
-        item = project.add(f"attempt {n:03d}")
-        project.close(item.id, "x" * 1000)                       # long outcomes get cut
-    small = digest_size()
-    for n in range(100, 140):
-        item = project.add(f"attempt {n:03d}")
+def test_the_digest_stays_within_its_budget_however_long_the_history(project, repo):
+    """A thousandth epoch must cost every session what a tenth does. (The synthetic
+    worklogs of tests/test_digest.py push this much harder, with a thousand.)"""
+    for n in range(30):
+        item = project.add(f"attempt {n:03d} " + "w" * 60)
         project.close(item.id, "x" * 1000)
-    assert digest_size() <= small + 100                          # only the "N older" line
-    assert "40 older" in project.state_digest()
+    digest = project.state_digest()
+    assert len(digest) <= render.DIGEST_BUDGET
+    assert "#30 ✓ attempt 029" in digest
 
 
 def test_the_digest_cuts_a_name_written_as_a_paragraph(project, repo):
