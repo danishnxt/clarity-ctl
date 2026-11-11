@@ -1,18 +1,23 @@
-# clarity-ctl
+**Problem 1: You're still telling your coding agent what to put in handoff files and AGENTS.md?**
 
-**You're still telling Claude what to put in handoff files and AGENTS.md?**
+Every session ends the same way: "write a handoff", "add that to CLAUDE.md", "no, the
+other decision". Forget once, and the next session burns tokens rediscovering what you
+already decided: things you already paid tokens for, sitting in the last session's context and cache.
 
-Then every session ends the same way: "write a handoff", "add that to CLAUDE.md", "no, the
-other decision". Forget once and the next session burns tokens rediscovering what you
-already decided: things you already paid tokens for, sitting in the last session's context.
-
-clarity-ctl makes that project bookkeeping automatic. Your agent records decisions as it
+> clarity-ctl makes that project bookkeeping automatic. Your agent records decisions as it
 works, and every new session starts already knowing where things stand. Nothing to
 remember, nothing to dump at the end.
 
-**Thin, light, robust.** One CLI, one YAML file, 20 commands. No server, no database, no
-embeddings, no model calls. It started as a tool to keep projects manageable for people,
-and has grown into an agent-first, low-bloat memory system.
+**Problem 2: Running experiments with no clear direction yet?**
+
+Your agent will clobber your project structure with ad hoc files everywhere, until you never want to open the directory yourself.
+
+> clarity-ctl brings order and structure for free: everything is always findable by you **or** your agent. Logs, analyses, graphs, findings, worktrees, everything.
+
+## clarity-ctl
+
+**Thin, light, robust.** One simple CLI, one YAML file, 20 commands. No server, no database, no
+embeddings, no model calls. Simple.
 
 ## Three concepts, five minutes
 
@@ -23,8 +28,7 @@ and has grown into an agent-first, low-bloat memory system.
 | **Note** | a decision or a result, written the moment it happens | `clarity-ctl note 12 "DECISION: ..."` |
 
 That's the whole model. An idea becomes an epoch with the same id; notes hang off either.
-Everything else is a view of those three. A note starting `HANDOFF:` is how an agent
-stops mid-way: what's done, what's left, what to do first.
+Everything else is a view of those three.
 
 ## Setup in one minute
 
@@ -35,29 +39,38 @@ uv tool install git+https://github.com/danishnxt/clarity-ctl          # latest m
 uv tool upgrade clarity-ctl                                           # pull the newest
 ```
 
-A first session, typed by you or your agent:
+## New project workflow
 
 ```sh
+# setup
 mkdir parser && cd parser
 clarity-ctl init --objective "Make the parser fast enough for 1GB inputs"
 git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
 
+# begin work
 clarity-ctl start "memory-map the input file" --repo all --brief "cut load time"
-                    # idea 1, folder, branch, worktree, claimed; prints where to work
+# idea 1, folder, branch, worktree, claimed; prints where to work
+
 clarity-ctl note 1 "load time halved, total unchanged: the tokenizer is the bottleneck"
 clarity-ctl idea "flaky test on macOS"          # for later: idea 2
 clarity-ctl status                              # where things stand
 clarity-ctl close 1 "no gain, I/O is not the bottleneck"
 ```
 
-`init` also writes the rules your agent follows into `AGENTS.md` (`CLAUDE.md` imports
-it). Already have a repo? Run `clarity-ctl adopt` inside it instead.
+## Already have a repo?
+
+Run `clarity-ctl adopt` inside it instead. Your agent restructures it once, and nothing moves without your approval. It's a one-time setup: the earlier you do it, the better.
 
 ## What your agent sees
 
-The end of `AGENTS.md` is a block that clarity regenerates on every write. This is a
-small project partway through:
+clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if the file already exists):
+
+1. **Rules:** written by `init`, telling your agent how to use clarity.
+
+2. **Where things stand:** a current-state summary that gives your agent a jumping-off point back into the project, like a very small CLAUDE.md. clarity regenerates it after every write, from the epochs and notes already recorded, with no model calls.
+
+3. Everything outside the block is yours: put whatever you'd normally put in this file.
 
 ```
 **Objective:** Make the parser fast enough for 1GB inputs
@@ -72,10 +85,12 @@ small project partway through:
 
 **Closed**, newest first — `clarity-ctl show <id>` for the outcome and notes
 #4 ✓ ring buffer for the tokenizer
-```
 
-A fresh session reads this, not your chat history. `status`, `show <id>` and `search`
-fetch the rest, as plain text when an agent runs them.
+...
+
+# YOUR AGENTS.MD content #
+
+```
 
 ## Why not just CLAUDE.md?
 
@@ -87,18 +102,6 @@ fetch the rest, as plain text when an agent runs them.
 - **The project folder stays organised.** One folder per epoch, plans and results
   inside it, worktrees out of the way, and code in its own repo so pushing code never
   pushes notes.
-
-An agent can easily overtake you in a project and run away with its own reasoning. That
-leaves you with:
-
-1. Gaps in your understanding. *"When did we decide on this assumption...?"*
-2. Messy directories, files added ad hoc with no plan. *"Try to find the second-last
-   analysis.md you generated, I dare you."*
-3. Logs too long to read. *"Logs are written for Claude to read, not for you."*
-4. Results, good and bad, that can't be tied back to a cause. *"Again, there was no
-   clear folder structure or target set up front."*
-5. Tokens burned on catching up. *"Forgot to write a handoff file? Too bad: your agent
-   burns tokens catching up again."*
 
 ## Commands
 
@@ -180,20 +183,6 @@ Run `clarity-ctl adopt` in the folder.
 After an upgrade, the next write in each project brings its agent rules and
 `worklog.yaml` up to date (`init` in the project does it at once). An older clarity-ctl
 reads a newer worklog but refuses to write it.
-
-### Development
-
-```sh
-uv venv && uv pip install -e . pytest
-.venv/bin/python -m pytest -q tests
-```
-
-### Releasing
-
-Bump the version in `pyproject.toml`, `src/clarity/__init__.py` and
-`src/clarity/cli.py`, commit, tag `v<version>`, push the tag and publish a GitHub
-release. Users pin it with `uv tool install git+https://github.com/danishnxt/clarity-ctl@v<version>`.
-PyPI publishing is off: `.github/workflows/publish.yml` runs only when started by hand.
 
 ### License
 
