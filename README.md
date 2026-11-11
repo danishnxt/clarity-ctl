@@ -1,18 +1,36 @@
 # clarity-ctl
 
-**Your automatic project manager, set up in 2 commands.**
+**A simple memory system and project manager for you and your agents, set up in one command with minimal overhead.**
 
-A coding agent can easily overtake your own thoughts and plans in a project and run away
-with its own reasoning. This gets especially bad if you are running multiple projects in parallel.
+A coding agent can easily overtake you in a project and run away with its own reasoning
+and execution. This gets especially bad if you are running multiple projects in parallel.
 
 It leaves you with:
 
 1. Gaps in your understanding.
-2. Project structures with random files all over the place (try to look for the 2nd last analysis.md file you generated, I dare you)
+
+   > When did we decide on this assumption...?
+
+2. Messy project directories, with random files added ad hoc and no upfront plan.
+
+   > Try to find the second-last analysis.md file you generated, I dare you.
+
 3. Logs too long to read, that confuse more than they explain.
+
+   > Logs are written for Claude to read, not for you. That's fine, but you have no way
+   > to read your way back to where the project stands.
+
 4. Experiment results, good and bad, that can't be tied back to a cause.
-5. Tokens burned on catching up, re-reading code or having to remember to dump
-   a handoff file at the end of every session.
+
+   > Again, there was no clear folder structure or target set up front.
+
+5. Tokens burned on catching up, re-reading code, or having to remember to dump a
+   handoff file at the end of every session.
+
+   > Forgot to write a handoff file? Too bad: your agent burns tokens catching up again.
+
+Letting agents run wild in graphs and loops is fine for well-structured tasks. In
+analysis and experiments, where you make the decisions, you'd rather stay in the loop.
 
 clarity-ctl is a small CLI and a few simple rules for your agent that keep you in the
 loop. Good prompting can do this too; clarity-ctl makes it close to automatic. The automatic
@@ -150,10 +168,11 @@ reused, and `show <id>` still reads them.
 rules tell an agent to:
 
 - start from the state at the end of the block: the objective, active epochs and
-  their handoffs, what's queued, standing decisions and recent outcomes. clarity
-  rewrites it on every write, so it is always current, and an agent gets it without
-  running a command. For anything else it asks clarity (`clarity-ctl status`,
-  `clarity-ctl show <id> --json`) instead of reading the whole tree;
+  their handoffs, what's queued, standing decisions and every closed epoch by id.
+  clarity rewrites it on every write, so it is always current, and an agent gets it
+  without running a command. For anything else it asks clarity instead of reading the
+  whole tree: `clarity-ctl search <words>` finds the item, and often the note, that
+  holds a fact, and `clarity-ctl show <id>` reads it;
 - start work in one call: `clarity-ctl epoch start "<name>" --repo <repo> --brief "<goal>"`
   adds the idea, branches, makes the worktree and claims it. Closing
   releases it;
