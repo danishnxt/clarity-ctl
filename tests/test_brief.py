@@ -1,9 +1,7 @@
-"""The brief, experiments without the unmerged warning, and claim --as.
+"""The brief, experiments without the unmerged warning, claim --as, and start's --repo.
 Run: .venv/bin/python -m pytest -q tests/test_brief.py"""
 
-import pytest
-
-from clarity import ClarityError, Project, lease, render
+from clarity import Project, lease, render
 
 
 def test_brief_text_is_stored_and_shown(project):
@@ -36,16 +34,16 @@ def test_brief_can_come_from_a_file(project, tmp_path):
         "Goal: ship the parser.\nLimit: no new deps.")
 
 
-def test_reopen_keeps_the_brief_unless_a_new_one_is_given(project):
+def test_restart_keeps_the_brief_unless_a_new_one_is_given(project):
     item = project.add("reopened")
     project.start(item.id, brief="first brief")
     project.close(item.id, "done")
 
-    project.start(item.id, reopen=True)
+    project.start(item.id)
     assert Project.find(project.root).worklog.by_id(item.id).brief == "first brief"
 
     project.close(item.id, "done again")
-    project.start(item.id, reopen=True, brief="second brief")
+    project.start(item.id, brief="second brief")
     assert Project.find(project.root).worklog.by_id(item.id).brief == "second brief"
 
 
@@ -62,8 +60,8 @@ def test_experiment_gets_no_unmerged_warning(project, repo, git, commit):
 
 def test_claim_as_names_the_holder(project):
     item = project.add("named holder")
-    project.start(item.id)
-    project.release(item.id)
+    started, _ = project.start(item.id)
+    lease.release(project.folder_of(started), force=True)
 
     _, held = project.claim(item.id, as_name="epoch15-opus")
 
@@ -71,25 +69,12 @@ def test_claim_as_names_the_holder(project):
     assert Project.find(project.root).leases()[item.id]["owner"] == "epoch15-opus"
 
 
-def test_release_needs_the_same_name_it_was_claimed_under(project):
-    item = project.add("guarded")
-    project.start(item.id)
-    project.release(item.id)
-    project.claim(item.id, as_name="agent-a")
-
-    with pytest.raises(ClarityError, match="belongs to agent-a"):
-        project.release(item.id, as_name="agent-b")
-
-    project.release(item.id, as_name="agent-a")
-    assert lease.read(project.folder_of(project.worklog.by_id(item.id))) is None
-
-
-# ---- the repo choice on epoch start: required where the project lists repos ----
+# ---- the repo choice on start: required where the project lists repos ----
 
 def _start(monkeypatch, root, *argv):
     from clarity.cli import main
     monkeypatch.chdir(root)
-    return main(["epoch", "start", *argv])
+    return main(["start", *argv])
 
 
 def test_start_without_a_repo_choice_is_refused_with_the_three_answers(

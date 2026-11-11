@@ -1,11 +1,29 @@
 """The help is what an agent reads when the rules send it there, so it has to run and
 has to agree with the rules."""
 
+import argparse
 import shlex
 
 import pytest
 
 from clarity import cli
+
+COMMANDS = {
+    "status", "show", "search", "help",
+    "start", "close", "note", "spawn", "refresh", "claim", "rename", "add-repo", "drop-repo",
+    "idea", "archive", "init", "adopt", "objective", "repo add", "repo remove",
+}
+
+
+def _leaves(parser, path=()):
+    """Every command a person can type, as {name: its parser}: one word, or two for repo."""
+    out = {}
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for name, child in action.choices.items():
+                nested = _leaves(child, (*path, name))
+                out.update(nested or {" ".join((*path, name)): child})
+    return out
 
 
 def _examples(text: str) -> list[str]:
@@ -14,7 +32,7 @@ def _examples(text: str) -> list[str]:
 
 
 def test_every_example_in_the_help_parses():
-    """An example that no longer parses is how `epoch start 3` outlived start by name."""
+    """An example that no longer parses is how a renamed command stays in the examples."""
     examples = _examples(cli.reference_text())
     assert len(examples) >= 10
     for example in examples:
@@ -33,21 +51,25 @@ def test_the_top_help_leads_with_how_work_goes_and_states_the_contract():
     assert "─" not in text  # plain text: no box lines for an agent to read past
 
 
-def test_the_listing_names_every_command():
-    text = cli.build_parser().format_help()
-    for name in ("init", "adopt", "status", "show", "note", "archive", "claim", "release"):
-        assert f" {name}" in text
-    assert "epoch start|spawn|reopen" in text
+def test_the_commands_are_exactly_these_and_only_the_reads_take_json():
+    leaves = _leaves(cli.build_parser())
+    assert set(leaves) == COMMANDS
+    has_json = {name for name, node in leaves.items()
+                if any("--json" in a.option_strings for a in node._actions)}
+    assert has_json == {"status", "show", "search"}
 
 
-def test_help_reference_holds_every_command_and_works_outside_a_project(
+def test_the_listing_names_every_command_and_the_help_reference_has_a_page_each(
         tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    assert cli.main(["help", "reference"]) == 0
+    listing = cli.build_parser().format_help()
+    assert "repo add|remove" in listing
+    for name in COMMANDS - {"repo add", "repo remove"}:
+        assert f" {name}" in listing
+    assert cli.main(["help", "reference"]) == 0  # works outside a project
     out = capsys.readouterr().out
-    for heading in ("## clarity-ctl epoch start", "## clarity-ctl epoch close",
-                    "## clarity-ctl note", "## clarity-ctl repo add", "## clarity-ctl help"):
-        assert heading in out
+    for name in COMMANDS:
+        assert f"## clarity-ctl {name}\n" in out
 
 
 def test_note_and_close_help_say_what_the_rules_say():

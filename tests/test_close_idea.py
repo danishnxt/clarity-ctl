@@ -1,8 +1,6 @@
-"""`epoch close` on an idea: done already, or not wanted — closed without starting it.
+"""`close` on an idea: done already, or not wanted — closed without starting it.
 No folder, branch, worktree, lease or end shas; everything else reads like any close.
 Run: .venv/bin/python -m pytest -q tests/test_close_idea.py"""
-
-import json
 
 import pytest
 import yaml
@@ -66,27 +64,27 @@ def test_an_idea_has_no_subepochs_and_a_closed_idea_cannot_close_again(project):
     assert err.value.code == 4 and "already done" in str(err.value)
 
 
-def test_cli_closes_an_idea_and_json_says_no_repo_work_was_done(project, repo, monkeypatch,
+def test_cli_closes_an_idea_without_starting_it(project, repo, monkeypatch,
                                                                   capsys):
     monkeypatch.chdir(repo)
     first, second = project.add("one").id, project.add("two").id
     capsys.readouterr()
 
-    assert main(["epoch", "close", str(first), "built under epoch 3"]) == 0
+    assert main(["close", str(first), "built under epoch 3"]) == 0
     assert capsys.readouterr().out.startswith(
         f"idea {first} done without starting: built under epoch 3")
 
-    assert main(["epoch", "close", str(second), "--drop", "not wanted", "--json"]) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["ok"] and out["command"] == "epoch.close"
-    assert out["data"]["status"] == "dropped" and out["data"]["repo_work"] is False
-    assert "branch" not in out["data"] and "folder" not in out["data"]
+    assert main(["close", str(second), "--drop", "not wanted"]) == 0
+    assert capsys.readouterr().out.startswith(
+        f"idea {second} dropped without starting: not wanted")
+    dropped = Project.find(repo).worklog.by_id(second)
+    assert dropped.status == "dropped" and dropped.branch is None and dropped.folder is None
 
-    # a started epoch's close does not claim repo_work either way
+    # a started epoch's close does not say "without starting"
     epoch, _ = project.start(project.add("real").id)
     capsys.readouterr()
-    assert main(["epoch", "close", str(epoch.id), "shipped", "--json"]) == 0
-    assert "repo_work" not in json.loads(capsys.readouterr().out)["data"]
+    assert main(["close", str(epoch.id), "shipped"]) == 0
+    assert capsys.readouterr().out.startswith(f"epoch {epoch.id} done: shipped")
 
 
 def test_closing_an_idea_without_an_outcome_is_refused_off_a_terminal(project, repo,
@@ -96,7 +94,7 @@ def test_closing_an_idea_without_an_outcome_is_refused_off_a_terminal(project, r
     idea = project.add("quiet")
     capsys.readouterr()
 
-    assert main(["epoch", "close", str(idea.id)]) == 4
+    assert main(["close", str(idea.id)]) == 4
     assert "pass it as an argument" in capsys.readouterr().err
     assert Project.find(repo).worklog.by_id(idea.id).status == "idea"
 
@@ -147,45 +145,17 @@ def test_archive_moves_a_closed_idea_and_show_still_reads_it(project, repo, monk
     assert "without starting" in capsys.readouterr().out
 
 
-def test_reopening_a_closed_idea_makes_it_an_idea_again(project, repo, git, monkeypatch, capsys):
+def test_start_of_a_closed_idea_just_starts_it_and_keeps_the_old_outcome(
+        project, repo, monkeypatch, capsys):
     monkeypatch.chdir(repo)
     idea = project.add("changed my mind")
     project.close(idea.id, "built under epoch 12")
     capsys.readouterr()
 
-    assert main(["epoch", "reopen", str(idea.id)]) == 0
-    assert f"epoch start {idea.id}" in capsys.readouterr().out
+    assert main(["start", str(idea.id)]) == 0
+    assert f"epoch {idea.id} active on" in capsys.readouterr().out
 
     again = Project.find(repo).worklog.by_id(idea.id)
-    assert again.status == "idea" and again.outcome is None
-    assert again.ended is None and again.closed_seq is None
+    assert again.status == "active" and again.outcome is None and again.ended is None
+    assert again.folder and again.branch and again.started
     assert "previous outcome: built under epoch 12" in again.notes[-1].text
-    _nothing_made(project, repo, git, again)
-
-    # and it starts like any idea, then closes like any epoch
-    started, _ = Project.find(repo).start(idea.id)
-    assert started.status == "active" and started.folder and started.branch
-
-
-def test_reopening_a_closed_idea_with_json_and_a_branch_is_refused(project, repo, monkeypatch,
-                                                                    capsys):
-    monkeypatch.chdir(repo)
-    idea = project.add("x")
-    project.close(idea.id, "done")
-    capsys.readouterr()
-
-    assert main(["epoch", "reopen", str(idea.id), "--branch", "feature/x"]) == 4
-    assert "ever being started" in capsys.readouterr().err
-    assert Project.find(repo).worklog.by_id(idea.id).status == "done"
-
-    assert main(["epoch", "reopen", str(idea.id), "--json"]) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["command"] == "epoch.reopen" and out["data"]["status"] == "idea"
-
-
-def test_start_of_a_closed_idea_still_asks_for_reopen(project):
-    idea = project.add("x")
-    project.close(idea.id, "done")
-    with pytest.raises(ClarityError) as err:
-        project.start(idea.id)
-    assert err.value.code == 4 and "reopen" in str(err.value)

@@ -81,7 +81,7 @@ def test_a_newer_worklog_reads_but_refuses_writes(project, repo, monkeypatch, ca
     assert main(["show", "all", "--json"]) == 0
     warnings = json.loads(capsys.readouterr().out)["warnings"]
     assert warnings and "newer clarity-ctl" in warnings[0]
-    assert main(["idea", "add", "x"]) == 4
+    assert main(["idea", "x"]) == 4
 
 
 def test_an_unknown_status_in_a_current_worklog_is_named(project, repo):
@@ -106,8 +106,9 @@ def test_a_write_refreshes_a_stale_agent_block_and_leaves_a_removed_one(project,
     assert "clarity-ctl q " not in path.read_text()
     assert agents.block_for(path, project.state_digest()) in path.read_text()
 
-    # but a block the user removed stays removed
-    project.install_agents(remove=True)
+    # but a block the user deleted stays deleted
+    for path in agents.local_paths(repo):
+        path.unlink()
     project.add("anything else")
     for path in agents.local_paths(repo):
         assert not path.exists() or agents.START not in path.read_text()
@@ -122,11 +123,11 @@ def test_a_refusal_answers_in_the_success_envelope_shape(project, repo, monkeypa
 
     assert main(["status", "--json"]) == 0
     ok = json.loads(capsys.readouterr().out)
-    assert main(["epoch", "close", "99", "x", "--json"]) == 4
+    assert main(["show", "99", "--json"]) == 4
     failed = json.loads(capsys.readouterr().out)
 
     assert set(ok) - {"data"} <= set(failed)
-    assert failed["ok"] is False and failed["command"] == "epoch.close"
+    assert failed["ok"] is False and failed["command"] == "show"
     assert failed["code"] == 4 and "99" in failed["error"]
 
 
@@ -142,7 +143,17 @@ def test_a_typo_with_json_gets_an_envelope_not_usage_text(project, repo, monkeyp
     assert "--bogus" in failed["error"]
 
 
-# `planned` is gone: --no-repos is a folder without a branch now.
+def test_a_command_that_is_not_a_read_has_no_json(project, repo, monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+
+    with pytest.raises(SystemExit) as stop:
+        main(["close", "1", "x", "--json"])
+    captured = capsys.readouterr()
+    assert stop.value.code == 2 and captured.out == ""
+    assert "unrecognized arguments: --json" in captured.err
+
+
+# `planned` is gone: --repo none is a folder without a branch now.
 
 
 def test_a_version_1_planned_item_reads_as_an_idea_that_keeps_its_folder(workspace,
@@ -166,7 +177,7 @@ def test_a_version_1_planned_item_reads_as_an_idea_that_keeps_its_folder(workspa
     assert started.folder == folder                # the planned folder, picked back up
 
 
-def test_no_repos_starts_a_folder_and_add_repo_brings_code_in_later(workspace, ws_root):
+def test_repo_none_starts_a_folder_and_add_repo_brings_code_in_later(workspace, ws_root):
     root = ws_root
     item, _ = workspace.start(workspace.add("plan the rewrite").id, no_repos=True)
 
@@ -185,15 +196,11 @@ def test_no_repos_starts_a_folder_and_add_repo_brings_code_in_later(workspace, w
     assert Project.find(root).close(analysis.id, "wrote it up").status == "done"
 
 
-def test_no_repos_with_repo_or_branch_is_an_argument_mistake(workspace, ws_root,
-                                                             monkeypatch):
+def test_repo_none_with_a_branch_is_an_argument_mistake(workspace, ws_root, monkeypatch):
     item = workspace.add("x")
     monkeypatch.chdir(ws_root)
 
-    with pytest.raises(SystemExit) as stop:
-        main(["epoch", "start", str(item.id), "--no-repos", "--repo", "agent"])
-    assert stop.value.code == 2
-    assert main(["epoch", "start", str(item.id), "--no-repos", "--branch", "b"]) == 2
+    assert main(["start", str(item.id), "--repo", "none", "--branch", "b"]) == 2
 
 
 # close never merges; it says when the work has not landed.
@@ -205,8 +212,8 @@ def test_close_warns_when_the_branch_is_not_merged(workspace, ws_root, commit,
     commit(ws_root / item.folder / "wt" / "agent", "new.txt")
     monkeypatch.chdir(ws_root)
 
-    assert main(["epoch", "close", str(item.id), "shipped", "--json"]) == 0
-    warnings = json.loads(capsys.readouterr().out)["warnings"]
+    assert main(["close", str(item.id), "shipped"]) == 0
+    warnings = [l for l in capsys.readouterr().out.splitlines() if l.startswith("warning:")]
     assert len(warnings) == 1 and "1 commit not in main" in warnings[0]
 
 
@@ -215,8 +222,8 @@ def test_close_is_quiet_once_merged_and_for_a_drop(workspace, ws_root, monkeypat
     dropped, _ = workspace.start(workspace.add("gave up").id, repos=["agent"])
     monkeypatch.chdir(ws_root)
 
-    assert main(["epoch", "close", str(merged.id), "done", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["warnings"] == []
-    assert main(["epoch", "close", str(dropped.id), "--drop", "no", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["warnings"] == []
+    assert main(["close", str(merged.id), "done"]) == 0
+    assert "warning" not in capsys.readouterr().out
+    assert main(["close", str(dropped.id), "--drop", "no"]) == 0
+    assert "warning" not in capsys.readouterr().out
     assert Project.find(ws_root).worklog.by_id(dropped.id).status == "dropped"

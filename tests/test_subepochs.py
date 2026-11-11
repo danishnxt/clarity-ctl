@@ -42,7 +42,7 @@ def test_a_child_lease_and_worktree_are_gitignored(project, git):
 def test_parent_must_be_active(project):
     idea = project.add("not started yet")
 
-    with pytest.raises(ClarityError, match="epoch start"):
+    with pytest.raises(ClarityError, match="clarity-ctl start"):
         project.spawn(idea.id, "would be a part")
     assert [i.id for i in Project.find(project.root).worklog.items] == [idea.id]
 
@@ -332,12 +332,12 @@ def test_the_cli_reads_dotted_ids(project, monkeypatch, capsys):
     parent = _active(project, "parent")
     monkeypatch.chdir(project.root)
 
-    assert main(["epoch", "spawn", str(parent.id), "cli part", "--brief", "only this"]) == 0
+    assert main(["spawn", str(parent.id), "cli part", "--brief", "only this"]) == 0
     child_id = f"{parent.id}.1"
     assert f"claim {child_id} --as" in capsys.readouterr().out
     assert main(["claim", child_id, "--as", "part-agent"]) == 0
     assert main(["note", child_id, "HANDOFF: half done"]) == 0
     assert main(["show", child_id, "--json"]) == 0
     assert '"id": "1.1"' in capsys.readouterr().out
-    assert main(["epoch", "close", child_id, "ported"]) == 0
+    assert main(["close", child_id, "ported"]) == 0
     assert Project.find(project.root).worklog.by_id(child_id).status == "done"

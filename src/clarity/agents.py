@@ -13,7 +13,7 @@ So we write one marker-fenced block into it and leave every other byte alone:
     <!-- CLARITY:END -->
 
 Re-running finds the markers and swaps the body; nothing outside them is touched,
-a byte-equal write reports `unchanged`, and `remove` takes the block back out.
+a byte-equal write reports `unchanged`.
 
 There used to be a second file, .clarity/RULES.md, that this block pointed at.
 It is gone. It was generated from config.yaml and the current objective, which
@@ -68,10 +68,10 @@ arrives, because the work keeps moving. The rule now names the trigger instead:
 a decision changed. That is a thing an agent can notice happening, and it is
 also exactly the content the next session cannot reconstruct from the code.
 
-## Why there is no global install
+## Why the block is only ever in the project
 
-There was one: the same block, written into ~/.claude/CLAUDE.md and the like, so
-every project was covered. It went stale on every upgrade that renamed a
+There was a global one: the same block, written into ~/.claude/CLAUDE.md and the like,
+so every project was covered. It went stale on every upgrade that renamed a
 command, and nothing could refresh it — a write in one project has no business
 editing files in the user's home. Where a project had both, the agent read two
 blocks that disagreed. The project's own block is refreshed on every write, so
@@ -83,8 +83,8 @@ An agent re-reads this file each session and remembers nothing else, so the
 block is the whole of what it knows about clarity. After an upgrade it has to
 say what the new binary does — `refresh` rewrites a block that differs and
 leaves one that matches alone, so this costs a read on every write and a write
-once per upgrade. It never adds a block: a file without one is the user's
-choice, made with `install --remove` or by never installing.
+once per upgrade. It never adds a block to a file that lacks one: init and adopt
+do that, and a user who deletes the block has made a choice.
 """
 
 from __future__ import annotations
@@ -101,24 +101,24 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   (`status`, `show`, `search`): `show <id>` has every note, `show closed` every closed
   item. A fact not in the block: `search <words>` finds the item (often the note too),
   then `show <id>`.
-- Start work: `clarity-ctl epoch start "<name, a few words>" --repo <repo|all|none>
+- Start work: `clarity-ctl start "<name, a few words>" --repo <repo|all|none>
   --brief "<goal and limits>"`, or an idea's id in place of the name. One call: it
   branches the repos you name, makes the worktree, claims the epoch for you and prints
   where to work.
-- Commands that act on an epoch take its id, always: `clarity-ctl note 7 "..."`.
+- Commands on an item take its id, always: `clarity-ctl note 7 "..."`.
 - Note the moment a decision changes — a reversal, an approach you rejected, a result
   that surprised you: `clarity-ctl note <id> "..."`. Not at the end: the notes are what
   the next session has instead of this conversation.
 - A decision that outlives the epoch — a rule, a constraint, something we won't build
   and why: a note starting `DECISION:`. Every one is listed below for later sessions.
-- The whole task done and merged: `clarity-ctl epoch close <id> "<outcome>"`, which
+- The whole task done and merged: `clarity-ctl close <id> "<outcome>"`, which
   also releases it. The outcome says what changed and why — for a bug, what was wrong.
-  Rejected: `epoch close <id> --drop "<why>"`. An idea already built or unwanted closes
+  Rejected: `close <id> --drop "<why>"`. An idea already built or unwanted closes
   the same way, unstarted. An epoch left open reads as unfinished.
 - Part of it left for later, even with the rest merged: don't close it. Keep it active
   and write a note starting `HANDOFF:` — what's done, what's left, what to do first.
   Not an idea: an idea reads as optional, a handoff as next.
-- Later, not now: `clarity-ctl idea add "<a few words, like a title>"`, then the why and
+- Later, not now: `clarity-ctl idea "<a few words, like a title>"`, then the why and
   the evidence in a note on it: the name is what lists show, the note is the detail.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.
 - `--json` is for scripts. Exit codes: 0 ok · 1 error · 2 validation · 3 not a clarity
@@ -183,7 +183,7 @@ def upsert(path: Path, state: str | None = None) -> str:
     """Put the block in `path`, preserving everything outside the markers.
 
     Returns created · updated · unchanged · skipped, so a caller can report
-    honestly and a re-run of install is quiet rather than claiming work it did not do.
+    honestly and a re-run is quiet rather than claiming work it did not do.
     """
     body = block_for(path, state)
     if path.is_symlink():
@@ -210,38 +210,14 @@ def upsert(path: Path, state: str | None = None) -> str:
     return "updated"
 
 
-def remove(path: Path) -> str:
-    """Take the block back out. Deletes the file if we were all that was in it."""
-    if path.is_symlink() or not path.exists():
-        return "absent"
-
-    text = path.read_text(encoding="utf-8")
-    start, end = text.find(START), text.find(END)
-    if start == -1 or end <= start:
-        return "absent"
-
-    before = text[:start].rstrip()
-    after = text[end + len(END):].lstrip()
-    joined = before + ("\n\n" if before and after else "") + after
-
-    if not joined.strip():
-        path.unlink()
-        return "removed"
-    write_atomic(path, joined.rstrip() + "\n")
-    return "removed"
-
-
 def local_paths(root: Path) -> list[Path]:
-    """Which files a repo-scoped install touches here, in report order."""
+    """Which files the block goes into here, in report order."""
     return [root / name for name, always in LOCAL_TARGETS
             if always or (root / name).exists()]
 
 
-def install(paths: list[Path], remove_instead: bool = False,
-            state: str | None = None) -> list[tuple[Path, str]]:
-    """Write (or strip) the block across `paths`, reporting what each one did."""
-    if remove_instead:
-        return [(path, remove(path)) for path in paths]
+def install(paths: list[Path], state: str | None = None) -> list[tuple[Path, str]]:
+    """Write the block across `paths`, reporting what each one did."""
     return [(path, upsert(path, state)) for path in paths]
 
 

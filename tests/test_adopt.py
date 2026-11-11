@@ -171,7 +171,7 @@ def test_the_procedure_keeps_its_scope(repo):
         # a fresh worklog full of guessed items costs more to clean up than it saves
         "no inventory": ["Do not inventory the project's in-flight work",
                          "Do not add any other items on your way out"],
-        "baseline born closed": ["clarity-ctl epoch start <id> --no-repos",
+        "baseline born closed": ["clarity-ctl start <id> --repo none",
                                  "Do not create an empty epoch"],
         "both destinations": ["`workspace/`", "baseline epoch"],
         "clarity's own files stay": ["worklog.yaml", "EPOCHS/", "LEARNINGS/", ".clarity/",
@@ -190,7 +190,7 @@ def test_the_procedure_keeps_its_scope(repo):
         "nested checkout": ["moves as a whole"],  # its .git travels; merging it is out of scope
         "tidy is fine": ["already tidy is a valid outcome"],
     }
-    # if install starts writing a new agent file, adopt must not sweep it away
+    # if clarity starts writing a new agent file, adopt must not sweep it away
     musts["agent files stay"] = [p.name for p in agents.local_paths(repo)]
     for rule, phrases in musts.items():
         for phrase in phrases:
@@ -207,9 +207,9 @@ def test_the_procedure_keeps_its_scope(repo):
     goal = _step(0)
     assert "What are you trying to do in this project?" in goal
     assert "Ask the human; do not infer it from the code" in goal
-    assert 'clarity-ctl objective set "' in goal and "ls -a" not in goal
+    assert 'clarity-ctl objective "' in goal and "ls -a" not in goal
     assert doc.index("What are you trying to do") < doc.index("ls -a")
     reading = _step(1)
     assert "*PLAN*.md" in reading and "README.md" in reading
     assert "one question" in _step(2).lower()
-    assert doc.index("clarity-ctl epoch start <id> --no-repos") < doc.index("clarity-ctl epoch close")
+    assert doc.index("clarity-ctl start <id> --repo none") < doc.index("clarity-ctl close")

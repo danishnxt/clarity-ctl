@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from clarity import ClarityError
+from clarity import ClarityError, lease
 from clarity.model import STATUSES
 from clarity import store
 from clarity.cli import main
@@ -57,7 +57,7 @@ def test_status_is_printed_never_stored(project, repo):
 def test_claiming_leaves_nothing_to_go_stale(project, monkeypatch):
     """A lease is a file. Nothing writes a sentence about it that could disagree."""
     item, _ = project.start(project.add("work").id)
-    project.release(item.id)
+    lease.release(project.folder_of(item), force=True)
 
     touched = writes_during(monkeypatch, lambda: project.claim(item.id))
     assert touched == []
@@ -77,7 +77,7 @@ def test_an_unchanged_render_does_not_touch_the_file(project, repo):
 def test_the_cli_refuses_a_bad_id_and_prints_a_claim(project, repo, monkeypatch, capsys):
     monkeypatch.chdir(repo)
     # every id path goes through as_id, so a typo is exit 4 and never a traceback
-    for argv in (["path", "nope"], ["show", "nope"]):
+    for argv in (["rename", "nope", "x"], ["show", "nope"]):
         assert main(argv) == 4
 
     # a lease carries no expiry; the CLI must not reach for one

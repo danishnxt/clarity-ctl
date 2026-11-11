@@ -315,7 +315,7 @@ class Project:
         if not targetable:
             raise ClarityError(
                 "this command needs an epoch id, and no epoch is active — "
-                "start one with `clarity-ctl epoch start <id>`",
+                "start one with `clarity-ctl start <id>`",
                 code=4,
             )
         listed = "\n".join(f"  {i.id:>3}  {i.name}" for i in targetable)
@@ -344,10 +344,9 @@ class Project:
                 existing = path.read_text(encoding="utf-8") if path.exists() else None
                 write_if_changed(path, render.epoch_md(item, existing))
 
-    def install_agents(self, remove: bool = False) -> list[tuple[Path, str]]:
-        """Put the clarity block in this project's agent files, or take it out."""
-        return agents.install(agents.local_paths(self.root), remove_instead=remove,
-                              state=self.state_digest())
+    def install_agents(self) -> list[tuple[Path, str]]:
+        """Put the clarity block in this project's agent files."""
+        return agents.install(agents.local_paths(self.root), state=self.state_digest())
 
     def state_digest(self) -> str:
         """Where things stand, for the agent block: worklog facts only, so never stale."""
@@ -360,14 +359,6 @@ class Project:
         if not plans.is_dir():
             return []
         return sorted(f.name for f in plans.iterdir() if f.is_file() and not f.name.startswith("."))
-
-    def path_of(self, item_id: int | None = None) -> Path:
-        """Where the work is. `cd $(clarity-ctl path 7)`."""
-        item = self.worklog.by_id(self.resolve_id(item_id))
-        folder = self.folder_of(item)
-        if not folder or not folder.is_dir():
-            raise ClarityError(f"item {item.id} has no folder on disk", code=4)
-        return folder
 
     def ensure_gitignore(self, wanted: list[str] = GITIGNORE_LINES) -> bool:
         """Called at init. Matches whole lines, so `!.clarity/cache/` is not a match."""
@@ -401,14 +392,6 @@ class Project:
             raise ClarityError(f"item {item.id} has no folder to lease", code=4)
         held = lease.claim(folder, steal=steal, label=item.name, name=as_name)
         return item, held
-
-    def release(self, item_id: int | None = None, force: bool = False,
-                as_name: str | None = None) -> Item:
-        item = self.worklog.by_id(self.resolve_id(item_id))
-        folder = self.folder_of(item)
-        if folder:
-            lease.release(folder, force=force, name=as_name)
-        return item
 
     # ---------- objectives ----------
 
@@ -540,27 +523,27 @@ class Project:
         return folder
 
     def start(self, item_id: int, branch: str | None = None,
-              take_lease: bool = True, reopen: bool = False,
+              take_lease: bool = True,
               repos: list[str] | None = None,
               no_repos: bool = False,
               brief: str | None = None) -> tuple[Item, list[str]]:
-        """idea -> active: resolve a branch to a worktree or a symlink, then lease it.
-
-        A closed epoch needs `reopen`, so picking work back up is deliberate rather
-        than a typo that quietly reanimates something you finished last month.
+        """idea -> active, or closed -> active: resolve a branch to a worktree or a
+        symlink, then lease it.
 
         `repos` narrows which listed repos a new epoch branches; left out, it gets
         all of them. `no_repos` branches none — a folder and a lease, for planning or
-        analysis before any code; add_repos brings repos in when the code starts. A reopen takes back the repos the epoch had — adding one is
-        add_repos, so no command does two jobs depending on the epoch's state.
+        analysis before any code; add_repos brings repos in when the code starts.
 
-        Reopening something closed without ever being started (see close) puts it back
-        as an idea and starts nothing.
+        A closed epoch that was started before comes back with the repos it had —
+        adding one is add_repos, so no command does two jobs depending on the epoch's
+        state — and its old outcome stays in the trail as a note. Something closed
+        without ever being started (see close) has no work to take back, so it starts
+        as the idea it was.
 
-        A subepoch (see spawn) starts only while its parent is active, and a reopen
-        of one asks the same.
+        A subepoch (see spawn) starts only while its parent is active, and so does a
+        closed one coming back.
 
-        `brief` is the text, or the path to a file holding it. Given on a reopen, it
+        `brief` is the text, or the path to a file holding it. Given on a restart, it
         replaces the old one; left out, the brief stays.
         """
         warnings: list[str] = []
@@ -575,38 +558,20 @@ class Project:
             if item.status == "active":
                 raise ClarityError(
                     f"epoch {item.id} is already active — to add a repo:\n"
-                    f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
+                    f"  clarity-ctl add-repo {item.id} <repo>", code=4)
             closed = item.status in CLOSED
-            if closed and not reopen:
+            coming_back = closed and not item.never_started
+            if coming_back and (repos or no_repos):
                 raise ClarityError(
-                    f"item {item_id} is {item.status} — pick it back up with:\n"
-                    f"  clarity-ctl epoch reopen {item_id}",
-                    code=4,
-                )
-            if closed and item.never_started:
-                # closed straight from an idea: nothing to take back, so it goes back to
-                # being the idea it was — starting it is a separate, deliberate step
-                if branch:
-                    raise ClarityError(
-                        f"item {item.id} was closed without ever being started, so it has "
-                        f"no branch to go back to — reopening makes it an idea again",
-                        code=4)
-                if item.outcome:
-                    item.notes.append(
-                        Note(at=today(), text=f"reopened — previous outcome: {item.outcome}"))
-                item.status, item.outcome, item.ended, item.closed_seq = "idea", None, None, None
-                return item, warnings
-            if repos and reopen:
-                raise ClarityError(
-                    "a reopen takes back the repos the epoch had — add one after with:\n"
-                    f"  clarity-ctl epoch add-repo {item.id} <repo>", code=4)
+                    "a closed epoch comes back with the repos it had — add one after with:\n"
+                    f"  clarity-ctl add-repo {item.id} <repo>", code=4)
             chosen = self.pick_repos(repos) if repos else None
             # A project that lists repos branches those, even with a git root: --repo none
             # is how an epoch starts there with nothing yet, and add-repo brings code in.
             if no_repos and self.branches_root() and not self.worklog.repos:
                 raise ClarityError(
                     "this project branches its root, not a list of repos — there would be "
-                    "nothing to add later. Start it without --no-repos", code=4)
+                    "nothing to add later. Start it without --repo none", code=4)
             if closed:
                 # the outcome was true when it was written; keep it in the trail
                 if item.outcome:
@@ -644,10 +609,9 @@ class Project:
                 f"epoch {parent.id} is itself a subepoch of {parent.parent} — "
                 "subepochs nest one level only", code=4)
         if parent.status not in IN_FLIGHT:
-            how = "start" if parent.status in FUTURE else "reopen"
             raise ClarityError(
                 f"parent epoch {parent.id} is {parent.status} — a subepoch runs only while "
-                f"its parent is active:\n  clarity-ctl epoch {how} {parent.id}", code=4)
+                f"its parent is active:\n  clarity-ctl start {parent.id}", code=4)
 
     def spawn(self, parent_id: int | str, name: str, type_: str = "feature",
               brief: str | None = None, repos: list[str] | None = None,
@@ -676,7 +640,7 @@ class Project:
                 named = {self.listed_repo(
                     r, among=parent.repos,
                     what=f"one of epoch {parent.id}'s repos — add it there first: "
-                         f"clarity-ctl epoch add-repo {parent.id} <repo>") for r in repos}
+                         f"clarity-ctl add-repo {parent.id} <repo>") for r in repos}
                 chosen = [r for r in parent.repos if r in named]
             else:
                 chosen = None if parent.repos is None else list(parent.repos)
@@ -718,10 +682,8 @@ class Project:
 
     def _in_flight_with_repos(self, item: Item) -> Path:
         if item.status not in IN_FLIGHT:
-            hint = (f"start it with: clarity-ctl epoch start {item.id} --repo <repo>"
-                    if item.status in FUTURE
-                    else f"reopen it first: clarity-ctl epoch reopen {item.id}")
-            raise ClarityError(f"epoch {item.id} is {item.status} — {hint}", code=4)
+            raise ClarityError(f"epoch {item.id} is {item.status} — start it first: "
+                               f"clarity-ctl start {item.id}", code=4)
         if item.repos is None and item.branch is not None:
             raise ClarityError(
                 f"epoch {item.id} branched the project root before repos were "
@@ -760,7 +722,7 @@ class Project:
             if len(item.repos) == 1:
                 raise ClarityError(
                     f"{rel} is epoch {item.id}'s only repo — close the epoch instead:\n"
-                    f"  clarity-ctl epoch close {item.id} \"...\"", code=4)
+                    f"  clarity-ctl close {item.id} \"...\"", code=4)
             repo, link = self.root / rel, folder / "wt" / Path(rel).name
             if link.exists() and not link.is_symlink():
                 dirty = gitops.is_dirty(link)
@@ -956,7 +918,7 @@ class Project:
                 raise ClarityError(
                     f"no base recorded, no branch checked out, and no main or master, "
                     f"to refresh from{where}\n"
-                    f"  name one with: clarity-ctl epoch refresh {item.id} --base <branch>",
+                    f"  name one with: clarity-ctl refresh {item.id} --base <branch>",
                     code=4,
                 )
             if item.branch == base:
@@ -1047,7 +1009,7 @@ class Project:
                                  f"follows {recorded}")
             lines = []
             if behind_parts:
-                lines.append(f"{', '.join(behind_parts)} — clarity-ctl epoch refresh {item.id}")
+                lines.append(f"{', '.join(behind_parts)} — clarity-ctl refresh {item.id}")
             lines += drift
             if lines:
                 out[item.id] = lines
@@ -1224,7 +1186,7 @@ class Project:
                 ids = ", ".join(str(i) for i in running)
                 raise ClarityError(
                     f"epoch {item.id} has subepochs still active: {ids}\n"
-                    f"  close or release them first — see: clarity-ctl show {item.id}", code=4)
+                    f"  close them first — see: clarity-ctl show {item.id}", code=4)
             folder = self.folder_of(item)
             # its branch and end sha live in that repo: closing now would record
             # neither, and leave a worktree git can no longer remove
@@ -1287,7 +1249,7 @@ class Project:
     }
     # No `leases` view: who holds what is for agents, and status --json and
     # show <id> --json already carry it.
-    SHOW_NAMES = [*VIEWS, "objective"]
+    SHOW_NAMES = [*VIEWS, "objective", "repos"]
 
     def query(self, name: str, arg: str | None = None) -> dict:
         views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
@@ -1314,6 +1276,8 @@ class Project:
             return data
         if name == "objective":
             return self.worklog.objectives.to_dict()
+        if name == "repos":
+            return {"repos": list(self.worklog.repos)}
         if name not in views:
             raise ClarityError(
                 f"unknown view {name!r}; try: {', '.join(self.SHOW_NAMES)}, or an id",

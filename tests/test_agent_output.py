@@ -146,7 +146,7 @@ def test_only_status_show_and_search_take_agent_and_writes_reject_it(worked):
               if any("--agent" in a.option_strings for a in p._actions)}
     assert taking == {"status", "show", "search"}
     for argv in (["note", str(worked["live"]), "x"], ["idea", "list"], ["path", "1"],
-                 ["epoch", "close", "1", "x"]):
+                 ["close", "1", "x"]):
         with pytest.raises(SystemExit) as stop:
             cli.build_parser().parse_args([*argv, "--agent"])
         assert stop.value.code == 2

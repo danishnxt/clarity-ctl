@@ -38,27 +38,6 @@ def test_upsert_writes_only_between_the_markers(tmp_path):
     assert "stale" not in text
 
 
-def test_remove_gives_back_exactly_what_was_there(tmp_path):
-    # theirs plus ours: back to exactly what they had
-    theirs = tmp_path / "CLAUDE.md"
-    theirs.write_text(MINE)
-    agents.upsert(theirs)
-    assert agents.remove(theirs) == "removed"
-    assert theirs.read_text().rstrip() == MINE.rstrip()
-
-    # only ours: we created it, so we take it away
-    ours = tmp_path / "AGENTS.md"
-    agents.upsert(ours)
-    assert agents.remove(ours) == "removed"
-    assert not ours.exists()
-
-    # never ours: left alone
-    stranger = tmp_path / "GEMINI.md"
-    stranger.write_text(MINE)
-    assert agents.remove(stranger) == "absent"
-    assert stranger.read_text() == MINE
-
-
 def test_a_symlink_that_is_not_ours_is_left_alone(project, repo):
     elsewhere = repo / "house-style.md"
     elsewhere.write_text(MINE)
@@ -95,7 +74,7 @@ def test_refresh_rewrites_a_stale_block_and_never_adds_one(tmp_path):
     assert "clarity-ctl q " not in text and MINE.rstrip() in text
     assert agents.refresh([path]) == []          # current now: nothing to write
 
-    # a file without one is the user's choice — removed, or never installed
+    # a file without one is the user's choice — deleted, or never added
     mine, missing = tmp_path / "GEMINI.md", tmp_path / "CLAUDE.md"
     mine.write_text(MINE)
     assert agents.refresh([mine, missing]) == []

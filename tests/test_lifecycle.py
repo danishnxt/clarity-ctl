@@ -105,18 +105,17 @@ def test_plans_live_in_the_epoch_and_are_listed_not_cached(project, repo):
     assert "late.md" not in (folder / "EPOCH.md").read_text()
 
 
-def test_reopen_returns_a_closed_epoch_to_active(project, repo, commit):
-    """Reopening keeps the old outcome in the trail instead of overwriting it."""
+def test_start_brings_a_closed_epoch_back_to_active(project, repo, commit):
+    """Starting a closed epoch keeps the old outcome in the trail instead of overwriting it."""
     item, _ = project.start(project.add("cache warmup").id)
     project.close(item.id, outcome="2x slower, dropped")
 
-    with pytest.raises(ClarityError) as err:
-        project.start(item.id)  # a closed epoch must not restart silently
-    assert err.value.code == 4 and "reopen" in str(err.value)
+    with pytest.raises(ClarityError, match="comes back with the repos it had"):
+        project.start(item.id, repos=["x"])
 
     commit(repo, "later.txt", "later")  # main moves on while the epoch is closed
 
-    _, warnings = project.start(item.id, reopen=True)
+    _, warnings = project.start(item.id)
     reopened = project.worklog.by_id(item.id)
     assert reopened.status == "active"
     assert reopened.outcome is None and reopened.ended is None
@@ -198,7 +197,7 @@ def test_closed_seq_orders_closes_and_a_reclose_goes_to_the_top(project):
 
     # re-finishing the older one takes a fresh seq, past everything else
     was = project.worklog.by_id(second.id).closed_seq
-    project.start(second.id, reopen=True)
+    project.start(second.id)
     project.close(second.id, outcome="b again")
     now = project.worklog.by_id(second.id).closed_seq
     assert now > was and now > project.worklog.by_id(first.id).closed_seq
@@ -341,10 +340,10 @@ def test_status_marks_what_landed_and_orders_newest_or_oldest_first(project, rep
 
     # in flight and already in its base: that is the one case worth saying
     commit(worktree[pending.id], "p.txt")
-    assert "epoch close" not in project.status_text()
+    assert f"clarity-ctl close {pending.id}" not in project.status_text()
     git(["merge", "-q", "--squash", project.worklog.by_id(pending.id).branch], repo)
     git(["commit", "-qm", "land pending"], repo)
-    assert f"clarity-ctl epoch close {pending.id}" in project.status_text()
+    assert f"clarity-ctl close {pending.id}" in project.status_text()
 
 
 def test_an_unknown_landing_is_data_not_a_mark():
@@ -364,8 +363,8 @@ def test_a_fast_forwarded_epoch_in_flight_still_says_it_can_close(project, repo,
     git(["merge", "-q", "--ff-only", branch], repo)
 
     text = project.status_text()
-    assert f"clarity-ctl epoch close {shipped.id}" in text
-    assert f"clarity-ctl epoch close {untouched.id}" not in text
+    assert f"clarity-ctl close {shipped.id}" in text
+    assert f"clarity-ctl close {untouched.id}" not in text
 
 
 def test_status_borders_line_up_at_any_width(project, monkeypatch):

@@ -27,7 +27,7 @@ def test_write_lock_keeps_concurrent_adds(project, repo):
 
     def add(n: int):
         return subprocess.run(
-            [sys.executable, "-m", "clarity.cli", "idea", "add", f"idea {n}"],
+            [sys.executable, "-m", "clarity.cli", "idea", f"idea {n}"],
             cwd=str(repo), env=env, capture_output=True, text=True,
         )
 

@@ -161,7 +161,7 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
         paras.append((f"⚠ {quiet} — clarity-ctl note {item.id} \"...\"", "yellow", False))
     if item.status in IN_FLIGHT and marks and set(marks.values()) == {"merged"}:
         # only this one: unmerged is every epoch in flight, so saying it is noise
-        paras.append((f"✓ its work is in its base — clarity-ctl epoch close {item.id} \"...\"",
+        paras.append((f"✓ its work is in its base — clarity-ctl close {item.id} \"...\"",
                       "green", False))
     for trail in (stale or {}).get(item.id, []):
         # the base moving under an epoch is the thing you want to notice

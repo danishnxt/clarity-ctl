@@ -88,7 +88,7 @@ Before you list a single directory, ask the human:
 
 One or two lines is plenty. Record it straight away:
 
-    clarity-ctl objective set "what this project is for"
+    clarity-ctl objective "what this project is for"
 
 Ask the human; do not infer it from the code — you haven't read any yet, and
 a repo's contents say what it does, not what they want from it. If they
@@ -236,23 +236,23 @@ Every repo that went to `workspace/` gets one line:
 
     clarity-ctl repo add workspace/mini-swe-agent
 
-From then on, `clarity-ctl epoch start` gives each listed repo the epoch's branch
+From then on, `clarity-ctl start` gives each listed repo the epoch's branch
 and a worktree. Repos in `3rd_party/` stay off the list — nobody changes them,
-so nothing should branch them. `clarity-ctl repo list` shows what you added.
+so nothing should branch them. `clarity-ctl show repos` shows what you added.
 
-If the folder was itself a repo, adopt already listed it — `clarity-ctl repo
-list` shows it. Nothing more to add unless another repo went to `workspace/`.
+If the folder was itself a repo, adopt already listed it — `clarity-ctl show
+repos` shows it. Nothing more to add unless another repo went to `workspace/`.
 
 ## 7 · The baseline epoch
 
 If pass two found anything, give it an epoch of its own. It is created and
 immediately closed, because it describes work that already happened:
 
-    clarity-ctl idea add "baseline: work before clarity" --type chore
-    clarity-ctl epoch start <id> --no-repos
-    clarity-ctl epoch close <id> "existing logs and results, moved in at adoption"
+    clarity-ctl idea "baseline: work before clarity" --type chore
+    clarity-ctl start <id> --repo none
+    clarity-ctl close <id> "existing logs and results, moved in at adoption"
 
-`clarity-ctl path <id>` prints its folder. Put the records under its `LOGS/`, and
+`start` prints its folder. Put the records under its `LOGS/`, and
 analysis or plots under `ANALYSIS/` and `VIZ/` if the split is obvious — if it
 is not, `LOGS/` for all of it is fine. Do not reorganise what is inside the
 directories you moved. They are someone's existing work, not yours to sort.
@@ -264,7 +264,7 @@ If pass two found nothing, skip this step. Do not create an empty epoch.
 ## 8 · Finish
 
     clarity-ctl status          # objectives, the baseline epoch closed, nothing active
-    clarity-ctl repo list       # the repos epochs will branch
+    clarity-ctl show repos     # the repos epochs will branch
     rm .clarity/adopt.md    # adoption is over; this file is the only marker
 
 Then tell the human what moved, what you left alone and why, and what now needs
@@ -272,10 +272,10 @@ regenerating — the builds to re-run, the virtualenvs to recreate, the caches
 that will refill themselves. Give them the commands.
 
 And say plainly: everything up to now is epoch 1, and it is closed. The next
-thing they work on is theirs to start with `clarity-ctl epoch start`, and it will
+thing they work on is theirs to start with `clarity-ctl start`, and it will
 branch the repos listed above.
 
-Do not add any other items on your way out. `clarity-ctl idea add "..."` is theirs
+Do not add any other items on your way out. `clarity-ctl idea "..."` is theirs
 to run.
 """
 

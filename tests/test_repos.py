@@ -57,13 +57,13 @@ def test_refresh_catches_up_every_repo_and_says_what_came_in(workspace, ws_root,
     commit(root / "workspace" / "agent", "later.py", "later")
     assert "behind main" in " ".join(Project.find(root).stale_map()[item.id])
 
-    # --json names what merged and what was already current, repo by repo
+    # the CLI says what merged and what was already current, repo by repo
     monkeypatch.chdir(root)
     capsys.readouterr()
-    assert main(["epoch", "refresh", str(item.id), "--json"]) == 0
-    data = json.loads(capsys.readouterr().out)["data"]
-    assert data["merged"] == [{"repo": "workspace/agent", "base": "main", "commits": 1}]
-    assert data["up_to_date"] == [{"repo": "workspace/harness", "base": "main"}]
+    assert main(["refresh", str(item.id)]) == 0
+    out = capsys.readouterr().out
+    assert "caught up with main in workspace/agent (1 commit)" in out
+    assert "already up to date with main in workspace/harness" in out
     assert (root / item.folder / "wt" / "agent" / "later.py").exists()
 
     for name in ("agent", "harness"):
@@ -114,7 +114,7 @@ def test_reopen_after_rename_finds_the_branch_it_had(project, repo):
     Project.find(repo).close(item.id, outcome="done")
     Project.find(repo).rename(item.id, "cache warmup and eviction")
 
-    reopened, _ = Project.find(repo).start(item.id, reopen=True)
+    reopened, _ = Project.find(repo).start(item.id)
     assert reopened.branch == branch
     assert gitops.current_branch(repo / reopened.folder / "wt" / "proj") == branch
 
@@ -191,9 +191,9 @@ def test_start_does_one_job(workspace, ws_root):
 
     Project.find(root).close(item.id, "done")
     with pytest.raises(ClarityError) as err:
-        Project.find(root).start(item.id, reopen=True, repos=["harness"])
+        Project.find(root).start(item.id, repos=["harness"])
     assert "add-repo" in str(err.value)
-    reopened, _ = Project.find(root).start(item.id, reopen=True)
+    reopened, _ = Project.find(root).start(item.id)
     assert reopened.repos == ["workspace/agent"]
 
 
@@ -279,7 +279,7 @@ def test_a_repo_whose_folder_is_gone_is_named_not_a_traceback(workspace, ws_root
     git = {g["repo"]: g for g in out["data"]["git"]}
     assert git["workspace/harness"]["missing"] and "missing" not in git["workspace/agent"]
 
-    for argv in (["epoch", "refresh", str(item.id)], ["epoch", "close", str(item.id), "done"]):
+    for argv in (["refresh", str(item.id)], ["close", str(item.id), "done"]):
         capsys.readouterr()
         assert main(argv) == 4, argv
         assert "restore it at" in capsys.readouterr().err
@@ -297,7 +297,7 @@ def test_start_takes_a_name_and_claims_it(ws_root, monkeypatch, capsys):
     project = Project.find(ws_root)
     project.repo_add(str(ws_root / "workspace" / "agent"))
 
-    assert main(["epoch", "start", "port the lexer", "--repo", "agent"]) == 0
+    assert main(["start", "port the lexer", "--repo", "agent"]) == 0
     out = capsys.readouterr().out
     item = Project.find(ws_root).worklog.items[-1]
     assert item.name == "port the lexer" and item.status == "active"
@@ -309,7 +309,7 @@ def test_a_refused_start_by_name_leaves_no_stray_idea(workspace, ws_root, monkey
     monkeypatch.chdir(ws_root)
     before = len(workspace.worklog.items)
     # two listed repos: which to branch still has to be said
-    assert main(["epoch", "start", "port the lexer"]) == 2
+    assert main(["start", "port the lexer"]) == 2
     assert len(Project.find(ws_root).worklog.items) == before
 
 
@@ -322,16 +322,45 @@ def test_repo_none_works_when_the_root_is_a_repo_that_lists_repos(project, new_r
     assert gitops.is_repo(project.root) and not project.worklog.state_repo
     monkeypatch.chdir(project.root)
 
-    assert main(["epoch", "start", "planning", "--repo", "none"]) == 0
+    assert main(["start", "planning", "--repo", "none"]) == 0
     item = Project.find(project.root).worklog.items[-1]
     assert item.status == "active" and item.repos == [] and item.branch is None
     assert not list((project.root / item.folder / "wt").glob("*"))
 
 
-def test_a_root_that_branches_itself_still_refuses_no_repos_and_leaves_no_idea(
+def test_a_root_that_branches_itself_still_refuses_repo_none_and_leaves_no_idea(
         project, monkeypatch):
     monkeypatch.chdir(project.root)
     before = len(project.worklog.items)
 
-    assert main(["epoch", "start", "planning", "--no-repos"]) == 4
+    assert main(["start", "planning", "--repo", "none"]) == 4
     assert len(Project.find(project.root).worklog.items) == before
+
+
+def test_show_repos_lists_them_as_text_agent_lines_and_json(workspace, ws_root, monkeypatch,
+                                                            capsys):
+    monkeypatch.chdir(ws_root)
+    capsys.readouterr()
+
+    assert main(["show", "repos"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["  workspace/agent", "  workspace/harness"]
+    assert main(["show", "repos", "--agent"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["workspace/agent", "workspace/harness"]
+    assert main(["show", "repos", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["command"] == "show.repos"
+    assert out["data"] == {"repos": ["workspace/agent", "workspace/harness"]}
+
+
+def test_a_closed_epoch_restarts_without_a_repo_choice_and_refuses_one(
+        workspace, ws_root, monkeypatch, capsys):
+    item, _ = workspace.start(workspace.add("x").id, repos=["agent"])
+    workspace.close(item.id, "paused")
+    monkeypatch.chdir(ws_root)
+    capsys.readouterr()
+
+    assert main(["start", str(item.id), "--repo", "all"]) == 4  # it keeps the repos it had
+    assert "add-repo" in capsys.readouterr().err
+    assert main(["start", str(item.id)]) == 0
+    assert f"epoch {item.id} reopened on" in capsys.readouterr().out
+    assert Project.find(ws_root).worklog.by_id(item.id).repos == ["workspace/agent"]

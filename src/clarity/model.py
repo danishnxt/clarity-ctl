@@ -21,9 +21,9 @@ CLOSED = {"done", "dropped"}
 
 # A folder on disk is required once an epoch starts, and not before or after in any
 # way that matters: an idea has none, and an idea closed straight to done or dropped
-# (`epoch close` on an idea) never gets one. So a closed item may or may not have a
+# (`close` on an idea) never gets one. So a closed item may or may not have a
 # folder, and nothing may assume it does. There used to be a `planned` status for a
-# folder without a branch; `epoch start --no-repos` is that now, and an idea that was
+# folder without a branch; `start --repo none` is that now, and an idea that was
 # planned reads as an idea that keeps its folder.
 NEEDS_FOLDER = {"active"}
 
@@ -149,7 +149,7 @@ class Item:
 
     @property
     def never_started(self) -> bool:
-        """Closed (or still an idea) without work ever beginning: `epoch close` on an
+        """Closed (or still an idea) without work ever beginning: `close` on an
         idea. No start date and no branch, so no repo work was done. render.item_text
         reads the same two fields off the item's dict."""
         return self.started is None and self.branch is None

@@ -1,8 +1,6 @@
-"""epoch spawn at its edges: which repos a subepoch gets, what is left when it fails,
-numbering across parents, and the parent it needs to start and reopen.
+"""spawn at its edges: which repos a subepoch gets, what is left when it fails,
+numbering across parents, and the parent it needs to start.
 Run: .venv/bin/python -m pytest -q tests/test_spawn.py"""
-
-import json
 
 import pytest
 
@@ -18,7 +16,7 @@ def _active(project, name, **kwargs):
 def _spawn(monkeypatch, root, *argv):
     from clarity.cli import main
     monkeypatch.chdir(root)
-    return main(["epoch", "spawn", *argv])
+    return main(["spawn", *argv])
 
 
 def _kids(project, parent):
@@ -59,7 +57,7 @@ def test_a_repo_outside_the_parent_is_refused_and_leaves_nothing(workspace, monk
 
     assert _spawn(monkeypatch, workspace.root, str(parent.id), "part",
                   "--repo", "workspace/harness") == 4
-    assert f"epoch add-repo {parent.id}" in capsys.readouterr().err
+    assert f"clarity-ctl add-repo {parent.id}" in capsys.readouterr().err
     assert _kids(workspace, parent) == []
 
 
@@ -137,17 +135,15 @@ def test_an_experiment_subepoch_gets_no_unmerged_warning(project, commit):
     assert project.unmerged(child.id) == []
 
 
-def test_json_output(project, monkeypatch, capsys):
+def test_cli_prints_the_new_id_and_how_its_agent_claims_it(project, monkeypatch, capsys):
     parent = _active(project, "parent")
     capsys.readouterr()
 
-    assert _spawn(monkeypatch, project.root, str(parent.id), "in json", "--json") == 0
+    assert _spawn(monkeypatch, project.root, str(parent.id), "in text") == 0
 
-    out = json.loads(capsys.readouterr().out)
-    assert out["ok"] and out["command"] == "epoch.spawn"
-    assert out["data"]["id"] == f"{parent.id}.1"
-    assert out["data"]["parent"] == parent.id
-    assert out["data"]["status"] == "active"
+    out = capsys.readouterr().out
+    assert f"epoch {parent.id}.1 spawned" in out
+    assert f"clarity-ctl claim {parent.id}.1 --as <name>" in out
 
 
 # ---- numbering ----
@@ -165,11 +161,11 @@ def test_each_parent_counts_its_own(project):
 
 # ---- the parent it needs ----
 
-def test_spawn_under_a_closed_parent_says_reopen(project):
+def test_spawn_under_a_closed_parent_says_start(project):
     parent = _active(project, "parent")
     project.close(parent.id, "done")
 
-    with pytest.raises(ClarityError, match=f"epoch reopen {parent.id}"):
+    with pytest.raises(ClarityError, match=f"clarity-ctl start {parent.id}"):
         project.spawn(parent.id, "too late")
 
 
@@ -190,16 +186,16 @@ def test_spawn_needs_a_real_id(project):
         project.spawn(99, "part")
 
 
-def test_a_subepoch_reopens_only_while_its_parent_is_active(project):
+def test_a_subepoch_restarts_only_while_its_parent_is_active(project):
     parent = _active(project, "parent")
     child, _ = project.spawn(parent.id, "part")
     project.close(child.id, "done")
     project.close(parent.id, "done")
 
-    with pytest.raises(ClarityError, match=f"epoch reopen {parent.id}"):
-        project.start(child.id, reopen=True)
+    with pytest.raises(ClarityError, match=f"clarity-ctl start {parent.id}"):
+        project.start(child.id)
 
-    project.start(parent.id, reopen=True)
-    again, _ = project.start(child.id, reopen=True)
+    project.start(parent.id)
+    again, _ = project.start(child.id)
     assert again.id == child.id and again.branch == child.branch
     assert again.bases == {".": parent.branch}  # still merges into the parent
