@@ -32,6 +32,8 @@ It leaves you with:
 Letting agents run wild in graphs and loops is fine for well-structured tasks. In
 analysis and experiments, where you make the decisions, you'd rather stay in the loop.
 
+Running agents in graphs and loops and letting them run wild is all well and good for structured tasks but for analysis experimentation where the user has to make decisions and decide you'd rather be in the loop. 
+
 clarity-ctl is a small CLI and a few simple rules for your agent that keep you in the
 loop. Good prompting can do this too; clarity-ctl makes it close to automatic. The automatic
 project structuring means you can peruse your project yourself as well without needing an agent
