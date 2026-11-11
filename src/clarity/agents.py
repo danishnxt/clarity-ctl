@@ -105,7 +105,7 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   --brief "<goal and limits>"`, or an idea's id in place of the name. One call: it
   branches the repos you name, makes the worktree, claims the epoch for you and prints
   where to work.
-- Commands on an item take its id, always: `clarity-ctl note 7 "..."`.
+- Commands on an item take its id, always.
 - Note the moment a decision changes — a reversal, an approach you rejected, a result
   that surprised you: `clarity-ctl note <id> "..."`. Not at the end: the notes are what
   the next session has instead of this conversation.
