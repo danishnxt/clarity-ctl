@@ -48,7 +48,7 @@ re-reads the whole context.
 
 So the block ends with `render.state_digest`: the objective, active epochs with
 their handoffs, the queue, standing decisions, and the ten newest closed items by id
-and name; `show closed --agent` lists every one. It is held to a budget
+and name; `show closed` lists every one. It is held to a budget
 (render.DIGEST_BUDGET), so it costs a large project no more than a small one, and the
 rest stays a command away. It carries nothing that changes
 without a command running (leases, git), which is what would make it go stale.
@@ -97,9 +97,8 @@ START = "<!-- CLARITY:START -->"
 END = "<!-- CLARITY:END -->"
 
 _BODY = """- Where things stand is at the end of this block, current as of the last clarity
-  write; you don't need `status` or `--help` to get going. Add `--agent` to every read
-  (`status`, `show`, `search`): `show <id>` has every note, `show closed` every closed
-  item. A fact not in the block: `search <words>` finds the item (often the note too),
+  write; you don't need `status` or `--help` to get going. `show <id>` has every note,
+  `show closed` every closed item. A fact not in the block: `search <words>` finds the item (often the note too),
   then `show <id>`.
 - Start work: `clarity-ctl start "<name, a few words>" --repo <repo|all|none>
   --brief "<goal and limits>"`, or an idea's id in place of the name. One call: it

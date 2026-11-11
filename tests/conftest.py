@@ -82,3 +82,11 @@ def workspace(ws_root) -> Project:
     for name in ("agent", "harness"):
         project.repo_add(str(ws_root / "workspace" / name))
     return Project.find(ws_root)
+
+
+@pytest.fixture
+def tty(monkeypatch):
+    """stdout is a terminal: the reads print tables, not the plain text an agent gets.
+    Colour is the renderer's own check of the real stdout, so it stays off here."""
+    from clarity import cli
+    monkeypatch.setattr(cli, "_plain", lambda: False)

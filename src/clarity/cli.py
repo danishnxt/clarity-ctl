@@ -43,11 +43,11 @@ HOW = """How work goes
   $ clarity-ctl idea "<a few words>"
       for later; the why and the evidence go in a note on it"""
 
-READ = """Read (never writes) — agents add --agent: plain text, far smaller for lists
+READ = """Read (never writes) — at a terminal tables; piped, plain text, far smaller for lists
   clarity-ctl status        objective, active, next; --all adds closed
   clarity-ctl show <id>     one item: its folder, branch and every note
   clarity-ctl show <view>   active | next | closed | all | objective | repos
-  clarity-ctl show closed --agent  every closed item, by id and name
+  clarity-ctl show closed   every closed item, by id and name
   clarity-ctl search <words>  items by keyword, in names, outcomes, briefs and notes"""
 
 CONTRACT = """Contract
@@ -55,8 +55,8 @@ CONTRACT = """Contract
   from the directory you are in, not from an env var, not from there being one active.
   --json is for scripts, on the reads only (status, show, search): {ok, command, data,
   warnings, version}; a failure has ok false, and error and code in place of data.
-  Those three also take --agent: plain text for an agent, in the state block's style.
-  Not both. Every other command prints text, and its errors go to stderr.
+  Every other command prints text, and its errors go to stderr. Where stdout is not a
+  terminal (an agent's shell), the three print plain text in the state block's style.
   Exit codes: 0 ok · 1 error · 2 validation failed · 3 not a clarity project · 4 refused
   Pass every argument. A missing one is asked for at a terminal and refused elsewhere,
   so an agent is never left waiting on a prompt."""
@@ -170,13 +170,10 @@ def _leaf(parent, name: str, help_: str, description: str | None = None,
     )
 
 
-def _read_flags(node, agent: str) -> None:
-    """--json and --agent, only on the reads: status, show, search."""
+def _json_flag(node) -> None:
+    """--json, only on the reads: status, show, search."""
     node.add_argument("--json", action="store_true",
                       help="print the machine-readable envelope, for scripts, instead of text")
-    node.add_argument("--agent", action="store_true",
-                      help=agent + " — plain text for an agent: no boxes or colour, "
-                           "the state block's style; not with --json")
 
 
 # Words the commands used to take after `idea` and `objective`: alone, they are a stale
@@ -250,10 +247,10 @@ def build_parser() -> argparse.ArgumentParser:
                      "its work has landed there. None of "
                      "that is written down, so none of it can go stale.\n\n"
                      "--json lists each item with a note_count, not its notes: "
-                     "`show <id> --json` has those. --agent prints the same facts as "
-                     "plain text, the state block's style: no boxes or colour, closed "
-                     "work as one `#id ✓ name` line.", section=look)
-    _read_flags(p_status, "the same facts")
+                     "`show <id> --json` has those. Where stdout is not a terminal it prints "
+                     "plain text instead of tables, the state block's style: no boxes or "
+                     "colour, closed work as one `#id ✓ name` line.", section=look)
+    _json_flag(p_status)
     p_status.add_argument("--all", action="store_true",
                           help="include closed and dropped items")
     p_status.add_argument("--limit", type=int, default=15, metavar="N",
@@ -278,12 +275,12 @@ def build_parser() -> argparse.ArgumentParser:
                    "lease in --json\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`, which carries a "
                    "note count per item, not the notes: `show <id> --json` has them.\n\n"
-                   "--agent prints plain text for an agent: `show closed --agent` is every "
-                   "closed item as `#id ✓ name` (✗ dropped), newest first; `show <id> "
-                   "--agent` is the page with every note in full.",
+                   "Where stdout is not a terminal it prints plain text: `show closed` is every "
+                   "closed item as `#id ✓ name` (✗ dropped), newest first; `show <id>` "
+                   "is the page with every note in full.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
-    _read_flags(p_show, "the view or page")
+    _json_flag(p_show)
 
     p_search = _leaf(sub, "search", "find items by keyword — the id of the one that holds a fact",
                      "Keyword search over every item, live and archived: its name, outcome, "
@@ -295,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
                      "rare the word is across the worklog; a word in the name counts 1.5x. "
                      "Ties go to the newer item.\n\n"
                      "example:\n  $ clarity-ctl search lease host", section=look)
-    _read_flags(p_search, "the matches")
+    _json_flag(p_search)
     p_search.add_argument("words", nargs="+", metavar="<word>",
                           help="what to look for; a word starting with - goes after --")
     p_search.add_argument("--limit", type=int, default=5, metavar="N",
@@ -643,6 +640,12 @@ def _refresh_text(item, report: dict) -> str:
     return "\n".join(lines)
 
 
+def _plain() -> bool:
+    """The reads print for whoever is reading: tables and colour for a person at a
+    terminal, plain text everywhere else — an agent's shell is never a terminal."""
+    return not sys.stdout.isatty()
+
+
 def run(args) -> int:
     if args.command == "init":
         here = Project.existing(Path.cwd())
@@ -671,6 +674,8 @@ def run(args) -> int:
     args.worklog_warnings = [warning] if warning else []
     args.worklog_warnings += project.missing_warnings()
 
+    plain = _plain()
+
     if args.command == "status":
         data = project.query("all" if args.all else "current")
         # the ⚠ lines status prints about bases, as data — keyed by id, like leases
@@ -679,7 +684,7 @@ def run(args) -> int:
         landed = project.landed_map()
         # who holds which epoch — data only; the tables leave it out
         data["leases"] = project.leases()
-        make = project.agent_status_text if args.agent else project.status_text
+        make = project.agent_status_text if plain else project.status_text
         text = make(show_all=args.all, oldest_first=args.order == "oldest", limit=args.limit,
                     landed=landed, children=args.children)
         # the JSON is the index, not the archive: a count in place of the notes (show <id>
@@ -697,7 +702,7 @@ def run(args) -> int:
             marks = project.landed_map(only=data["id"]).get(data["id"])
             if marks:
                 data["landed"] = marks  # per repo, as status --json carries it
-            page = render.agent_item if args.agent else render.item_text
+            page = render.agent_item if plain else render.item_text
             emit(args, "show.item", data, page(data, marks))
         else:
             if name not in Project.SHOW_NAMES:
@@ -708,9 +713,9 @@ def run(args) -> int:
             if name == "objective":
                 human = f"OBJECTIVE  {data['overall'] or '— not set —'}"
             elif name == "repos":
-                human = _repos_view(data["repos"], indent="" if args.agent else "  ")
+                human = _repos_view(data["repos"], indent="" if plain else "  ")
             else:
-                human = (project.agent_view_text if args.agent else project.view_text)(name)
+                human = (project.agent_view_text if plain else project.view_text)(name)
             emit(args, f"show.{name}", data, human)
 
     elif args.command == "search":
@@ -720,7 +725,7 @@ def run(args) -> int:
                 "hits": [{"id": h.id, "name": h.name, "status": h.status,
                           "score": round(h.score, 2), "field": h.field,
                           "snippet": h.snippet} for h in hits]}
-        emit(args, "search", data, render.search_text(hits, plain=args.agent))
+        emit(args, "search", data, render.search_text(hits, plain=plain))
 
     elif args.command == "objective":
         project.set_objective(_name_text("objective", args.text))
@@ -826,24 +831,18 @@ def run(args) -> int:
 
 
 JSON_READS = ("status", "show", "search")
-BOTH = "--agent and --json are two formats for two readers — pass one (--json for scripts, --agent for reading)"
 
 
 def _parse(argv: list[str]):
     """parse_args, except that a caller who asked for --json gets an envelope for
     a typo too, rather than usage text it cannot parse. Exit 2, as argparse's own.
-    --agent with --json is such a mistake: one output format at a time. Only the reads
-    have --json; a typo anywhere else is argparse's plain usage error."""
+    Only the reads have --json; a typo anywhere else is argparse's plain usage error."""
     if "--json" not in argv or argv[0] not in JSON_READS:
         return build_parser().parse_args(argv)
     caught = io.StringIO()
     try:
         with contextlib.redirect_stderr(caught):
-            args = build_parser().parse_args(argv)
-        if getattr(args, "agent", False):
-            caught.write(f"clarity-ctl: error: {BOTH}\n")
-            raise SystemExit(2)
-        return args
+            return build_parser().parse_args(argv)
     except SystemExit as stop:
         if stop.code in (0, None):
             raise  # --help asked for, and printed

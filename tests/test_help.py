@@ -59,6 +59,8 @@ def test_the_commands_are_exactly_these_and_only_the_reads_take_json():
     has_json = {name for name, node in leaves.items()
                 if any("--json" in a.option_strings for a in node._actions)}
     assert has_json == {"status", "show", "search"}
+    assert not [n for n, node in leaves.items()
+                if any("--agent" in o.option_strings for o in node._actions)]
 
 
 def test_the_listing_names_every_command_and_the_help_reference_has_a_page_each(
@@ -105,6 +107,7 @@ def test_every_command_and_flag_the_product_names_exists():
     texts = [reference] + [p.read_text() for p in Path(cli.__file__).parent.glob("*.py")]
     seen = 0
     for text in texts:
+        assert "--agent" not in text  # plain text is chosen by the terminal, not a flag
         for words in _invocations(text):
             name = " ".join(words[:2]) if words[0] == "repo" else words[0]
             assert name in leaves, f"clarity-ctl {' '.join(words)}: no command {name!r}"

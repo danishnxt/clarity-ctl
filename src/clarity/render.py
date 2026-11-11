@@ -42,7 +42,8 @@ def width() -> int:
 
 def color() -> bool:
     """Color only for a person at a terminal. NO_COLOR (no-color.org) and TERM=dumb
-    turn it off; FORCE_COLOR turns it on for a pager that understands it."""
+    turn it off. The CLI only builds tables for a terminal (piped, status, show and
+    search print plain text), so FORCE_COLOR matters to callers of render directly."""
     if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
         return False
     return bool(os.environ.get("FORCE_COLOR")) or sys.stdout.isatty()
@@ -495,7 +496,7 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
     if cut_any:
         out.append(paint(CUT_HINT, "dim"))
     if not show_all:
-        # every closed item, archived ones too, as --agent counts them
+        # every closed item, archived ones too, as the plain text counts them
         closed = len([i for i in items if i.status in CLOSED]) + archived
         more = f" ({archived} archived)" if archived else ""
         out.append(paint(f"{closed} closed or dropped{more} — clarity-ctl status --all", "dim"))
@@ -520,15 +521,15 @@ DIGEST_NAME = 80  # a name is a title; one written as a paragraph is cut, not ca
 DIGEST_BUDGET = 8000
 DIGEST_CLOSED_NAME = 50  # a closed item is one `#id ✓ name` entry; the name is cut at this
 DIGEST_CLOSED = 10  # how many of the newest closed items the digest lists; the rest is a command
-CLOSED_HEADING = ("**Closed**, newest first — `clarity-ctl show <id> --agent` for the outcome "
+CLOSED_HEADING = ("**Closed**, newest first — `clarity-ctl show <id>` for the outcome "
                   "and notes")
-CLOSED_MORE = "`clarity-ctl show closed --agent`"  # lists every closed item, by id and name
+CLOSED_MORE = "`clarity-ctl show closed`"  # lists every closed item, by id and name
 
 
 def search_text(hits, plain: bool = False) -> str:
     """What `clarity-ctl search` prints: per hit a `#id status name` line and, when
     something other than the name matched, a dim `  field: snippet` line. `plain`
-    (--agent) is never painted."""
+    (for a pipe) is never painted."""
     lines = []
     for h in hits:
         lines.append(f"#{h.id} {h.status} {_line(h.name, 80)}")
@@ -574,7 +575,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
 
     The block is held within DIGEST_BUDGET characters. Nothing in it grows with the
     project except the standing decisions, which are capped at DIGEST_DECISIONS: the
-    closed list is DIGEST_CLOSED entries and a pointer to `show closed --agent` for the
+    closed list is DIGEST_CLOSED entries and a pointer to `show closed` for the
     rest. If the objective, active work, Up next and decisions leave that list no room,
     the oldest standing decisions are cut one at a time, each cut ending in an "N older"
     line. The objective and active work are never cut: with enough active epochs of
@@ -583,8 +584,8 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
     """
     out = ["### Where things stand", "",
            "Generated from the worklog on every clarity write, so it is current. "
-           "`clarity-ctl status --agent` adds leases and branch warnings; "
-           "`clarity-ctl show <id> --agent` has every note.", "",
+           "`clarity-ctl status` adds leases and branch warnings; "
+           "`clarity-ctl show <id>` has every note.", "",
            f"**Objective:** {_line(objectives.overall or '— not set —')}", "", "**Active**"]
 
     active = sorted((i for i in items if i.status in IN_FLIGHT), key=lambda i: id_key(i.id))
@@ -604,7 +605,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
 
     ideas = sorted((i for i in items if i.status in FUTURE), key=lambda i: id_key(i.id))
     shown = " · ".join(f"#{i.id} {_line(i.name, DIGEST_NAME)}" for i in ideas[:DIGEST_IDEAS]) or "none"
-    more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next --agent`" if len(ideas) > DIGEST_IDEAS else ""
+    more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next`" if len(ideas) > DIGEST_IDEAS else ""
     out += ["", f"**Up next:** {shown}{more}"]
 
     decisions = sorted(((n, i) for i in items for n in i.decisions),
@@ -620,7 +621,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
                       for n, i in decisions[:count]]
             if len(decisions) > count:
                 lines.append(f"- {len(decisions) - count} older: "
-                             "`clarity-ctl search DECISION --agent`")
+                             "`clarity-ctl search DECISION`")
         return "\n".join(lines)
 
     section = _closed_index(closed)
@@ -632,13 +633,14 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
     return block(0)  # the objective and active work alone pass the budget
 
 
-# ---- --agent: plain text for an agent to read ----------------------------------------
+# ---- plain text for an agent to read ---------------------------------------------------
 #
-# The state block's own style, for every read command: no boxes, no colour, no padding,
+# What status, show and search print where stdout is not a terminal, in the state
+# block's own style: no boxes, no colour, no padding,
 # no wrapping, so the same facts cost a fraction of the characters. Never painted, whatever
 # the terminal or FORCE_COLOR says. `--json` stays the format for scripts.
 
-AGENT_OLDER = "older: `clarity-ctl show closed --agent`"
+AGENT_OLDER = "older: `clarity-ctl show closed`"
 
 
 def _lease(held: dict | None) -> str | None:
@@ -693,7 +695,7 @@ def agent_closed(items: list[Item], limit: int = 0, oldest_first: bool = False) 
 def agent_view(items: list[Item], titles: list[str], stale: dict | None = None,
                landed: dict | None = None, kids: dict | None = None,
                children: bool = False, leases: dict | None = None) -> str:
-    """`show active|next|closed|all --agent`: the sections of `titles`, in status's order."""
+    """`show active|next|closed|all` where stdout is not a terminal: the sections of `titles`, in status's order."""
     parts = []
     for title in titles:
         parts.append(_agent_active(items, stale, landed, kids, children, leases)
@@ -708,7 +710,7 @@ def agent_status(objectives: Objectives, items: list[Item], show_all: bool = Fal
                  oldest_first: bool = False, limit: int = CLOSED_LIMIT,
                  kids: dict | None = None, children: bool = False,
                  leases: dict | None = None, archived: int = 0) -> str:
-    """`status --agent`: objective, Active, Up next, then a count of what is closed and
+    """`status` where stdout is not a terminal: objective, Active, Up next, then a count of what is closed and
     the command that lists it — or, with --all, the closed index itself (`limit` newest)."""
     parts = [[f"Objective: {objectives.overall or '— not set —'}"],
              _agent_active(items, stale, landed, kids, children, leases),
@@ -718,7 +720,7 @@ def agent_status(objectives: Objectives, items: list[Item], show_all: bool = Fal
     else:
         closed = len([i for i in items if i.status in CLOSED])  # items hold the archived too
         more = f" ({archived} archived)" if archived else ""
-        parts.append([f"{closed} closed or dropped{more}: `clarity-ctl show closed --agent`"])
+        parts.append([f"{closed} closed or dropped{more}: `clarity-ctl show closed`"])
     return "\n\n".join("\n".join(p) for p in parts)
 
 
@@ -736,7 +738,7 @@ def _landed_plain(marks: dict | None, bases: dict | None) -> str | None:
 
 
 def agent_item(data: dict, marks: dict | None = None) -> str:
-    """`show <id> --agent`: the page as plain lines. Every note in full, numbered, with
+    """`show <id>` where stdout is not a terminal: the page as plain lines. Every note in full, numbered, with
     its timestamp; nothing wrapped, cut or decorated."""
     status = data["status"]
     out = [f"#{data['id']} {data['name']}"]

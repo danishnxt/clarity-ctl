@@ -100,7 +100,7 @@ def test_closing_an_idea_without_an_outcome_is_refused_off_a_terminal(project, r
 
 
 def test_status_show_and_digest_read_a_closed_idea_like_any_closed_item(
-        project, repo, monkeypatch, capsys):
+        project, repo, monkeypatch, capsys, tty):
     monkeypatch.chdir(repo)
     done = project.add("already built")
     project.close(done.id, "built under epoch 12")

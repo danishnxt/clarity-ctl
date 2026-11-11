@@ -88,15 +88,18 @@ def test_live_copy_wins_over_archived_copy(project):
     assert [i.id for i in loaded.items] == [closed.id]
 
 
-def test_the_closed_count_includes_archived_items_in_both_formats(project, capsys, monkeypatch):
-    from clarity.cli import main
+def test_the_closed_count_includes_archived_items_in_both_formats(project, capsys, monkeypatch,
+                                                                   tty):
+    from clarity import cli
     _drop(project, "old")
     project.archive()
     _drop(project, "newer")
     monkeypatch.chdir(project.root)
     capsys.readouterr()
 
-    assert main(["status"]) == 0
+    assert cli.main(["status"]) == 0   # a terminal: the tables
     assert "2 closed or dropped (1 archived)" in capsys.readouterr().out
-    assert main(["status", "--agent"]) == 0
+    monkeypatch.undo()
+    monkeypatch.chdir(project.root)
+    assert cli.main(["status"]) == 0   # a pipe: plain text
     assert "2 closed or dropped (1 archived)" in capsys.readouterr().out

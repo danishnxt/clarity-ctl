@@ -6,6 +6,7 @@ import pytest
 
 from clarity import ClarityError, Project
 from clarity import gitops, lease
+from clarity import cli
 from clarity.cli import main
 from clarity.store import load_yaml
 
@@ -337,15 +338,16 @@ def test_a_root_that_branches_itself_still_refuses_repo_none_and_leaves_no_idea(
     assert len(Project.find(project.root).worklog.items) == before
 
 
-def test_show_repos_lists_them_as_text_agent_lines_and_json(workspace, ws_root, monkeypatch,
+def test_show_repos_lists_them_as_text_plain_lines_and_json(workspace, ws_root, monkeypatch,
                                                             capsys):
     monkeypatch.chdir(ws_root)
     capsys.readouterr()
 
+    assert main(["show", "repos"]) == 0  # piped: plain lines
+    assert capsys.readouterr().out.splitlines() == ["workspace/agent", "workspace/harness"]
+    monkeypatch.setattr(cli, "_plain", lambda: False)  # a terminal: indented
     assert main(["show", "repos"]) == 0
     assert capsys.readouterr().out.splitlines() == ["  workspace/agent", "  workspace/harness"]
-    assert main(["show", "repos", "--agent"]) == 0
-    assert capsys.readouterr().out.splitlines() == ["workspace/agent", "workspace/harness"]
     assert main(["show", "repos", "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["command"] == "show.repos"

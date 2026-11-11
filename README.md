@@ -49,7 +49,7 @@ When an epoch starts, it gets its own folder, its own plan/analysis/logs/viz dir
 
 Clarity-ctl rules guide your agent for when to add **notes** to your epoch, this is to document when a decision is made, or when an experiment result arrives.
 
-All project state lives in one lock-protected file, `worklog.yaml`, written to only by the CLI. This is available to query in agent-friendly json format or human readable format. Every clarity-ctl command can be queried in both modes.
+All project state lives in one lock-protected file, `worklog.yaml`, written to only by the CLI. The reads (`status`, `show`, `search`) print tables for a person at a terminal, plain text for an agent, and `--json` for scripts.
 
 In the future and in the interest of performance and to avoid locking, we may move this single state file to a per-epoch file.
 
@@ -171,9 +171,9 @@ rules tell an agent to:
   their handoffs, what's queued, standing decisions and the ten newest closed epochs
   by id. clarity rewrites it on every write, so it is always current, and an agent
   gets it without running a command. For anything else it asks clarity instead of
-  reading the whole tree: `clarity-ctl show closed --agent` lists every closed epoch,
-  `clarity-ctl search <words> --agent` finds the item, and often the note, that holds
-  a fact, and `clarity-ctl show <id> --agent` reads it;
+  reading the whole tree: `clarity-ctl show closed` lists every closed epoch,
+  `clarity-ctl search <words>` finds the item, and often the note, that holds
+  a fact, and `clarity-ctl show <id>` reads it;
 - start work in one call: `clarity-ctl start "<name>" --repo <repo> --brief "<goal>"`
   adds the idea, branches, makes the worktree and claims it. Closing
   releases it;
@@ -201,15 +201,16 @@ else's needs `claim <id> --steal`, which records who held it.
 data, warnings, version}`; the other commands print text. Exit codes: `0` ok · `1`
 error · `2` validation failed · `3` not a clarity project · `4` refused.
 
-They also take `--agent`: plain text in the style of the state block, with no
-boxes, colour or padding: lists are about a seventh of the size a person reads, a note-heavy
-`show <id>` barely smaller. `status --agent` is the objective, active epochs (with their warnings), the queue and a count of what is
-closed; `show closed --agent` is every closed item as `#id ✓ name` (`✗` dropped), newest
-first; `show <id> --agent` is the page with every note in full. `--agent` and `--json`
-together are refused (exit 2).
+Where stdout is not a terminal, which is how an agent's shell runs them, the three print
+plain text in the style of the state block instead of tables: no boxes, colour or
+padding, so lists are about a seventh of the size a person reads and a note-heavy
+`show <id>` barely smaller. `status` is then the objective, active epochs (with their
+warnings and who holds the lease), the queue and a count of what is closed;
+`show closed` is every closed item as `#id ✓ name` (`✗` dropped), newest first;
+`show <id>` is the page with every note in full, the latest handoff first.
 
 ```
-$ clarity-ctl show closed --agent
+$ clarity-ctl show closed | cat
 Closed (2), newest first
 #2 ✓ ring buffer for the tokenizer · #1 ✓ memory-map the input file
 ```

@@ -73,8 +73,8 @@ def test_the_closed_list_never_costs_a_decision():
     # 20 decisions of 240 characters and a thousand closed items: both fit
     text = digest(worklog(closed=1000, decisions=20))
     assert text.count("\n- ") >= 20 and "decision 20 " in text
-    assert "older: `clarity-ctl search DECISION --agent`" not in text
-    assert closed_section(text).endswith("990 older: `clarity-ctl show closed --agent`")
+    assert "older: `clarity-ctl search DECISION`" not in text
+    assert closed_section(text).endswith("990 older: `clarity-ctl show closed`")
 
 
 def test_the_oldest_decisions_go_when_the_closed_list_has_no_room_at_all():
@@ -85,11 +85,11 @@ def test_the_oldest_decisions_go_when_the_closed_list_has_no_room_at_all():
         items.append(_active(n))
     text = digest(items)
     assert len(text) <= render.DIGEST_BUDGET
-    older = re.search(r"- (\d+) older: `clarity-ctl search DECISION --agent`", text)
+    older = re.search(r"- (\d+) older: `clarity-ctl search DECISION`", text)
     assert older and 20 < int(older.group(1)) <= 40   # cut below the 20 that are usually shown
     assert "decision 40 " in text and "decision 1 " not in text   # the newest are kept
     assert render.CLOSED_HEADING in text              # a list was still possible
-    assert re.search(r"\d+ older: `clarity-ctl show closed --agent`$", text)
+    assert re.search(r"\d+ older: `clarity-ctl show closed`$", text)
     # the active work is never cut
     assert all(f"#{n} active {n}" in text for n in range(101, 109))
 
@@ -115,7 +115,7 @@ def test_the_closed_list_is_the_ten_newest_with_marks_and_says_how_many_are_olde
     assert all(re.match(r"#\d+ ✓ ", e) for e in entries[:-1] if not e.startswith("#996 "))
     assert entries[4].startswith("#996 ✗ ")
     assert all(len(e.split(" ", 2)[2]) <= render.DIGEST_CLOSED_NAME for e in entries[:-1])
-    assert entries[-1] == "990 older: `clarity-ctl show closed --agent`"
+    assert entries[-1] == "990 older: `clarity-ctl show closed`"
 
 
 def test_a_dropped_item_is_marked_with_a_cross():

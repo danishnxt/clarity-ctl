@@ -1382,7 +1382,7 @@ class Project:
                                 kids=self.children_by_parent())
 
     def agent_view_text(self, name: str) -> str:
-        """`show <view> --agent`: the same groups as view_text, as plain lines. Over live
+        """`show <view>` piped: the same groups as view_text, as plain lines. Over live
         and archived items alike: the block's pointer promises every closed item."""
         titles = {"active": ["Active"], "next": ["Up next"], "closed": ["Closed"],
                   "all": ["Active", "Up next", "Closed"]}[name]
