@@ -41,23 +41,19 @@ to go back in.
 
 A project is a collection of ideas and epochs.
 
-- **Ideas**: An idea is added when a thought occurs to you, to be worked on in the future.
-- **Epochs**: An epoch begins when work on an idea begins. A single epoch would map to a
-feature, or a bug fix, or an analysis, or an experiment, etc.
+- **Ideas**: added when a thought occurs to you, to be worked on later.
+- **Epochs**: begin when work on an idea begins. One epoch is a feature, a bug fix, an
+  analysis or an experiment.
 
-When an epoch starts, it gets its own folder, its own plan/analysis/logs/viz directories, and its own **worktrees** of relevant repos you're working on. This way two epochs can work on the same repos in different epochs without overlap.
-
-Clarity-ctl rules guide your agent for when to add **notes** to your epoch, this is to document when a decision is made, or when an experiment result arrives.
-
-All project state lives in one lock-protected file, `worklog.yaml`, written to only by the CLI. The reads (`status`, `show`, `search`) print tables for a person at a terminal, plain text for an agent, and `--json` for scripts.
-
-In the future and in the interest of performance and to avoid locking, we may move this single state file to a per-epoch file.
+An epoch gets its own folder and its own **worktrees** of the repos you're working on,
+so two epochs can touch the same repo without overlapping. **Notes** record when a
+decision is made or a result arrives. All state lives in one lock-protected file,
+`worklog.yaml`, written only by the CLI; your code lives in its own repo under
+`workspace/`, so pushing it never pushes the notes.
 
 ## Install
 
-Requires Python 3.10+ and git.
-
-clarity-ctl installs from GitHub; it is not on PyPI.
+Requires Python 3.10+ and git. clarity-ctl installs from GitHub; it is not on PyPI.
 
 ```sh
 uv tool install git+https://github.com/danishnxt/clarity-ctl          # latest main
@@ -65,13 +61,10 @@ uv tool upgrade clarity-ctl                                           # pull the
 ```
 
 After an upgrade, the next write in each project brings its agent rules and
-`worklog.yaml` up to the new version. An older clarity-ctl that meets a newer worklog
-reads it but refuses to write until it's upgraded.
+`worklog.yaml` up to date (`init` in the project does it at once). An older clarity-ctl
+reads a newer worklog but refuses to write it.
 
 ## Quick start
-
-clarity's files live in the project folder; your code lives in its own repo under
-`workspace/`, so pushing your code never pushes the notes.
 
 ```sh
 mkdir parser && cd parser
@@ -79,40 +72,62 @@ clarity-ctl init --objective "Make the parser fast enough for 1GB inputs"
 git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
 
-clarity-ctl start "memory-map the input file" --repo all
+clarity-ctl start "memory-map the input file" --repo all --brief "cut load time"
                     # idea 1, folder, branch, worktree, claimed; prints where to work:
                     #   work in: EPOCHS/001_<date>__memory-map-the-input-file/wt/parser
 clarity-ctl note 1 "load time halved, total unchanged: the tokenizer is the bottleneck"
+clarity-ctl idea "flaky test on macOS"          # for later: idea 2
+clarity-ctl status                              # where things stand
+clarity-ctl search tokenizer                    # which item holds a fact
 clarity-ctl close 1 "no gain, I/O is not the bottleneck"
 ```
 
 Already have a repo? Run `clarity-ctl adopt` inside it instead
 ([Existing projects](#existing-projects)).
 
+## Commands
+
+`<command> --help` has one command's flags and an example; `help reference` prints
+them all on one page.
+
+| | |
+|---|---|
+| **Read** | |
+| `status` | objective, active, next; `--all` adds closed |
+| `show <id\|view>` | one item with every note, or a list: `active`, `next`, `closed`, `all`, `objective`, `repos` |
+| `search <words>` | the items holding a fact: names, outcomes, briefs, notes |
+| **Work on an epoch** (always by id) | |
+| `start <name\|id>` | add and start an idea in one go; also picks a closed epoch back up |
+| `note <id> "..."` | record a decision, a result, a `DECISION:` or a `HANDOFF:` |
+| `close <id> "<outcome>"` | finish it; `--drop "<why>"` when it didn't work |
+| `spawn <id> "<name>"` | a subepoch, for one part of a big epoch |
+| `refresh <id>` | merge each repo's base branch into the epoch's branch |
+| `claim <id>` | say who is working it; `--steal` takes over |
+| `rename <id> "<name>"` | new title; the old one is kept as a note |
+| `add-repo <id> <repo>` · `drop-repo <id> <repo>` | change which repos an epoch branches |
+| **Capture** | |
+| `idea "<name>"` | work for later |
+| **Tidy** | |
+| `archive` | move closed epochs out of `worklog.yaml` into `ARCHIVE/<month>.yaml` |
+| **Set up** | |
+| `init` · `adopt` | start a project; adopt an existing one. `init` in an existing project refreshes the agent files |
+| `objective "<text>"` | what the project is for |
+| `repo add <path>` · `repo remove <repo>` | the repos epochs branch |
+
+Commands take the epoch's id (`clarity-ctl note 7 "..."`). clarity never guesses
+which one you mean: a guess works until a second epoch starts.
+
 ## Reading the state
 
-`clarity-ctl status` is the one-screen view: the objective, what's active, what's next.
-`--all` adds the 15 most recent closed and dropped epochs (`--limit N` for more,
-`--order oldest` to read them as a story).
+`clarity-ctl status` is the one-screen view. `--all` adds the 15 most recent closed
+and dropped epochs (`--limit N` for more, `--order oldest` to read them as a story).
 
 ```
 $ clarity-ctl status --all
 OBJECTIVE  Make the parser fast enough for 1GB inputs
 
-Active (1)
-┌───┬─────┬────────────────────────────────────────────────────────────────────┐
-│   │  id │ epoch                                                              │
-├───┼─────┼────────────────────────────────────────────────────────────────────┤
-│ ▸ │   3 │ parallel chunk parsing                                             │
-│   │     │ EPOCHS/003_2026-10-20__parallel-chunk-parsing                      │
-└───┴─────┴────────────────────────────────────────────────────────────────────┘
-
-Up next (1)
-┌───┬─────┬────────────────────────────────────────────────────────────────────┐
-│   │  id │ idea                                                               │
-├───┼─────┼────────────────────────────────────────────────────────────────────┤
-│ · │   4 │ flaky test on macOS                                                │
-└───┴─────┴────────────────────────────────────────────────────────────────────┘
+Active (1)  ·  ▸ 3 parallel chunk parsing  (EPOCHS/003_2026-10-20__parallel-chunk-parsing)
+Up next (1)  ·  4 flaky test on macOS
 
 Closed (2)
 ┌───┬─────┬────────────────────────────────────────────────────┬───────────────┐
@@ -126,88 +141,18 @@ Closed (2)
 └───┴─────┴────────────────────────────────────────────────────┴───────────────┘
 ```
 
-The **landed** column is read live from git, squash merges included. So the history
-shows what stuck and what didn't, each with its reason. That makes clarity a good fit
-for performance and research work, where you try five things and keep two, not just
-for tracking bugs.
+The **landed** column is read live from git, squash merges included, so the history
+shows what stuck and what didn't, each with its reason: a good fit for performance and
+research work, where you try five things and keep two.
 
-`clarity-ctl show <id>` prints one item as a page, with its full outcome and every note:
+`show <id>` prints one item as a page: outcome, folder, branch, repos and every note,
+latest handoff first. Closing never merges and never deletes a branch: merge first if
+the work should land. When the closed list gets long, `archive` moves it out of
+`worklog.yaml`; folders stay, ids are never reused, and `show <id>` still reads them.
 
-```
-$ clarity-ctl show 1
-memory-map the input file  #1
-✓ done • ❌ not merged into main • experiment • closed today
-
-  no gain, I/O is not the bottleneck
-
-==> Where
-  branch  epoch/001-memory-map-the-input-file
-  folder  EPOCHS/001_2026-10-20__memory-map-the-input-file
-  repo    workspace/parser — base main
-
-==> Notes (2)
-  just now · 2026-10-20 00:22
-    Profile says 30% of a 1GB run is in read(); trying mmap to cut it.
-
-  just now · 2026-10-20 00:22
-    Load time halved, total time unchanged: the tokenizer is the bottleneck, not
-    I/O.
-```
-
-Closing never merges and never deletes a branch: merge first if the work should land,
-or don't. For an attempt that failed outright, `close <id> --drop "why"` records
-it as dropped instead of done.
-
-When the closed list gets long, `clarity-ctl archive` moves every closed epoch out of
-`worklog.yaml` into `ARCHIVE/<month>.yaml`. Their folders stay, their ids are never
-reused, and `show <id>` still reads them.
-
-## Working with agents
-
-`init` writes a short block of rules into `AGENTS.md`, and `CLAUDE.md` imports it. The
-rules tell an agent to:
-
-- start from the state at the end of the block: the objective, active epochs and
-  their handoffs, what's queued, standing decisions and the ten newest closed epochs
-  by id. clarity rewrites it on every write, so it is always current, and an agent
-  gets it without running a command. For anything else it asks clarity instead of
-  reading the whole tree: `clarity-ctl show closed` lists every closed epoch,
-  `clarity-ctl search <words>` finds the item, and often the note, that holds
-  a fact, and `clarity-ctl show <id>` reads it;
-- start work in one call: `clarity-ctl start "<name>" --repo <repo> --brief "<goal>"`
-  adds the idea, branches, makes the worktree and claims it. Closing
-  releases it;
-- write a note the moment a decision changes (see [When notes are written](#when-notes-are-written));
-- stop with a **handoff**: a note starting `HANDOFF:` that says what's done, what's
-  stuck, and what to do first. `show <id>` puts the latest one up front;
-- record a **decision** that outlives the epoch (a rule, or something we won't
-  build and why) as a note starting `DECISION:`. Every one is listed in the block;
-- close an epoch only when the whole task is done and merged, with an outcome that
-  says what changed and why, or drop it with the reason. If part is left for later,
-  keep it active with a handoff rather than filing an idea.
-
-Give an epoch a **brief** when you start it: `start <id> --brief "<goal and
-limits>"`, as text or a file. It's the first thing whoever picks the epoch up reads.
-
-`init` and `adopt` write the block, and every later write keeps it current. Starting a
-closed epoch again (`start <id>`) brings it back to active, with its old outcome kept
-as a note.
-
-A claim is a **lease**: a marker saying who is working on an epoch (`start` takes
-one for you, `close` lets it go). It is a warning, not a lock; taking over someone
-else's needs `claim <id> --steal`, which records who held it.
-
-`status`, `show` and `search` take `--json`, for scripts, and answer `{ok, command,
-data, warnings, version}`; the other commands print text. Exit codes: `0` ok · `1`
-error · `2` validation failed · `3` not a clarity project · `4` refused.
-
-Where stdout is not a terminal, which is how an agent's shell runs them, the three print
-plain text in the style of the state block instead of tables: no boxes, colour or
-padding, so lists are about a seventh of the size a person reads and a note-heavy
-`show <id>` barely smaller. `status` is then the objective, active epochs (with their
-warnings and who holds the lease), the queue and a count of what is closed;
-`show closed` is every closed item as `#id ✓ name` (`✗` dropped), newest first;
-`show <id>` is the page with every note in full, the latest handoff first.
+**Terminal or pipe.** At a terminal the reads print tables. Anywhere else, which is how
+an agent's shell runs them, they print plain text with no boxes or colour, so lists are
+about a seventh of the size:
 
 ```
 $ clarity-ctl show closed | cat
@@ -215,33 +160,38 @@ Closed (2), newest first
 #2 ✓ ring buffer for the tokenizer · #1 ✓ memory-map the input file
 ```
 
-`status --json` lists each item with a `note_count`, not its notes; `show <id> --json` has them.
+**For scripts**, `status`, `show` and `search` take `--json` and answer
+`{ok, command, data, warnings, version}`; a failure has `ok: false` with `error` and
+`code` in place of `data`. Every other command prints text, with errors on stderr.
+`status --json` lists each item with a `note_count`; `show <id> --json` has the notes.
+Exit codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project · `4` refused.
 
-`clarity-ctl --help` opens with how the work goes, as commands to copy, then the
-contract above. `clarity-ctl help reference` prints every command's help on one page,
-so an agent can read the whole tool in one call instead of one `--help` per command.
+## Working with agents
 
-Commands always take the epoch's id (`clarity-ctl note 7 "..."`). clarity never
-guesses: a guess works until a second epoch starts.
+`init` writes a short block of rules into `AGENTS.md`, and `CLAUDE.md` imports it. Every
+later write keeps the block current. It tells an agent to:
 
-### When notes are written
+- **start from the state at the end of the block**: objective, active epochs and their
+  handoffs, the queue, standing decisions and the ten newest closed epochs. For
+  anything else it asks clarity instead of reading the tree: `show closed`,
+  `search <words>` to find the item holding a fact, `show <id>` to read it;
+- **start work in one call**: `start "<name>" --repo <repo> --brief "<goal and limits>"`.
+  The brief is the first thing whoever picks the epoch up reads;
+- **write a note the moment a decision changes**: a reversal, a rejected approach, a
+  surprising result. Not at the end: in a long session the end never comes;
+- **stop with a handoff**: a note starting `HANDOFF:` that says what's done, what's
+  left, and what to do first;
+- **record a decision that outlives the epoch** (a rule, or something we won't build
+  and why) as a note starting `DECISION:`. Every one is listed in the block;
+- **close only when the whole task is done and merged**, with an outcome saying what
+  changed and why, or `--drop` it with the reason. Part left for later: keep it
+  active with a handoff.
 
-clarity never writes a note on its own and never calls a model. The agent (or you)
-decides, following the rules in the block. A note is for something the next session
-couldn't get from the code or git:
-
-- **a decision changes**: a reversal, an approach rejected and why, a result that
-  surprised you. Written at that moment, not at the end; in a long session the end
-  never comes, and an unwritten note is lost with the conversation;
-- **a rule that outlives the epoch**: a note starting `DECISION:`, listed in the
-  block for every later session;
-- **stopping before the work is done**: a note starting `HANDOFF:`, what's done, what's
-  left, what to do first;
-- **the first note on a new idea**: the why and the evidence behind its name.
-
-Routine progress ("ran the tests", "edited parser.py") is not a note; git has it. The
-outcome is not a note either: it goes on `close`. Notes are kept in order and
-never edited; a later note that corrects an earlier one should say so.
+clarity never writes a note itself and never calls a model; the agent (or you)
+decides. Routine progress is not a note, git has it, and the outcome goes on `close`.
+Notes are never edited; a later note that corrects an earlier one should say so. Glance
+at `show <id>` before you close: a fast agent can forget to write notes. A claim is a
+**lease**, a warning of who is working on an epoch, not a lock.
 
 ## Splitting an epoch across agents
 
@@ -250,57 +200,28 @@ that needs a branch of its own:
 
     clarity-ctl spawn 7 "port expressions" --brief "Expressions only. Don't touch the lexer."
 
-Subepochs are numbered under their parent (7.1, 7.2) and sit together under
-`EPOCHS/subepochs/`. Each branches from 7's branch and merges back into it; only 7
-merges to main. Quick work that needs no branch, like a search or a review, is a note
-on 7 instead.
-
-1. The part's agent claims it (`claim 7.1 --as expr-agent`), works in the folder `spawn` printed, and
-   stops with a `HANDOFF:` note. It doesn't close the subepoch.
-2. 7's owner reviews. Feedback goes in a note on 7.1, so it's still there when the
-   agent's session isn't.
-3. 7's owner merges 7.1's branch into 7's and closes 7.1. `close` prints the merge
-   command if it's missing, and `refresh 7.2` brings the merged work into a
-   sibling.
-
-While 7 is active, `status` lists its subepochs under it, one line each:
-
-    │ ▸ │  7 │ migrate the parser
-    │   │    │ ↳ #7.1 ✓ port expressions
-    │   │    │ ↳ #7.2 ▸ port statements
-
-`show 7` gathers each one's outcome, or its latest handoff while it's still going.
-7 can't close while a subepoch is active, and warns if a done one never got merged in.
-
-## Getting the most out of it
-
-- **Start from the state at the end of the block.** It's the briefing; `status` adds
-  branches and leases.
-- **One epoch per attempt.** Two ideas in one branch can't be kept or thrown away
-  separately.
-- **Name things like a title.** A few words: "memory-map the input file". Put the why
-  and the evidence in the first note; `show <id>` prints it.
-- **Write a note the moment a decision changes,** not at the end. In a long session the
-  end never comes, and the notes are what the next session has instead of this
-  conversation.
-- **Close with an honest outcome,** even when it's "didn't work, not merging".
-- **Glance at `show <id>` before you close.** A fast agent can forget to write notes.
+Subepochs are numbered under their parent (7.1, 7.2), branch from 7's branch and merge
+back into it; only 7 merges to main. The part's agent claims it (`claim 7.1 --as
+expr-agent`), works in the folder `spawn` printed and stops with a `HANDOFF:` note.
+7's owner reviews (feedback goes in a note on 7.1), merges 7.1 into 7 and closes it;
+`refresh 7.2` brings the merged work into a sibling. `show 7` gathers each subepoch's
+outcome or latest handoff, and 7 can't close while one is active.
 
 ## Existing projects
 
 Run `clarity-ctl adopt` in the folder.
 
 - **A git repo**: adopt moves all of it, history and uncommitted work included, to
-  `workspace/<folder name>/`. A virtualenv or anything else with absolute paths needs
+  `workspace/<folder name>/`. A virtualenv or anything with absolute paths needs
   rebuilding.
 - **Several checkouts and loose files**: adopt writes `.clarity/adopt.md`, a procedure
-  for an agent. It proposes moving repos you change to `workspace/`, repos you only use
-  to `3rd_party/`, and past results into a closed baseline epoch. Every move waits for
-  your approval.
+  for an agent: repos you change go to `workspace/`, repos you only use to `3rd_party/`,
+  past results into a closed baseline epoch. Every move waits for your approval.
 
 A workspace can hold several repos. List each one you change with `clarity-ctl repo add
 <path>`. Then `start` asks which to branch: `--repo <name>` (repeat for more),
-`--repo all`, or `--repo none` for planning or analysis. `clarity-ctl show repos` lists them.
+`--repo all`, or `--repo none` for planning or analysis. `show repos` lists them, and
+`add-repo` / `drop-repo` change an epoch's set later.
 
 ## Development
 
@@ -311,13 +232,10 @@ uv venv && uv pip install -e . pytest
 
 ### Releasing
 
-1. Bump the version in `pyproject.toml`, `src/clarity/__init__.py` and
-   `src/clarity/cli.py`, and commit.
-2. Tag it `v<version>`, push the tag, and publish a GitHub release from it.
-
-Users install a release with `uv tool install git+https://github.com/danishnxt/clarity-ctl@v<version>`.
-Publishing to PyPI is off for now: `.github/workflows/publish.yml` runs only when
-started by hand from the Actions tab, never on a release.
+Bump the version in `pyproject.toml`, `src/clarity/__init__.py` and
+`src/clarity/cli.py`, commit, tag `v<version>`, push the tag and publish a GitHub
+release. Users pin it with `uv tool install git+https://github.com/danishnxt/clarity-ctl@v<version>`.
+PyPI publishing is off: `.github/workflows/publish.yml` runs only when started by hand.
 
 ## License
 
