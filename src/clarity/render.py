@@ -499,12 +499,30 @@ def status_text(objectives: Objectives, items: list[Item], show_all: bool = Fals
 
 # How much of the history the digest carries. Bounded, so a project's thousandth
 # epoch costs every session no more than its tenth; the rest is a command away.
-DIGEST_CLOSED = 10
 DIGEST_IDEAS = 12
 DIGEST_DECISIONS = 20
 DIGEST_TEXT = 240  # characters of any one note, brief or outcome
 DIGEST_HANDOFF = 600  # a handoff gets more: it is the line the next session acts on
 DIGEST_NAME = 80  # a name is a title; one written as a paragraph is cut, not carried whole
+# The most the whole digest may be, in characters: 2,000 tokens at the usual 4 characters
+# a token. It is loaded on every turn of every session, so this is what the block
+# costs however large the project grows. The closed list is the part that grows with
+# the project, so it is what gets cut first (see state_digest).
+DIGEST_BUDGET = 8000
+DIGEST_CLOSED_NAME = 50  # a closed item is one `#id ✓ name` entry; the name is cut at this
+CLOSED_HEADING = "**Closed**, newest first — `clarity-ctl show <id>` for the outcome and notes"
+CLOSED_MORE = "`clarity-ctl status --all --limit 0`"
+
+
+def search_text(hits) -> str:
+    """What `clarity-ctl search` prints: per hit a `#id status name` line and, when
+    something other than the name matched, a dim `  field: snippet` line."""
+    lines = []
+    for h in hits:
+        lines.append(f"#{h.id} {h.status} {_line(h.name, 80)}")
+        if h.snippet:
+            lines.append(paint(f"  {h.field}: {h.snippet}", "dim"))
+    return "\n".join(lines) or "no matches"
 
 
 def _line(text: str, limit: int = DIGEST_TEXT) -> str:
@@ -512,12 +530,51 @@ def _line(text: str, limit: int = DIGEST_TEXT) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
+def _closed_index(closed: list[Item], room: int) -> str | None:
+    """The closed-list section: `#id ✓ name` entries (`✗` for dropped, names cut at
+    DIGEST_CLOSED_NAME) joined by ` · `, as many of `closed` as fit in `room`
+    characters including the heading. When some are left out the last entry says how
+    many and where to find them. None if there is nothing to list or not even the
+    heading and that last entry fit."""
+    sep = " · "
+    entries = [f"#{i.id} {'✓' if i.status == 'done' else '✗'} {_line(i.name, DIGEST_CLOSED_NAME)}"
+               for i in closed]
+    n = len(entries)
+    older = lambda k: f"{n - k} older: {CLOSED_MORE}"  # noqa: E731
+    head = len(CLOSED_HEADING) + 1  # and its newline
+    # prefix[k] is the length of the first k entries joined
+    prefix = [0]
+    for e in entries:
+        prefix.append(prefix[-1] + len(e) + (len(sep) if prefix[-1] else 0))
+    for k in range(n, -1, -1):
+        body = prefix[k]
+        if k < n:
+            body += (len(sep) if k else 0) + len(older(k))
+        elif k == 0:
+            return None  # nothing to list
+        if head + body <= room:
+            parts = entries[:k] + ([older(k)] if k < n else [])
+            return f"{CLOSED_HEADING}\n" + sep.join(parts)
+    return None
+
+
 def state_digest(objectives: Objectives, items: list[Item]) -> str:
     """Where things stand, as markdown for the agent block: the worklog's part of
-    status, plus what status leaves to `show` — handoffs and standing decisions.
+    status, plus what status leaves to `show` — handoffs, standing decisions, and a
+    list of every closed item by id and name.
 
     `items` should be live and archived together: a decision does not stop standing
     because its epoch was archived.
+
+    The block is held within DIGEST_BUDGET characters. The closed list is the only part
+    that grows with the project, so it is cut first, from the oldest end, ending with
+    "N older: ..." when it is. It lists the closed items the rest of the block does not
+    already name (a `#id` anywhere in the text counts as naming it). Only if the
+    objective, active work, Up next and decisions leave it no room at all are the
+    oldest standing decisions cut, one at a time, each cut ending in an "N older" line
+    too. The objective and active work are never cut: with enough active epochs of
+    full-length lines (more than about ten) the block can pass the budget on those
+    alone, and then it carries no closed list.
     """
     def finished_order(i: Item):
         return (i.closed_seq or 0, i.ended or i.created or "", id_key(i.id))
@@ -549,21 +606,30 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
 
     decisions = sorted(((n, i) for i in items for n in i.decisions),
                        key=lambda d: d[0].at, reverse=True)
-    if decisions:
-        out += ["", "**Standing decisions**, newest first"]
-        out += [f"- {_line(n.text[len(DECISION):].strip())} (#{i.id})"
-                for n, i in decisions[:DIGEST_DECISIONS]]
-        if len(decisions) > DIGEST_DECISIONS:
-            out.append(f"- {len(decisions) - DIGEST_DECISIONS} older, in the notes of the epochs they name")
-
     closed = sorted((i for i in items if i.status in CLOSED), key=finished_order, reverse=True)
-    if closed:
-        out += ["", "**Recently closed**, newest first"]
-        out += [f"- #{i.id} {'✓' if i.status == 'done' else '✗ dropped'} {_line(i.name, DIGEST_NAME)}"
-                f"{' — ' + _line(i.outcome) if i.outcome else ''}" for i in closed[:DIGEST_CLOSED]]
-        if len(closed) > DIGEST_CLOSED:
-            out.append(f"- {len(closed) - DIGEST_CLOSED} older: `clarity-ctl status --all --limit 0`")
-    return "\n".join(out)
+
+    def block(count: int) -> str:
+        """Everything but the closed list, with the `count` newest decisions."""
+        lines = list(out)
+        if decisions:
+            lines += ["", "**Standing decisions**, newest first"]
+            lines += [f"- {_line(n.text[len(DECISION):].strip())} (#{i.id})"
+                      for n, i in decisions[:count]]
+            if len(decisions) > count:
+                lines.append(f"- {len(decisions) - count} older, in the notes of the epochs they name")
+        return "\n".join(lines)
+
+    for count in range(min(len(decisions), DIGEST_DECISIONS), -1, -1):
+        text = block(count)
+        left = [i for i in closed if not re.search(rf"#{re.escape(str(i.id))}(?![\d.])", text)]
+        if not left:
+            if len(text) <= DIGEST_BUDGET:
+                return text
+            continue
+        section = _closed_index(left, DIGEST_BUDGET - len(text) - len("\n\n"))
+        if section is not None:
+            return text + "\n\n" + section
+    return block(0)  # the objective and active work alone pass the budget
 
 
 def epoch_md(item: Item, existing: str | None = None) -> str:

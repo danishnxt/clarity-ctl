@@ -42,17 +42,22 @@ path that isn't there.
 
 ## Why the state is in the block
 
-It used to say "run `clarity-ctl status`" and stop there. Measured against a
-CLAUDE.md the agent keeps by hand (bench/token-savings), that lost: the file is in
-context before the first turn, while every clarity call is another turn, and every
-turn re-reads the whole context. Clarity's record was as good — a CLAUDE.md written
-from it scored best — it just cost more to get at.
+It used to say "run `clarity-ctl status`" and stop there. The block is in context
+before the first turn, while every clarity call is another turn, and every turn
+re-reads the whole context.
 
 So the block ends with `render.state_digest`: the objective, active epochs with
-their handoffs, the queue, standing decisions and recent outcomes. It is bounded —
-ten outcomes, twenty decisions, a line each — so it costs a large project no more
+their handoffs, the queue, standing decisions, and every closed item by id and name.
+It is held to a budget (render.DIGEST_BUDGET), so it costs a large project no more
 than a small one, and the rest stays a command away. It carries nothing that changes
 without a command running (leases, git), which is what would make it go stale.
+
+What the list of closed items is for was measured, by an eval kept outside this repo,
+on two real project histories. The previous block, which carried the last ten
+outcomes, answered 7-14% of questions about the project's past from the block alone,
+and a question cost about 6,000 and 4,800 estimated tokens: mostly the listing a
+session read to find an id. Listing every closed item by id, plus `clarity-ctl
+search`, cut that to about 1,900-2,900.
 
 ## Why the note rule names a moment, not a cadence
 
@@ -92,7 +97,8 @@ END = "<!-- CLARITY:END -->"
 
 _BODY = """- Where things stand is at the end of this block, current as of the last clarity
   write. Start from it; you don't need `status` or `--help` to get going.
-  `clarity-ctl show <id>` has every note on an item.
+  `clarity-ctl show <id>` has every note on an item. A fact not in the block:
+  `clarity-ctl search <words>` finds the item (often the note too), then `show <id>`.
 - Start work: `clarity-ctl epoch start "<name, a few words>" --repo <repo|all|none>
   --brief "<goal and limits>"`, or an idea's id in place of the name. One call: it
   branches the repos you name, makes the worktree, claims the epoch for you and prints
