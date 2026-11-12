@@ -1,4 +1,4 @@
-"""The headline figure: did the task pass, and what did it cost, per memory arm.
+"""The headline figure: tokens per run on the history-only tasks, clarity-ctl vs a hand-kept CLAUDE.md.
 
     uv run --with matplotlib python eval/meterbill/harness/figure.py [root [outdir]]
 
@@ -71,16 +71,11 @@ def sessions():
                "cost_k": cw / 1000, "turns": turns}
 
 
-# task groups, as frozen in story.yaml (#75 rule: control / answer-in-code / history-only)
-GROUPS = [
-    ("Controls\n(2 tasks, epoch 16)", [("e16", "C1"), ("e16", "C2")]),
-    ("Answer is in the code\n(3 tasks, epoch 16)", [("e16", "T1"), ("e16", "T2"), ("e16", "T3")]),
-    ("Answer only in history\n(handoff H1, epoch 16)", [("e16", "H1")]),
-    ("Answer only in history\n(5 tasks, epoch 24)", [("e24", t) for t in ("D1", "P1", "X1", "H2", "H1")]),
-]
+# the history-only tasks (#75 rule: control / answer-in-code / history-only), the two memory arms
 COST_TASKS = [("e16", "H1", "H1 ledger\n(epoch 16)"), ("e24", "D1", "D1 reminders"),
               ("e24", "P1", "P1 payments"), ("e24", "X1", "X1 retention"),
               ("e24", "H2", "H2 entities"), ("e24", "H1", "H1 ledger\n(epoch 24)")]
+COST_ARMS = ["clarity", "claudemd"]
 
 
 def draw(rows, mode, out: Path):
@@ -92,65 +87,56 @@ def draw(rows, mode, out: Path):
     for r in rows:
         by[(r["ckpt"], r["task"], r["arm"])].append(r)
 
-    fig, (a, b) = plt.subplots(1, 2, figsize=(13, 5.2), gridspec_kw={"width_ratios": [1.05, 1]})
+    fig, b = plt.subplots(figsize=(9, 5.2))
     fig.patch.set_facecolor(th["surface"])
-    w = 0.26
-    for ax in (a, b):
-        ax.set_facecolor(th["surface"])
-        for s in ("top", "right", "left"):
-            ax.spines[s].set_visible(False)
-        ax.spines["bottom"].set_color(th["grid"])
-        ax.yaxis.grid(True, color=th["grid"], linewidth=0.8)
-        ax.set_axisbelow(True)
-        ax.tick_params(length=0)
+    b.set_facecolor(th["surface"])
+    for s in ("top", "right", "left"):
+        b.spines[s].set_visible(False)
+    b.spines["bottom"].set_color(th["grid"])
+    b.yaxis.grid(True, color=th["grid"], linewidth=0.8)
+    b.set_axisbelow(True)
+    b.tick_params(length=0)
+    w = 0.3
 
-    # left: share of runs passing the hidden tests
-    for gi, (_, keys) in enumerate(GROUPS):
-        for ai, arm in enumerate(ARMS):
-            runs = [r for k in keys for r in by.get((*k, arm), [])]
-            x = gi + (ai - 1) * w
-            if not runs:
-                a.text(x, 3, "not\nrun", ha="center", va="bottom", fontsize=8, color=th["muted"])
-                continue
-            p = sum(r["pass"] for r in runs)
-            if p == 0:
-                a.plot([x - (w - 0.03) / 2, x + (w - 0.03) / 2], [0.6, 0.6], color=th["arm"][arm],
-                       linewidth=3, solid_capstyle="butt")
-            a.bar(x, 100 * p / len(runs), w - 0.03, color=th["arm"][arm], edgecolor=th["surface"],
-                  linewidth=2)
-            a.text(x, 100 * p / len(runs) + 2, f"{p}/{len(runs)}", ha="center", va="bottom",
-                   fontsize=8.5, color=th["text"])
-    a.set_xticks(range(len(GROUPS)), [g for g, _ in GROUPS], fontsize=8.5)
-    a.set_ylim(0, 112)
-    a.set_yticks([0, 25, 50, 75, 100], ["0%", "25%", "50%", "75%", "100%"])
-    a.set_title("Runs that passed the hidden tests", loc="left", fontsize=11.5, color=th["text"],
-                pad=12)
-
-    # right: cost per task on the history-only tasks, the two memory arms
+    failed = False
     for ti, (ck, t, _) in enumerate(COST_TASKS):
-        for ai, arm in enumerate(["clarity", "claudemd"]):
+        for ai, arm in enumerate(COST_ARMS):
             runs = by.get((ck, t, arm), [])
             if not runs:
                 continue
             mean = sum(r["cost_k"] for r in runs) / len(runs)
             x = ti + (ai - 0.5) * (w + 0.04)
             b.bar(x, mean, w, color=th["arm"][arm], edgecolor=th["surface"], linewidth=2)
-            b.scatter([x] * len(runs), [r["cost_k"] for r in runs], s=14, zorder=3,
-                      color=th["surface"], edgecolors=th["text"], linewidths=0.8)
+            ok = [r["cost_k"] for r in runs if r["pass"]]
+            bad = [r["cost_k"] for r in runs if not r["pass"]]
+            b.scatter([x] * len(ok), ok, s=16, zorder=3, color=th["surface"],
+                      edgecolors=th["text"], linewidths=0.8)
+            if bad:
+                failed = True
+                b.scatter([x] * len(bad), bad, s=40, zorder=3, marker="x", color=th["text"],
+                          linewidths=1.4)
             top = max([mean] + [r["cost_k"] for r in runs])
-            b.text(x, top + 6, f"{mean:.0f}k", ha="center", va="bottom", fontsize=8,
+            b.text(x, top + 6, f"{mean:.0f}k", ha="center", va="bottom", fontsize=8.5,
                    color=th["text"])
-    b.set_xticks(range(len(COST_TASKS)), [lab for *_, lab in COST_TASKS], fontsize=8.5)
+    b.set_xticks(range(len(COST_TASKS)), [lab for *_, lab in COST_TASKS], fontsize=9)
     b.set_ylabel("tokens per run, thousands (price-weighted)")
-    b.set_title("Cost on the history-only tasks (bars: mean, dots: each run)", loc="left",
-                fontsize=11.5, color=th["text"], pad=12)
+    b.set_title("Tokens per task when the answer is only in the project's history",
+                loc="left", fontsize=12, color=th["text"], pad=30)
 
-    handles = [plt.Rectangle((0, 0), 1, 1, color=th["arm"][k]) for k in ARMS]
-    leg = fig.legend(handles, [LABEL[k] for k in ARMS], loc="upper center", ncol=3, frameon=False,
-                     bbox_to_anchor=(0.5, 1.0), fontsize=10)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=th["arm"][k]) for k in COST_ARMS]
+    labels = [LABEL[k] for k in COST_ARMS]
+    handles.append(plt.Line2D([], [], marker="o", linestyle="", markersize=5,
+                              markerfacecolor=th["surface"], markeredgecolor=th["text"]))
+    labels.append("one run (passed)")
+    if failed:
+        handles.append(plt.Line2D([], [], marker="x", linestyle="", markersize=6,
+                                  color=th["text"]))
+        labels.append("one run (failed)")
+    leg = b.legend(handles, labels, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=len(labels),
+                   frameon=False, fontsize=9, handlelength=1.2, borderaxespad=0.2)
     for t in leg.get_texts():
         t.set_color(th["text"])
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.tight_layout()
     fig.savefig(out, dpi=160, facecolor=th["surface"])
     plt.close(fig)
 

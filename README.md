@@ -113,7 +113,7 @@ arm passes, and keeping memory costs roughly 12–17k tokens a task.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="eval/meterbill/eval-dark.png">
-  <img alt="Left: share of runs passing hidden tests per task group for clarity-ctl, a hand-kept CLAUDE.md and no memory. All arms pass controls and tasks whose answer is in the code; on the history-only handoff task no memory passes 0 of 3 while both memory arms pass 3 of 3; on five history-only tasks at epoch 24 clarity-ctl passes 9 of 9 and CLAUDE.md 8 of 9. Right: mean tokens per run on the history-only tasks; clarity-ctl is lower on four of six." src="eval/meterbill/eval-light.png">
+  <img alt="Bar chart of mean tokens per run on six tasks whose answer is only in the project's history, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="eval/meterbill/eval-light.png">
 </picture>
 
 How it was measured: a synthetic billing library built over 24 scripted sessions by fresh
