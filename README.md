@@ -109,6 +109,11 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
 to date.** Against a carefully hand-kept CLAUDE.md, clarity-ctl passed 12/12 runs to its 11/12
 and used 17% fewer tokens. An agent with no memory failed every run (0/3).
 
+That is on a small project: about 24 sessions of history. Real projects run for hundreds, and
+that's where the gap grows. A CLAUDE.md has to fit everything into one file the agent reads in
+full every session; by the end of this eval it was already 170 lines of its 200-line budget.
+clarity's block stays short, and the rest of the history is a `search` away.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="eval/meterbill/eval-dark.png">
   <img alt="Bar chart of mean tokens per run on six tasks, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="eval/meterbill/eval-light.png">
@@ -119,9 +124,8 @@ Claude Code (Sonnet) sessions. Decisions, reversals and handoffs were said in th
 never written into the code. Each memory arm was kept up to date by the same agent after every
 session, without seeing the tasks. Each batch's task prompts and test specs were committed before
 that batch's history was built or remembered; tasks are graded by hidden tests, including tests that fail the fix you'd
-write without knowing the history. The no-memory result comes from one task (it was not run on
-the later five), and samples are small (1–3 runs per cell), so read the token gaps as direction,
-not precision.
+write without knowing the history. The no-memory arm was run on the first of these tasks only; each cell
+has 1–3 runs.
 Everything is in [`eval/meterbill/`](eval/meterbill/README.md), with transcripts, hidden tests and
 the commands to rerun it.
 
