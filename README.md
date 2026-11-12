@@ -119,8 +119,8 @@ arm passes, and keeping memory costs roughly 12–17k tokens a task.
 How it was measured: a synthetic billing library built over 24 scripted sessions by fresh
 Claude Code (Sonnet) sessions. Decisions, reversals and handoffs were said in those sessions and
 never written into the code. Each memory arm was kept up to date by the same agent after every
-session, without seeing the tasks. Each batch's tasks were committed before that batch's history
-was built or remembered, and graded by hidden tests, including tests that fail the fix you'd
+session, without seeing the tasks. Each batch's task prompts and test specs were committed before
+that batch's history was built or remembered; tasks are graded by hidden tests, including tests that fail the fix you'd
 write without knowing the history. The no-memory result comes from one task (it was not run on
 the later five), and samples are small (1–3 runs per cell), so read the token gaps as direction,
 not precision.
