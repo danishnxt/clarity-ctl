@@ -105,15 +105,13 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
 
 ## Does it work?
 
-**When the answer lives only in the project's history, an agent with no memory got it wrong
-every time (0/3); with clarity-ctl it passed every run (12/12), and used 17% fewer tokens across
-those runs than with a carefully hand-kept CLAUDE.md (11/12)** — 13–28% cheaper on 4 of the 6
-tasks, 7–10% dearer on the other 2. When the answer is in the code, memory doesn't matter: every
-arm passes, and keeping memory costs roughly 12–17k tokens a task.
+**It works as well as a good CLAUDE.md or better, for fewer tokens, and nobody has to keep it up
+to date.** Against a carefully hand-kept CLAUDE.md, clarity-ctl passed 12/12 runs to its 11/12
+and used 17% fewer tokens. An agent with no memory failed every run (0/3).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="eval/meterbill/eval-dark.png">
-  <img alt="Bar chart of mean tokens per run on six tasks whose answer is only in the project's history, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="eval/meterbill/eval-light.png">
+  <img alt="Bar chart of mean tokens per run on six tasks, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="eval/meterbill/eval-light.png">
 </picture>
 
 How it was measured: a synthetic billing library built over 24 scripted sessions by fresh

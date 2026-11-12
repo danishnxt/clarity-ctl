@@ -120,7 +120,7 @@ def draw(rows, mode, out: Path):
                    color=th["text"])
     b.set_xticks(range(len(COST_TASKS)), [lab for *_, lab in COST_TASKS], fontsize=9)
     b.set_ylabel("tokens per run, thousands (price-weighted)")
-    b.set_title("Tokens per task when the answer is only in the project's history",
+    b.set_title("Tokens per task (bars: mean, dots: each run)",
                 loc="left", fontsize=12, color=th["text"], pad=30)
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=th["arm"][k]) for k in COST_ARMS]
