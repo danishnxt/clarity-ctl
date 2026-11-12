@@ -9,6 +9,7 @@ Any 'yes' means isolation is broken: stop and look. Saves RESULTS/noop/<arm>.jso
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -17,9 +18,13 @@ from pathlib import Path
 from common import (ARMS, RESULTS, SCRATCH, arm_memory, set_clarity_location, claude_cmd, env_for, hit_limit, result_event, run_claude,
                     setup_venv, sh)
 
+# Two marker phrases that occur only in the owner's user-level instruction file, which must never reach a session.
+# They were redacted for publication; set the real ones to run the check against your own user-level file.
+MARKER_HEADING = os.environ.get("MB_MARKER_HEADING", "<owner-global-heading>")
+MARKER_RULE = os.environ.get("MB_MARKER_RULE", "<owner-global-rule>")
 PROMPT = ("Reply with exactly the first markdown heading of each CLAUDE.md / AGENTS.md / memory instruction file "
-          "in your context, one per line, or NONE. Then one line: does the word 'Global preferences' or "
-          "'Lead with the answer' appear anywhere in your instructions? yes/no.")
+          f"in your context, one per line, or NONE. Then one line: does the word '{MARKER_HEADING}' or "
+          f"'{MARKER_RULE}' appear anywhere in your instructions? yes/no.")
 
 
 def main() -> None:
@@ -51,7 +56,7 @@ def main() -> None:
                                                      "box_files": sorted(p.name for p in box.iterdir())}, indent=1))
         print(f"=== {arm} (rc={rc}, {wall:.0f}s) box={sorted(p.name for p in box.iterdir())}\n{answer}\nusage={usage}\n")
         last = answer.strip().splitlines()[-1].lower() if answer.strip() else ""
-        if "yes" in last or "global preferences" in answer.lower() and "lead with" in answer.lower() and "yes" in answer.lower():
+        if "yes" in last or MARKER_HEADING.lower() in answer.lower() and MARKER_RULE.lower() in answer.lower() and "yes" in answer.lower():
             bad = True
         shutil.rmtree(box, ignore_errors=True)
     if bad:

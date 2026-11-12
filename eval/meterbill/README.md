@@ -7,19 +7,19 @@ It is written for someone who wants to check the claim, not accept it.
 ## What is claimed
 
 > **When the answer lives only in the project's history, an agent with no memory got it wrong
-> every time; with clarity-ctl it passed every run (12/12), and overall used 13–28% fewer tokens than
-> with a carefully hand-kept CLAUDE.md (11/12)** — cheaper on 4 of the 6 tasks, dearer on 2. When the answer is in the code, memory doesn't matter:
-> every arm passes, and keeping memory costs roughly 15–20k tokens a task.
+> every time (0/3); with clarity-ctl it passed every run (12/12), and used 17% fewer tokens across
+> those runs than with a carefully hand-kept CLAUDE.md (11/12)** — 13–28% cheaper on 4 of the 6
+> tasks, 7–10% dearer on the other 2. When the answer is in the code, memory doesn't matter: every
+> arm passes, and keeping memory costs roughly 12–17k tokens a task.
 
 What the data supports, precisely (details and tables below):
 
 - History-only tasks: clarity-ctl passed 12/12 runs, CLAUDE.md 11/12. "No memory" was run on one history-only task
-  (H1 at epoch 16): 0/3. It was not run on the epoch-24 tasks.
+  (H1 at epoch 16): 0/3. It was not run on the epoch-24 tasks, so the no-memory result comes from one task.
 - Cost on those tasks: clarity-ctl was cheaper than CLAUDE.md on 4 of 6 tasks (by 13, 20, 21 and 28%) and dearer on 2
   (D1 by 10%, P1 by 7%). Pooled over runs (12 vs 12) clarity-ctl used 17% fewer tokens; averaged over the 6 tasks, 9% fewer.
-  The "13-28%" range is the range over the four tasks where it was cheaper.
 - Answer-in-code tasks and controls (T1-T3, C1, C2 at e16; 15 sessions per arm): every arm passed every run. Keeping
-  memory cost about +17k (CLAUDE.md) and +12-14k (clarity-ctl) cost-weighted tokens per task over no memory.
+  memory cost about +17k (CLAUDE.md) and +12-14k (clarity-ctl) cost-weighted tokens per task over no memory (12-17k).
 - Samples are small: 1-3 runs per cell. Two epoch-24 cells have a single run.
 
 ## Design
@@ -48,7 +48,9 @@ What the data supports, precisely (details and tables below):
 - **Task sessions.** A fresh `claude -p --model sonnet` session in a box holding the code at the checkpoint and the arm's
   memory for that checkpoint; tools Bash, Read, Edit, Write, Grep, Glob; the task prompt verbatim; Claude Code's
   auto-memory disabled; `--setting-sources project,local` so the owner's global instructions are out. A `noop`
-  check (`results/noop/`) confirmed each arm sees only its own instruction files.
+  check (`results/noop/`) confirmed each arm sees only its own instruction files. The noop prompt asks whether two
+  marker phrases from the owner's user-level instruction file appear in the session's instructions; those two phrases
+  were redacted in `harness/noop.py` and `results/noop/` (shown as `<owner-global-heading>` and `<owner-global-rule>`).
 - **Hidden tests with trap patches.** Each task has hidden target tests, hidden "keep" tests, and trap patches:
   the plausible fix an agent would write without knowing the history. `harness/validate.py` checks, against the
   checkpoint code, that the reference patch passes everything and every trap patch passes the target tests but
@@ -87,6 +89,10 @@ All dates 2026-11-11, local time (UTC-5), from the commit history of the private
 | 23:11 | 7f39ab7 | usage-summing fix (below); `E16.md` regenerated, `E24.md` written from the reps that exist |
 
 Only e8 (1 rep) was run as the slice; e16 and e24 are the reported checkpoints.
+
+Freezing, precisely: for each batch the task prompts, hidden-test descriptions and trap descriptions were committed in
+`story.yaml` before that batch's history was built or remembered (batch 1 at 21:00, batch 2 at 21:21, batch 3 at 22:16).
+The hidden test files and patches themselves were committed with or after the build of that batch (21:09, 21:45, 22:39).
 
 ## Results
 
@@ -180,8 +186,9 @@ email address other than reserved example domains (`*.example`, `*.invalid`, `ex
 `user@example.com` (none needed replacing). `session_id`, `uuid`, `req_`, `msg_` and `toolu_` identifiers in the
 transcripts are replaced by sha256-derived pseudonyms, consistent across files. The bundle is a binary git repository
 with a single author `eval <eval@example.invalid>` and was copied unchanged. The only remaining mention of the
-author's GitHub name is the public repository URL in clarity-ctl's own `--version` output. Transcripts still contain
-Claude Code's rate-limit status events and thinking-block signatures, unmodified.
+author's GitHub name is the public repository URL in clarity-ctl's own `--version` output. Claude Code's
+rate-limit status records (591) were removed from the transcripts, and the credential-expiry and
+messaging-socket fields were removed from result and init events. Thinking-block signatures are unmodified.
 
 ## Layout
 

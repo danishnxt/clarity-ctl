@@ -106,9 +106,10 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
 ## Does it work?
 
 **When the answer lives only in the project's history, an agent with no memory got it wrong
-every time; with clarity-ctl it passed every run (12/12), and overall used 13–28% fewer tokens than
-with a carefully hand-kept CLAUDE.md (11/12)** — cheaper on 4 of the 6 tasks, dearer on 2. When the answer is in the code, memory doesn't matter:
-every arm passes, and keeping memory costs roughly 15–20k tokens a task.
+every time (0/3); with clarity-ctl it passed every run (12/12), and used 17% fewer tokens across
+those runs than with a carefully hand-kept CLAUDE.md (11/12)** — 13–28% cheaper on 4 of the 6
+tasks, 7–10% dearer on the other 2. When the answer is in the code, memory doesn't matter: every
+arm passes, and keeping memory costs roughly 12–17k tokens a task.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="eval/meterbill/eval-dark.png">
@@ -118,9 +119,11 @@ every arm passes, and keeping memory costs roughly 15–20k tokens a task.
 How it was measured: a synthetic billing library built over 24 scripted sessions by fresh
 Claude Code (Sonnet) sessions. Decisions, reversals and handoffs were said in those sessions and
 never written into the code. Each memory arm was kept up to date by the same agent after every
-session, without seeing the tasks. Tasks were frozen before any memory existed and graded by
-hidden tests, including tests that fail the fix you'd write without knowing the history. The
-samples are small (2–3 runs per cell), so read the token gaps as direction, not precision.
+session, without seeing the tasks. Each batch's tasks were committed before that batch's history
+was built or remembered, and graded by hidden tests, including tests that fail the fix you'd
+write without knowing the history. The no-memory result comes from one task (it was not run on
+the later five), and samples are small (1–3 runs per cell), so read the token gaps as direction,
+not precision.
 Everything is in [`eval/meterbill/`](eval/meterbill/README.md), with transcripts, hidden tests and
 the commands to rerun it.
 

@@ -31,7 +31,7 @@ ARMS = ("nothing", "claudemd", "clarity")
 GIT_ID = {"GIT_AUTHOR_NAME": "eval", "GIT_AUTHOR_EMAIL": "eval@example.invalid",
           "GIT_COMMITTER_NAME": "eval", "GIT_COMMITTER_EMAIL": "eval@example.invalid"}
 EXCLUDE = "__pycache__/\n*.pyc\n.pytest_cache/\n.DS_Store\n"
-LIMIT_WORDS = ("usage limit", "limit reached", "rate limit", "rate_limit", "quota")
+LIMIT_WORDS = ("usage limit", "limit reached", "rate limit", "quota")
 TOOLS = ["Bash", "Read", "Edit", "Write", "Grep", "Glob"]
 DISALLOWED = ["Agent", "Task", "WebFetch", "WebSearch"]
 
@@ -174,7 +174,7 @@ def session_result(stdout: str) -> dict | None:
 
 def hit_limit(ev: dict | None, stderr: str = "") -> bool:
     blob = (json.dumps(ev) if ev and ev.get("is_error") else "") + stderr
-    return any(w in blob.lower() for w in LIMIT_WORDS)
+    return any(w in blob.lower().replace("_", " ") for w in LIMIT_WORDS)   # "rate_limit_error" -> "rate limit error"
 
 
 def run_claude(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[str, str, int, float]:
