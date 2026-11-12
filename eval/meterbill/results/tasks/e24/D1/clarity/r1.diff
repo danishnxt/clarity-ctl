@@ -1,0 +1,290 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..0d90d1d 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -15,6 +15,7 @@ from meterbill.credits import (
+ from meterbill.attribution import attribute, tier_totals
+ from meterbill.events import EventValidationError, iter_unique_events, stream_events
+ from meterbill.ingest import EventStore, collect_stats, compact_month, ingest_drop, scrub_month
++from meterbill.dunning import due_reminders, level_cc
+ from meterbill.fx import MAX_RATE_AGE_DAYS, FxConverter, FxError
+ from meterbill.exports import ExportError, load_accounts, load_documents, write_csv, write_postings
+ from meterbill.invoices import (
+@@ -262,6 +263,13 @@ def build_parser() -> argparse.ArgumentParser:
+     st.add_argument("--csv", metavar="FILE", help="write ';'-delimited CSV to FILE instead")
+     st.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory holding payments.jsonl, tenants.json, invoices/ and documents/")
++    dn = sub.add_parser("dunning", help="list (and optionally queue) payment reminders due on a date")
++    dn.add_argument("--date", required=True, help="run date YYYY-MM-DD")
++    dn.add_argument("--queue", action="store_true",
++                    help="also queue each reminder in the outbox as kind 'reminder'")
++    dn.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory holding invoices/, payments.jsonl, documents/, contacts.json, "
++                         "fx_rates.json, tenants.json; mail is queued in outbox/")
+     fx = sub.add_parser("fx", help="currency conversion with the daily reference rates")
+     fx_sub = fx.add_subparsers(dest="fx_command", required=True)
+     conv = fx_sub.add_parser("convert", help="convert an amount between currencies")
+@@ -496,6 +504,37 @@ def _run_invoices(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_dunning(args: argparse.Namespace) -> int:
++    try:
++        data_dir = Path(args.data_dir)
++        on_date = date.fromisoformat(args.date)
++        store = InvoiceStore(data_dir / "invoices")
++        invoices = [i for t in load_catalog(data_dir).tenants
++                    for i in store.list(t, InvoiceStatus.FINALIZED)]
++        reminders = due_reminders(
++            invoices, PaymentStore(data_dir / PAYMENTS_FILE).load(), _credit_notes(data_dir),
++            on_date, FxConverter(data_dir))
++        # Resolve every contact before queueing anything, so a failure queues nothing.
++        mails = []
++        for r in reminders:
++            contact = load_contact(data_dir, r.invoice.tenant_id)
++            mails.append((r, contact.billing_contact, level_cc(r.level, contact.cc)))
++        outbox = Outbox(data_dir / OUTBOX_DIR)
++        for r, to, cc in mails:
++            number = r.invoice.number
++            print(f"{number}  L{r.level}  to={to}" + (f"  cc={','.join(cc)}" if cc else ""))
++            if args.queue:
++                outbox.queue_mail(
++                    to, cc, f"Payment reminder {r.level} for invoice {number}",
++                    f"Invoice {number} was due on {r.invoice.due_date.isoformat()} and "
++                    f"{r.open_amount} is still open. Please arrange payment.",
++                    "reminder", number)
++    except (ValueError, OSError, CatalogError, InvoiceStoreError, PaymentError, FxError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    return 0
++
++
+ def _run_outbox(args: argparse.Namespace) -> int:
+     try:
+         outbox = Outbox(Path(args.data_dir) / OUTBOX_DIR)
+@@ -681,6 +720,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+     args = build_parser().parse_args(argv)
+     if args.command == "invoices":
+         return _run_invoices(args)
++    if args.command == "dunning":
++        return _run_dunning(args)
+     if args.command == "outbox":
+         return _run_outbox(args)
+     if args.command == "payments":
+diff --git a/meterbill/dunning.py b/meterbill/dunning.py
+new file mode 100644
+index 0000000..1e256da
+--- /dev/null
++++ b/meterbill/dunning.py
+@@ -0,0 +1,78 @@
++"""Payment reminders for finalized invoices that are not fully paid.
++
++Schedule (days after due_date): level 1 at +7, level 2 at +28, level 3 at +35;
++level 3 also copies finance. A reminder is due only on its exact day.
++An invoice is skipped when it is paid, when its open amount is below
++MIN_OPEN_EUR (converted at the invoice's ISSUE date), or when a credit note
++was issued against it within the last CREDIT_NOTE_QUIET_DAYS days.
++Payments and credit notes dated after the run date are ignored, so a run for
++a past date gives the answer it would have given then.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import date, timedelta
++from typing import Iterable
++
++from meterbill.credits import CreditNote
++from meterbill.fx import FxConverter
++from meterbill.invoices import Invoice, InvoiceStatus
++from meterbill.money import Money
++from meterbill.payments import Payment, balance_for
++
++LEVEL_DAYS = {1: 7, 2: 28, 3: 35}
++FINANCE_CC = "finance@meterbill.example"
++LEVEL_EXTRA_CC = {3: (FINANCE_CC,)}
++MIN_OPEN_EUR = Money(500, "EUR")
++CREDIT_NOTE_QUIET_DAYS = 30
++
++
++@dataclass(frozen=True, slots=True)
++class Reminder:
++    invoice: Invoice
++    level: int
++    open_amount: Money
++
++
++def level_due(invoice: Invoice, on_date: date) -> int | None:
++    if invoice.due_date is None:
++        return None
++    days = (on_date - invoice.due_date).days
++    return next((lvl for lvl, d in LEVEL_DAYS.items() if d == days), None)
++
++
++def level_cc(level: int, contact_cc: Iterable[str]) -> tuple[str, ...]:
++    """The contact's own cc list followed by the level's extra addresses, without repeats."""
++    out: list[str] = []
++    for addr in (*contact_cc, *LEVEL_EXTRA_CC.get(level, ())):
++        if addr not in out:
++            out.append(addr)
++    return tuple(out)
++
++
++def due_reminders(
++    invoices: Iterable[Invoice], payments: Iterable[Payment],
++    credit_notes: Iterable[CreditNote], on_date: date, fx: FxConverter,
++) -> list[Reminder]:
++    payments = [p for p in payments if p.received_date <= on_date]
++    credit_notes = [n for n in credit_notes if n.issue_date <= on_date]
++    found = []
++    for invoice in invoices:
++        if invoice.status is not InvoiceStatus.FINALIZED or invoice.number is None:
++            continue
++        level = level_due(invoice, on_date)
++        if level is None:
++            continue
++        balance = balance_for(invoice, payments, credit_notes)
++        if balance.open_amount.minor <= 0:
++            continue
++        cutoff = on_date - timedelta(days=CREDIT_NOTE_QUIET_DAYS)
++        if any(n.invoice_number == invoice.number and n.issue_date >= cutoff
++               for n in credit_notes):
++            continue
++        in_eur = fx.convert(balance.open_amount, "EUR", invoice.issue_date)
++        if in_eur.minor < MIN_OPEN_EUR.minor:
++            continue
++        found.append(Reminder(invoice, level, balance.open_amount))
++    return sorted(found, key=lambda r: r.invoice.number)
+diff --git a/tests/test_dunning.py b/tests/test_dunning.py
+new file mode 100644
+index 0000000..faf6354
+--- /dev/null
++++ b/tests/test_dunning.py
+@@ -0,0 +1,127 @@
++import json
++from datetime import date
++
++import pytest
++
++from meterbill.cli import main
++from meterbill.credits import credit_note_to_dict, issue_credit_note
++from meterbill.invoices import InvoiceStore, SequenceStore, build_invoice
++from meterbill.outbox import Outbox
++from meterbill.period import Period
++from meterbill.plans import load_catalog
++from meterbill.events import stream_events
++from conftest import event_record
++
++# finalized 2026-11-03, 14 days terms -> due 2026-11-17
++L1, L2, L3 = "2026-11-24", "2026-12-15", "2026-12-22"
++
++
++def make_invoice(data_dir, tmp_path, tenant, quantity="100000"):
++    catalog = load_catalog(data_dir)
++    store = InvoiceStore(data_dir / "invoices")
++    f = tmp_path / f"{tenant}.jsonl"
++    records = [event_record(tenant_id=tenant, quantity=quantity)]
++    if tenant == "NWD":  # a second line, so crediting one line leaves an open amount
++        records.append(event_record(tenant_id=tenant, meter="storage_gb", quantity="500",
++                                    event_id="e2", idempotency_key="k2"))
++    f.write_text("".join(json.dumps(r) + "\n" for r in records))
++    d = build_invoice(tenant, Period.parse("2026-10"), stream_events(f), catalog, date(2026, 11, 2))
++    store.save_draft(d)
++    return store.finalize(d.draft_id, SequenceStore(data_dir / "sequences.json"), 14, date(2026, 11, 3))
++
++
++def dunning(data_dir, day, *extra):
++    return main(["dunning", "--date", day, "--data-dir", str(data_dir), *extra])
++
++
++@pytest.fixture
++def two(data_dir, tmp_path):
++    return make_invoice(data_dir, tmp_path, "NWD"), make_invoice(data_dir, tmp_path, "ACM")
++
++
++def test_levels_lines_cc_and_sort(two, data_dir, capsys):
++    nwd, acm = two
++    assert dunning(data_dir, L1) == 0
++    out = capsys.readouterr().out.splitlines()
++    assert out == [
++        f"{acm.number}  L1  to=ap@acme.example",
++        f"{nwd.number}  L1  to=billing@northwind.example  cc=finance@northwind.example",
++    ]
++    dunning(data_dir, L2)
++    assert [l.split()[1] for l in capsys.readouterr().out.splitlines()] == ["L2", "L2"]
++    dunning(data_dir, L3)
++    out = capsys.readouterr().out.splitlines()
++    assert out[0] == f"{acm.number}  L3  to=ap@acme.example  cc=finance@meterbill.example"
++    assert out[1].endswith("cc=finance@northwind.example,finance@meterbill.example")
++
++
++def test_other_dates_print_nothing(two, data_dir, capsys):
++    for day in ("2026-11-17", "2026-11-23", "2026-12-08", "2026-12-23"):
++        assert dunning(data_dir, day) == 0
++    assert capsys.readouterr().out == ""
++
++
++def test_paid_and_void_skipped(two, data_dir, capsys):
++    nwd, acm = two
++    main(["payments", "record", "--tenant", "NWD", "--amount", str(nwd.total.to_major()),
++          "--currency", "EUR", "--date", "2026-11-10", "--reference", nwd.number,
++          "--data-dir", str(data_dir)])
++    InvoiceStore(data_dir / "invoices").void(acm.number, "oops")
++    capsys.readouterr()
++    dunning(data_dir, L1)
++    assert capsys.readouterr().out == ""
++
++
++def test_payment_after_run_date_ignored(two, data_dir, capsys):
++    nwd, _ = two
++    main(["payments", "record", "--tenant", "NWD", "--amount", str(nwd.total.to_major()),
++          "--currency", "EUR", "--date", "2026-11-30", "--reference", nwd.number,
++          "--data-dir", str(data_dir)])
++    capsys.readouterr()
++    dunning(data_dir, L1)
++    assert nwd.number in capsys.readouterr().out
++
++
++def test_small_open_amount_skipped(two, data_dir, capsys):
++    nwd, _ = two
++    left = nwd.total.minor - 499  # 4.99 EUR open
++    main(["payments", "record", "--tenant", "NWD", "--amount", f"{left / 100:.2f}",
++          "--currency", "EUR", "--date", "2026-11-10", "--reference", nwd.number,
++          "--data-dir", str(data_dir)])
++    capsys.readouterr()
++    dunning(data_dir, L1)
++    assert nwd.number not in capsys.readouterr().out
++
++
++@pytest.mark.parametrize("issued, skipped", [
++    (date(2026, 10, 25), True),   # exactly 30 days before the run date
++    (date(2026, 10, 24), False),  # 31 days
++    (date(2026, 11, 20), True),
++])
++def test_recent_credit_note_skips(two, data_dir, capsys, issued, skipped):
++    nwd, _ = two
++    docs = data_dir / "documents"
++    docs.mkdir()
++    note = issue_credit_note(nwd, [1], reason="x", store=SequenceStore(data_dir / "cn.json", "CN"),
++                             issue_date=issued)
++    (docs / "a.json").write_text(json.dumps(credit_note_to_dict(note)))
++    dunning(data_dir, L1)
++    assert (nwd.number not in capsys.readouterr().out) is skipped
++
++
++def test_queue_writes_outbox(two, data_dir, capsys):
++    nwd, acm = two
++    assert dunning(data_dir, L3, "--queue") == 0
++    mails = Outbox(data_dir / "outbox").list()
++    assert sorted(m.ref for m in mails) == sorted([nwd.number, acm.number])
++    m = next(m for m in mails if m.ref == nwd.number)
++    assert m.kind == "reminder" and m.to == "billing@northwind.example"
++    assert m.cc == ("finance@northwind.example", "finance@meterbill.example")
++    dunning(data_dir, L3)
++    assert len(Outbox(data_dir / "outbox").list()) == 2  # no --queue, nothing new
++
++
++def test_missing_contact_queues_nothing(two, data_dir, capsys):
++    (data_dir / "contacts.json").write_text(json.dumps({"ACM": {"billing_contact": "ap@acme.example"}}))
++    assert dunning(data_dir, L1, "--queue") == 1
++    assert Outbox(data_dir / "outbox").list() == []

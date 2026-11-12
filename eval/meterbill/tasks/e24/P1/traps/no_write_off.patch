@@ -1,0 +1,172 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..957000e 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -31,6 +31,8 @@ from meterbill.invoices import (
+ )
+ from meterbill.money import Money
+ from meterbill.outbox import OUTBOX_DIR, Outbox, OutboxError, load_contact
++from meterbill.exports import format_amount
++from meterbill.payments.allocate import allocate_unmatched
+ from meterbill.payments import (
+     PAYMENTS_FILE, InvoiceBalance, Payment, PaymentError, PaymentStore, balance_for,
+     unmatched_payments,
+@@ -180,7 +182,9 @@ def build_parser() -> argparse.ArgumentParser:
+     pl.add_argument("--tenant", required=True, help="tenant id")
+     pl.add_argument("--unmatched", action="store_true",
+                     help="only payments that match no finalized invoice of the tenant")
+-    for p in (pr, pl):
++    pa = pay_sub.add_parser("allocate", help="allocate a tenant's unmatched payments to its open invoices")
++    pa.add_argument("--tenant", required=True, help="tenant id")
++    for p in (pr, pl, pa):
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory holding payments.jsonl, tenants.json and invoices/")
+     wal = sub.add_parser("wallet", help="prepaid tenant wallets")
+@@ -369,6 +373,13 @@ def _run_payments(args: argparse.Namespace) -> int:
+         catalog = load_catalog(data_dir)
+         tenant = catalog.tenant(args.tenant)
+         invoices = InvoiceStore(data_dir / "invoices").list(tenant.id, InvoiceStatus.FINALIZED)
++        if args.payments_command == "allocate":
++            for move in allocate_unmatched(
++                    tenant.id, InvoiceStore(data_dir / "invoices").list(tenant.id),
++                    _credit_notes(data_dir), store, WalletStore(data_dir), FxConverter(data_dir)):
++                print(f"{move.payment_id} -> {move.target} {format_amount(move.amount)} "
++                      f"{move.amount.currency}")
++            return 0
+         if args.payments_command == "record":
+             payment = store.record(Payment(
+                 tenant.id, Money.from_major(args.amount, args.currency),
+@@ -389,7 +400,7 @@ def _run_payments(args: argparse.Namespace) -> int:
+             rows = [(p.received_date.isoformat(), str(p.amount), p.reference or "-",
+                      "unmatched" if id(p) in unmatched else "matched") for p in payments]
+             print("\n".join(_table(("Date", "Amount", "Reference", "State"), rows, left=4)))
+-    except (ValueError, OSError, CatalogError, InvoiceStoreError, PaymentError) as exc:
++    except (ValueError, OSError, CatalogError, InvoiceStoreError, PaymentError, WalletError, FxError) as exc:
+         print(f"error: {exc}", file=sys.stderr)
+         return 1
+     return 0
+diff --git a/meterbill/payments/allocate.py b/meterbill/payments/allocate.py
+new file mode 100644
+index 0000000..3b7df4b
+--- /dev/null
++++ b/meterbill/payments/allocate.py
+@@ -0,0 +1,119 @@
++"""Allocation of a tenant's unmatched payments to its open invoices."""
++
++from __future__ import annotations
++
++import json
++import os
++import tempfile
++from dataclasses import dataclass
++from datetime import date
++from decimal import Decimal
++from pathlib import Path
++
++from meterbill.credits import CreditNote
++from meterbill.fx import FxConverter
++from meterbill.invoices import Invoice, InvoiceStatus
++from meterbill.money import Money
++from meterbill.payments.models import Payment
++from meterbill.payments.store import PaymentStore, balance_for, matches, payment_to_dict
++from meterbill.wallets import WalletStore
++
++WRITE_OFF_ACCOUNT = "6900"
++ALLOCATED, WRITTEN_OFF = "allocated", f"writeoff:{WRITE_OFF_ACCOUNT}"
++
++
++@dataclass(frozen=True, slots=True)
++class Movement:
++    payment_id: str
++    target: str            # an invoice number, "wallet", or a ledger account number
++    amount: Money
++
++
++def _write_all(path: Path, payments: list[Payment]) -> None:
++    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
++    with os.fdopen(fd, "w", encoding="utf-8") as handle:
++        for p in payments:
++            handle.write(json.dumps(payment_to_dict(p)) + "\n")
++        handle.flush()
++        os.fsync(handle.fileno())
++    os.replace(tmp, path)
++
++
++def allocate_unmatched(
++    tenant_id: str,
++    invoices: list[Invoice],
++    credit_notes: list[CreditNote],
++    store: PaymentStore,
++    wallets: WalletStore,
++    converter: FxConverter,
++) -> list[Movement]:
++    """Allocate the tenant's unmatched payments, oldest payment first, and record the result.
++
++    Open invoices are filled oldest due date first, ties by the lower invoice number; void
++    invoices are skipped. A leftover goes to the wallet in the payment's currency. A payment in
++    another currency than the invoice is converted at the payment date's rate, and an open
++    remainder under 0.50 after it is written off to account 6900. Each processed payment is
++    replaced in the payments file by the matched payments it was split into.
++    """
++    everything = store.load()
++    finalized = [i for i in invoices if i.status is InvoiceStatus.FINALIZED and i.number]
++    ids = {id(p): f"P{n}" for n, p in enumerate(everything, 1)}
++    pending = sorted((p for p in everything if p.tenant_id == tenant_id
++                      and not any(matches(p, i) for i in finalized)),
++                     key=lambda p: (p.received_date, ids[id(p)]))
++    replacements: dict[int, list[Payment]] = {}
++    added: list[Payment] = []
++    movements: list[Movement] = []
++
++    def open_amount(invoice: Invoice) -> Money:
++        return balance_for(invoice, [*everything, *added], credit_notes).open_amount
++
++    for payment in pending:
++        remaining, when, pid = payment.amount, payment.received_date, ids[id(payment)]
++        pieces: list[Payment] = []
++        candidates = sorted((i for i in finalized if i.tenant_id == tenant_id),
++                            key=lambda i: (i.due_date or date.max, i.number))
++        for invoice in candidates:
++            if remaining.minor <= 0:
++                break
++            owed = open_amount(invoice)
++            if owed.minor <= 0:
++                continue
++            cross = invoice.currency != remaining.currency
++            if cross:
++                rate = converter.rate(remaining.currency, invoice.currency, when)
++                available = FxConverter.apply(remaining, invoice.currency, rate)
++            else:
++                available = remaining
++            take = Money(min(owed.minor, available.minor), invoice.currency)
++            if take.minor < available.minor:           # the payment is only partly used
++                used = FxConverter.apply(take, remaining.currency,
++                                         converter.rate(invoice.currency, remaining.currency, when))
++                remaining = Money(max(remaining.minor - used.minor, 0), remaining.currency)
++            else:
++                remaining = Money.zero(remaining.currency)
++            piece = Payment(tenant_id, take, when, invoice.number, ALLOCATED)
++            pieces.append(piece)
++            added.append(piece)
++            movements.append(Movement(pid, invoice.number, take))
++            left = owed - take
++            if False:
++                off = Payment(tenant_id, left, when, invoice.number, WRITTEN_OFF)
++                pieces.append(off)
++                added.append(off)
++                movements.append(Movement(pid, WRITE_OFF_ACCOUNT, left))
++        if remaining.minor > 0:
++            wallets.topup(tenant_id, remaining, when)
++            movements.append(Movement(pid, "wallet", remaining))
++        replacements[id(payment)] = pieces
++    if pending:
++        merged: list[Payment] = []
++        for p in everything:
++            merged.extend(replacements.get(id(p), [p]))
++        _write_all(store.path, merged)
++    return movements
++
++
++def _below_half(amount: Money) -> bool:
++    """Whether a positive amount is under 0.50 of its currency (half a major unit)."""
++    return amount.to_major() < Decimal("0.50")

@@ -1,0 +1,55 @@
+{
+ "n": 5,
+ "title": "remove the tax cache",
+ "commit_msg": "remove tax cache",
+ "prompt": "We have to take the tax cache out. The billing worker is a long-running process, and ops\nedit tax_overrides.json by hand when a tenant's exemption is granted or revoked. Yesterday\nACM's DE exemption was revoked in the file, and the worker kept invoicing them at 0% for\nsix hours because it never re-read it. And don't suggest checking the file's mtime: the\nfiles are rsynced from the config repo with times preserved, so an edited file can come in\nwith an old mtime. Rule from now on: no tax data cached across invoice runs, ever. If tax lookups need to be fast, cache only within a single build_invoice call\nand throw it away at the end. For now just remove the cache entirely and restore plain\nper-lookup reads; we'll do the per-run version when Northwind complains again. Remove the\ncache's test too.\n",
+ "report": "The tax cache is gone, so every lookup now reads the JSON files from disk. The full suite passes (160 tests).\n\n- **`meterbill/tax/store.py`**: I removed `lru_cache` from `read_rates` and `read_overrides`, along with the import. I also dropped the \"cached for the life of the process\" lines from their docstrings.\n- **`meterbill/tax/resolver.py`**: I changed the `TaxResolver` docstring to say the data files are read on every lookup.\n- **`tests/test_tax.py`**: I removed `test_files_read_once_across_lookups`, the cache's test.\n\nI didn't touch `build_invoice`, so the per-invoice-run cache you mentioned is not built. Nothing else is left undone.",
+ "diffstat": " meterbill/tax/resolver.py |  2 +-\n meterbill/tax/store.py    |  9 ++-------\n tests/test_tax.py         | 18 ------------------\n 3 files changed, 3 insertions(+), 26 deletions(-)\n",
+ "shortstat": "3 files changed, 3 insertions(+), 26 deletions(-)",
+ "usage": {
+  "input_tokens": 8,
+  "cache_creation_input_tokens": 8609,
+  "cache_read_input_tokens": 57568,
+  "output_tokens": 1295,
+  "output_tokens_details": {
+   "thinking_tokens": 0
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 8609,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 248,
+    "cache_read_input_tokens": 17989,
+    "cache_creation_input_tokens": 1109,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1109
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 6,
+ "total_cost_usd": 0.053158800000000006,
+ "duration_ms": 12028,
+ "wall_s": 12.6,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 45%]\n........................................................................ [ 90%]\n................                                                         [100%]\n160 passed in 0.14s",
+ "tree_dirty_after_pytest": ""
+}

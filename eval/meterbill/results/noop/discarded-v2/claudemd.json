@@ -1,0 +1,44 @@
+{
+ "arm": "claudemd",
+ "answer": "# meterbill\n\nno",
+ "usage": {
+  "input_tokens": 2,
+  "cache_creation_input_tokens": 3856,
+  "cache_read_input_tokens": 8700,
+  "output_tokens": 9,
+  "output_tokens_details": {
+   "thinking_tokens": 0
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 3856,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 9,
+    "cache_read_input_tokens": 8700,
+    "cache_creation_input_tokens": 3856,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 3856
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 1,
+ "wall_s": 2.2,
+ "box_files": [
+  "CLAUDE.md",
+  "workspace"
+ ]
+}

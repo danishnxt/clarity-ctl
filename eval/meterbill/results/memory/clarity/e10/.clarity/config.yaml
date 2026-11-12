@@ -1,0 +1,17 @@
+version: 1
+project:
+  name: meterbill
+style:
+  length: concise
+  format: bullets
+  custom: ''
+behavior:
+  read_on_demand: true
+  ask_before:
+  - push
+  - delete
+  - install
+  commit_style: conventional
+hooks:
+  enforce: warn
+summarizer: none

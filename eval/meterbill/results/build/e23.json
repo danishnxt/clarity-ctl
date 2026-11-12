@@ -1,0 +1,55 @@
+{
+ "n": 23,
+ "title": "contacts and outbox",
+ "commit_msg": "billing contacts and mail outbox",
+ "prompt": "We'll need to email customers. Add data/contacts.json (tenant -> billing_contact, optional cc\nlist) and meterbill/outbox/: queue_mail(to, cc, subject, body, kind, ref) writes one JSON file\nper message into data/outbox/, never sends anything (a separate mailer picks them up \u2014 these\nboxes have no internet). `outbox list`, `outbox show`. Use it now for one thing: `invoices\nfinalize --notify` queues an \"invoice\" mail to the billing contact. Tests.\nFor the reminders later, two more rules: don't remind about an invoice whose open amount is\nbelow 5.00 EUR (convert at the invoice's issue date for other currencies), and skip any invoice\nthat had a credit note issued against it in the last 30 days \u2014 those are usually being\ndisputed and a reminder makes it worse.\n",
+ "report": "`invoices finalize --notify` now queues an \"invoice\" mail to the tenant's billing contact, and `outbox list` and `outbox show` are in place. The full suite passes (466 tests). Nothing is ever sent.\n\n**Changes**\n- `data/contacts.json` (new) maps each tenant to a `billing_contact` and an optional `cc` list. The five existing tenants have placeholder `.example` addresses. Replace them with real ones.\n- `meterbill/outbox/store.py` (new):\n  - `Outbox.queue_mail(to, cc, subject, body, kind, ref)` writes one JSON file per message, atomically, to `data/outbox/<timestamp>-<8 hex>.json`.\n  - It rejects addresses without an `@`.\n  - `load` and `list` read the messages back.\n- `meterbill/outbox/contacts.py` (new): `load_contact(data_dir, tenant)`, with clear errors when the file or the tenant's entry is missing.\n- `meterbill/outbox/__init__.py` (new): exports the above.\n- `meterbill/cli.py`:\n  - `invoices finalize --notify` looks up the contact before finalizing, so a missing contact fails with exit 1 before the invoice is numbered. After finalizing, it queues the mail with the formatted invoice as the body and the invoice number as `ref`.\n  - `outbox list` and `outbox show <id>` are new commands, and both accept `--data-dir`.\n- `.gitignore`: added `data/outbox/`.\n- `tests/conftest.py`: the `data_dir` fixture now copies `contacts.json`.\n- `tests/test_outbox.py` (new): covers queueing, validation, contacts, `--notify`, a missing contact leaving the sequence untouched, and `outbox list` and `show`.\n\n**Left undone**\n- I did not build the two reminder rules (the 5.00 EUR minimum and the 30-day credit-note skip), since you described them as later work.\n- `--notify` is only on `invoices finalize`, not on the older `invoice --finalize` command.",
+ "diffstat": " .gitignore                   |   1 +\n data/contacts.json           |   7 +++\n meterbill/cli.py             |  45 ++++++++++++++++++-\n meterbill/outbox/__init__.py |   7 +++\n meterbill/outbox/contacts.py |  36 +++++++++++++++\n meterbill/outbox/store.py    | 105 +++++++++++++++++++++++++++++++++++++++++++\n tests/conftest.py            |   2 +-\n tests/test_outbox.py         |  99 ++++++++++++++++++++++++++++++++++++++++\n 8 files changed, 299 insertions(+), 3 deletions(-)\n",
+ "shortstat": "8 files changed, 299 insertions(+), 3 deletions(-)",
+ "usage": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 24694,
+  "cache_read_input_tokens": 197261,
+  "output_tokens": 8098,
+  "output_tokens_details": {
+   "thinking_tokens": 404
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 24694,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 696,
+    "cache_read_input_tokens": 33017,
+    "cache_creation_input_tokens": 2221,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 2221
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.1995181,
+ "duration_ms": 53728,
+ "wall_s": 54.0,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 15%]\n........................................................................ [ 30%]\n........................................................................ [ 46%]\n........................................................................ [ 61%]\n........................................................................ [ 77%]\n........................................................................ [ 92%]\n..................................                                       [100%]\n466 passed in 0.84s",
+ "tree_dirty_after_pytest": ""
+}

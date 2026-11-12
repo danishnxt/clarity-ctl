@@ -1,0 +1,60 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index d62aa41..7261e3c 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -35,7 +35,7 @@ def build_invoice(
+     plan = catalog.plan(tenant.plan_id)
+     rated = rate_events(plan, tenant.id, period, events, default_country=tenant.country)
+     issued = issue_date or date.today()
+-    resolver = tax_resolver or TaxResolver()
++    resolver = (tax_resolver or TaxResolver()).snapshot()
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+diff --git a/meterbill/tax/resolver.py b/meterbill/tax/resolver.py
+index 7de8225..d7fbca5 100644
+--- a/meterbill/tax/resolver.py
++++ b/meterbill/tax/resolver.py
+@@ -30,14 +30,40 @@ class TaxResolver:
+ 
+     def __init__(self, data_dir: str | Path = store.DEFAULT_DATA_DIR) -> None:
+         self.data_dir = Path(data_dir)
++        self._rates: dict | None = None
++        self._overrides: dict | None = None
++
++    def snapshot(self) -> "TaxResolver":
++        """A resolver that reads each data file at most once, on first use, and serves
++        every lookup from that read. Meant to be created for one invoice and dropped."""
++        snap = TaxResolver(self.data_dir)
++        snap._rates = snap._overrides = None
++        snap._frozen = True
++        return snap
++
++    _frozen = False
++
++    def _read_rates(self) -> dict:
++        if not self._frozen:
++            return store.read_rates(self.data_dir)
++        if self._rates is None:
++            self._rates = store.read_rates(self.data_dir)
++        return self._rates
++
++    def _read_overrides(self) -> dict:
++        if not self._frozen:
++            return store.read_overrides(self.data_dir)
++        if self._overrides is None:
++            self._overrides = store.read_overrides(self.data_dir)
++        return self._overrides
+ 
+     def rate_for(self, tenant_id: str, country: str, on_date: date) -> Decimal:
+-        override = store.read_overrides(self.data_dir).get(tenant_id, {}).get(country)
++        override = self._read_overrides().get(tenant_id, {}).get(country)
+         if override is not None:
+             return _parse_rate(override.get("rate"), f"override for {tenant_id}/{country}")
+ 
+         best: tuple[date, Decimal] | None = None
+-        for entry in store.read_rates(self.data_dir).get(country, []):
++        for entry in self._read_rates().get(country, []):
+             try:
+                 valid_from = date.fromisoformat(entry["valid_from"])
+             except (KeyError, TypeError, ValueError):

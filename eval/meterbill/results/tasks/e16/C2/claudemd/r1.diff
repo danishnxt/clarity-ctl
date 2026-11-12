@@ -1,0 +1,66 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..0381ad6 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -177,9 +177,30 @@ def build_parser() -> argparse.ArgumentParser:
+     qt.add_argument("--date", help="tax rate date YYYY-MM-DD (default: today)")
+     qt.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory with plans and tax JSON files")
++    tn = sub.add_parser("tenants", help="inspect the tenants in the catalog")
++    tn_sub = tn.add_subparsers(dest="tenants_command", required=True)
++    tl = tn_sub.add_parser("list", help="list tenants sorted by id")
++    tl.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory with plans.json and tenants.json")
+     return parser
+ 
+ 
++def _run_tenants(args: argparse.Namespace) -> int:
++    try:
++        catalog = load_catalog(args.data_dir)
++    except (ValueError, OSError) as exc:  # CatalogError is a ValueError
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    header = ("ID", "NAME", "COUNTRY", "PLAN", "CURRENCY", "TZ")
++    rows = [(t.id, t.name, t.country, t.plan_id,
++             t.billing_currency or catalog.plan(t.plan_id).currency, t.tz)
++            for t in sorted(catalog.tenants.values(), key=lambda t: t.id)]
++    widths = [max(len(c) for c in col) for col in zip(header, *rows)]
++    for row in (header, *rows):
++        print("  ".join(f"{c:<{w}}" for c, w in zip(row, widths)).rstrip())
++    return 0
++
++
+ def _run_quote(args: argparse.Namespace) -> int:
+     try:
+         single = args.meter is not None or args.quantity is not None
+@@ -359,6 +380,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_fx(args)
+     if args.command == "quote":
+         return _run_quote(args)
++    if args.command == "tenants":
++        return _run_tenants(args)
+     try:
+         period = Period.parse(args.period)
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 005321c..431f125 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -83,3 +83,17 @@ def test_missing_required_args_exits_2():
+     proc = subprocess.run([sys.executable, "-m", "meterbill", "invoice"], cwd=ROOT,
+                           capture_output=True, text=True)
+     assert proc.returncode == 2
++
++
++def test_tenants_list_seed(data_dir, capsys):
++    assert main(["tenants", "list", "--data-dir", str(data_dir)]) == 0
++    lines = capsys.readouterr().out.splitlines()
++    assert lines[0] == "ID   NAME           COUNTRY  PLAN            CURRENCY  TZ"
++    assert [l.split()[0] for l in lines[1:]] == ["ACM", "GLB", "NWD", "TKY", "ZEN"]
++    assert lines[3] == "NWD  Northwind      DE       usage-eur       EUR       Europe/Berlin"
++    assert lines[4] == "TKY  Tokyo Freight  JP       enterprise-jpy  USD       UTC"
++
++
++def test_tenants_list_bad_data_dir(tmp_path, capsys):
++    assert main(["tenants", "list", "--data-dir", str(tmp_path)]) == 1
++    assert "error:" in capsys.readouterr().err

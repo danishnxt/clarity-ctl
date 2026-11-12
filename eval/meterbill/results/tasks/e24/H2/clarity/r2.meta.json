@@ -1,0 +1,75 @@
+{
+ "at": "e24",
+ "task": "H2",
+ "arm": "clarity",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 49.3,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 25025,
+  "cache_read_input_tokens": 237601,
+  "output_tokens": 5464,
+  "output_tokens_details": {
+   "thinking_tokens": 960
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 25025,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 506,
+    "cache_read_input_tokens": 34825,
+    "cache_creation_input_tokens": 462,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 462
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.1785401,
+ "is_error": false,
+ "result": "Credit notes now carry the legal entity of the invoice they credit, and the full test suite passes (486 tests).\n\n- **Entity and numbering:** A credit note takes its entity from the credited invoice. This holds even if the tenant has since moved entity. Numbers are `CN-<ENTITY>-<TENANT>-<YYYY>-<seq>`, for example `CN-MBDE-NWD-2027-00001`. Each entity, tenant and year has its own gapless sequence, kept separate from the invoice sequence.\n- **Output:** `CreditNote` has a new `entity` field. It's saved only when set, and the credit CLI's text output now shows it.\n- **Old data:** Old-format notes without an entity still load, and keep their old numbers. If a credit sequence file in the old layout exists, it moves under MBDE the first time a credit note is issued. Numbering then continues from the old counter. This matches how the invoice sequences were migrated in #57. `data/credit_sequences.json` doesn't exist in this repo, so nothing was migrated here.\n- **Tests:** I changed three existing credit tests to expect the new number format. I added tests for a separate sequence per entity and for the old-layout migration and loading.\n\nI closed #58 in clarity with a note on the above. I didn't commit anything.\n\nThe first `clarity-ctl start` call, made with a name and `--repo meterbill`, didn't create an epoch because no repos are registered. I started #58 by id with `--repo none` instead, so the epoch has no branch attached.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/058_2026-11-11__credit-notes-entity-from/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the legal-entity work: credit notes aren't done yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_credit_note_number_has_the_invoices_entity": true,
+   "test_target::test_each_entity_numbers_its_own_credit_notes": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_credit_note_after_the_tenant_moved_keeps_the_invoices_entity": true,
+   "test_keep::test_sequence_is_per_entity_tenant_and_year": true,
+   "test_keep::test_credit_note_sequence_is_separate_from_the_invoice_sequence": true,
+   "test_keep::test_a_refused_credit_note_leaves_no_gap": true,
+   "test_keep::test_existing_credit_note_documents_keep_their_numbers": true
+  },
+  "hidden_collected": 7
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

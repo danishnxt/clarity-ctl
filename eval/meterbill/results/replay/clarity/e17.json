@@ -1,0 +1,46 @@
+{
+ "arm": "clarity",
+ "epoch": 17,
+ "returncode": 0,
+ "wall_s": 19.2,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 10,
+  "cache_creation_input_tokens": 12564,
+  "cache_read_input_tokens": 93866,
+  "output_tokens": 1970,
+  "output_tokens_details": {
+   "thinking_tokens": 224
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 12564,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 450,
+    "cache_read_input_tokens": 22170,
+    "cache_creation_input_tokens": 656,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 656
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 5,
+ "total_cost_usd": 0.07936259999999998,
+ "result": "I've recorded the invoice lifecycle work in clarity as epoch #40, which is now closed. I didn't touch any code.\n\n- **Epoch #40:** I started it with no repo, since the code was already committed. It carries two notes, and both are on the epoch.\n  - A `DECISION:` note covers the lifecycle rules, the due-date rule, the file layout and locking. It records that a voided number is never reused.\n  - A second note covers the side effects, the numbering-gap risk, the extra CLI flags and the test count.\n- **Idea #2 (persist finalized invoices):** I closed it as built by #40, because finalized invoices are now stored in `data/invoices`. The numbering-gap risk that remains is now idea #43.\n- **Idea #41 (payment reminders):** I added it with finance's schedule in its note and built none of it. The schedule is a reminder 7 days after the due date and a second at 21 days. A final notice at 35 days also copies finance@meterbill.example. The note says only finalized, non-void invoices should get reminders.\n- **Idea #42 (reversing ledger entry for voided invoices):** a void invoice drops out of the ledger and CSV export, and no reversing entry exists.\n- **Idea #43 (number gap after a finalize crash):** the sequence advances before the numbered file is written, so a crash in between leaves a gap.",
+ "is_error": false,
+ "prompt": "A work session on this project just ended. Its record is below: the user's request, the\nagent's final report, and the files it changed. The code is already committed; do not change\nany code under workspace/. Bring the project's memory up to date the way this project's\ninstructions say to \u2014 as the agent that did the work would have before ending the session.\n\n<session>\n## User's request\nInvoices need a lifecycle. Add an invoice store (data/invoices/<tenant>/<number-or-draft-id>.json)\nand states draft -> finalized -> void:\n- build_invoice produces a draft (id DRAFT-<8 hex>, no number yet); finalize assigns the next\n  gapless number and freezes it; void marks a finalized invoice void with a reason. A voided\n  number is never reused or freed.\n- due_date = finalize date + the tenant's payment_terms_days (new tenant field, default 14).\n- CLI: `invoices create`, `invoices finalize <id>`, `invoices void <number> --reason ...`,\n  `invoices list --tenant T [--state S]`, `invoices show <id|number>`.\nThorough tests for transitions, illegal transitions, numbering, due dates.\nSeparately, so you know where this is going \u2014 don't build any of it: we'll add payment\nreminders later. The schedule finance wants: a first reminder 7 days after the due date, a\nsecond at 21 days, and a final notice at 35 days that also copies finance@meterbill.example.\n## Agent's final report\nThe invoice lifecycle is in: a draft, finalize and void flow, a file-backed store, the new `invoices` CLI commands and tests. The full suite passes (420 tests, 44 of them new).\n\n**Changed, file by file**\n- `meterbill/invoices/models.py`: added a `VOID` status and three `Invoice` fields: `draft_id`, `due_date` and `void_reason`.\n- `meterbill/invoices/builder.py`:\n  - `build_invoice` now gives each draft an id of the form `DRAFT-<8 hex>`.\n  - `finalize_invoice` takes `payment_terms_days` and `finalize_date`, and sets `due_date` to the finalize date plus the terms.\n  - Finalizing a void invoice raises an error.\n  - New `void_invoice` only works on a finalized invoice and needs a non-blank reason.\n- `meterbill/invoices/store.py` (new): `InvoiceStore` keeps files at `<root>/<TENANT>/<number-or-draft-id>.json`.\n  - **Drafts:** saving never overwrites an existing file.\n  - **Finalize:** writes the numbered file, then deletes the draft file.\n  - **Void:** rewrites the numbered file in place.\n  - **Locking:** finalize and void take a per-tenant lock.\n  - **Lookups:** `load` and `list` find invoices by number or draft id, and refs are validated so they can't be used for path traversal.\n- `meterbill/invoices/serialization.py`: the new fields are written to the JSON files and read back. Older files without them still load.\n- `meterbill/invoices/__init__.py`: exports the new names.\n- `meterbill/plans/catalog.py`: new tenant field `payment_terms_days`, default 14. It must be a non-negative integer.\n- `meterbill/cli.py`:\n  - **New commands:** `invoices create | finalize <id> | void <number> --reason | list --tenant [--state] | show <id|number> [--json]`.\n  - **Storage and extra flags:** invoices are stored under `<data-dir>/invoices`. I added `--date` to `finalize` for the finalize date, and `--issue-date` and `--events` to `create`.\n  - **Invoice display:** invoice output now shows the status, due date and void reason.\n  - **Existing command:** `invoice --finalize` now also sets the due date from the tenant's terms.\n- `tests/test_invoice_lifecycle.py` (new): covers the legal transitions, the illegal ones and numbering. It also covers due dates, tenant payment terms and the CLI commands.\n\n**Things to know**\n- **Void and exports:** a void invoice no longer appears in the CSV export and ledger postings, because both only include finalized invoices. Credit notes also refuse void invoices. If a voided invoice needs a reversing ledger entry, that isn't built.\n- **Numbering year:** the number's year still comes from the invoice's issue date, not the finalize date, as before.\n- **Crash gap:** a crash after the sequence advances but before the numbered file is written would leave a gap in the numbers. The existing sequence store has the same property, and I didn't add a recovery step.\n- **Reminders:** I didn't build any of the payment-reminder work.\n## Files changed\n meterbill/cli.py                    |  82 ++++++++-\n meterbill/invoices/__init__.py      |   5 +-\n meterbill/invoices/builder.py       |  34 +++-\n meterbill/invoices/models.py        |   4 +\n meterbill/invoices/serialization.py |   6 +\n meterbill/invoices/store.py         | 162 +++++++++++++++++\n meterbill/plans/catalog.py          |   8 +\n tests/test_invoice_lifecycle.py     | 335 ++++++++++++++++++++++++++++++++++++\n 8 files changed, 627 insertions(+), 9 deletions(-)\n</session>\n"
+}

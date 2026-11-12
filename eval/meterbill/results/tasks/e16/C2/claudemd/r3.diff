@@ -1,0 +1,69 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..8d31b0e 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -177,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
+     qt.add_argument("--date", help="tax rate date YYYY-MM-DD (default: today)")
+     qt.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory with plans and tax JSON files")
++    tn = sub.add_parser("tenants", help="list tenants")
++    tn_sub = tn.add_subparsers(dest="tenants_command", required=True)
++    tn_list = tn_sub.add_parser("list", help="one row per tenant, sorted by id")
++    tn_list.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                         help="directory with plans and tenants JSON files")
+     return parser
+ 
+ 
+@@ -236,6 +241,24 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[str]], left: int) -> l
+     return [fmt(header), fmt(tuple("-" * w for w in widths)), *(fmt(r) for r in rows)]
+ 
+ 
++def _run_tenants(args: argparse.Namespace) -> int:
++    try:
++        catalog = load_catalog(args.data_dir)
++        rows = [
++            (t.id, t.name, t.country, t.plan_id,
++             t.billing_currency or catalog.plan(t.plan_id).currency, t.tz)
++            for t in sorted(catalog.tenants.values(), key=lambda t: t.id)
++        ]
++    except (CatalogError, ValueError, OSError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    header = ("ID", "NAME", "COUNTRY", "PLAN", "CURRENCY", "TZ")
++    widths = [max(len(r[i]) for r in [header, *rows]) for i in range(len(header))]
++    for row in [header, *rows]:
++        print("  ".join(f"{c:<{w}}" for c, w in zip(row, widths)).rstrip())
++    return 0
++
++
+ def _run_attribution(args: argparse.Namespace) -> int:
+     try:
+         period = Period.parse(args.period)
+@@ -345,6 +368,8 @@ def _run_ledger(args: argparse.Namespace) -> int:
+ 
+ def main(argv: Sequence[str] | None = None) -> int:
+     args = build_parser().parse_args(argv)
++    if args.command == "tenants":
++        return _run_tenants(args)
+     if args.command == "attribution":
+         return _run_attribution(args)
+     if args.command == "ingest":
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 005321c..49027bf 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -83,3 +83,14 @@ def test_missing_required_args_exits_2():
+     proc = subprocess.run([sys.executable, "-m", "meterbill", "invoice"], cwd=ROOT,
+                           capture_output=True, text=True)
+     assert proc.returncode == 2
++
++
++def test_tenants_list_seed(capsys):
++    from meterbill.cli import main
++    assert main(["tenants", "list"]) == 0
++    lines = capsys.readouterr().out.splitlines()
++    assert lines[0] == "ID   NAME           COUNTRY  PLAN            CURRENCY  TZ"
++    assert [l.split()[0] for l in lines[1:]] == ["ACM", "GLB", "NWD", "TKY", "ZEN"]
++    assert lines[1] == "ACM  Acme Corp      US       starter         USD       America/New_York"
++    assert lines[4] == "TKY  Tokyo Freight  JP       enterprise-jpy  USD       UTC"
++    assert lines[3] == "NWD  Northwind      DE       usage-eur       EUR       Europe/Berlin"

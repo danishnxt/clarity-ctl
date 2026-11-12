@@ -1,0 +1,47 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..192230d 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -177,9 +177,33 @@ def build_parser() -> argparse.ArgumentParser:
+     qt.add_argument("--date", help="tax rate date YYYY-MM-DD (default: today)")
+     qt.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory with plans and tax JSON files")
++    tn = sub.add_parser("tenants", help="tenant administration")
++    tn_sub = tn.add_subparsers(dest="tenants_command", required=True)
++    tl = tn_sub.add_parser("list", help="list all tenants")
++    tl.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory with plans and tenants JSON files")
+     return parser
+ 
+ 
++def _run_tenants(args: argparse.Namespace) -> int:
++    try:
++        catalog = load_catalog(args.data_dir)
++        rows = [
++            (t.id, t.name, t.country, t.plan_id,
++             t.billing_currency or catalog.plan(t.plan_id).currency, t.tz)
++            for t in sorted(catalog.tenants.values(), key=lambda t: t.id)
++        ]
++    except (ValueError, OSError) as exc:  # CatalogError is a ValueError
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    header = ("ID", "NAME", "COUNTRY", "PLAN", "CURRENCY", "TZ")
++    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h)
++              for i, h in enumerate(header)]
++    for row in (header, *rows):
++        print("  ".join(f"{c:<{w}}" for c, w in zip(row, widths)).rstrip())
++    return 0
++
++
+ def _run_quote(args: argparse.Namespace) -> int:
+     try:
+         single = args.meter is not None or args.quantity is not None
+@@ -359,6 +383,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_fx(args)
+     if args.command == "quote":
+         return _run_quote(args)
++    if args.command == "tenants":
++        return _run_tenants(args)
+     try:
+         period = Period.parse(args.period)
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()

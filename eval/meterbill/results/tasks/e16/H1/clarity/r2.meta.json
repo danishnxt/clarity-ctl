@@ -1,0 +1,73 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "clarity",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 50.1,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 28950,
+  "cache_read_input_tokens": 255720,
+  "output_tokens": 7055,
+  "output_tokens_details": {
+   "thinking_tokens": 1085
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 28950,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 481,
+    "cache_read_input_tokens": 38683,
+    "cache_creation_input_tokens": 529,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 529
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 11,
+ "total_cost_usd": 0.211962,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes. The full suite passes (379 tests, three of them new). I did not run the real CLI against your data, only the tests.\n\n**What a credit note posts**\n- It mirrors the invoice: a credit to `1200` for the gross, and a debit to the revenue account and to `2200-<country>` for each line. Each credit note balances.\n- It is dated on the credit note's issue date.\n- It is included in the period that matches its issue month, the same rule the CSV export uses.\n\n**Revenue account**\n- Credit notes post to the revenue account the original invoice used, not today's meter mapping.\n- To make that possible, `build_invoice` now records the revenue account on each invoice line. It reads the account from `data/accounts.json` when the CLI builds an invoice.\n- Credit note lines copy that account, and both invoice and credit note JSON now store it.\n- The change is in `meterbill/exports/ledger.py` (`credit_note_postings`) and the invoice and credit models, serialization and builder.\n\n**Older documents**\nInvoices and credit notes built before this change have no recorded account. For those, the ledger falls back to the current `accounts.json` mapping. That is only wrong if accounting has remapped a meter since the invoice was built. I didn't migrate old documents. If you'd rather a credit note without a recorded account raise an error, say so, since that is a small change.\n\nI recorded this fallback as a `DECISION:` note on #38 and closed #38.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/038_2026-11-11__ledger-postings-for-credit/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

@@ -1,0 +1,27 @@
+diff --git a/meterbill/tax/resolver.py b/meterbill/tax/resolver.py
+index 7de8225..909c3a1 100644
+--- a/meterbill/tax/resolver.py
++++ b/meterbill/tax/resolver.py
+@@ -23,6 +23,9 @@ def _parse_rate(value: object, where: str) -> Decimal:
+     return rate
+ 
+ 
++_memo: dict[tuple[str, str, date], Decimal] = {}
++
++
+ class TaxResolver:
+     """Looks up rates: a tenant's override for a country wins, otherwise the
+     rate with the latest ``valid_from`` on or before the date. Data files are
+@@ -32,6 +35,12 @@ class TaxResolver:
+         self.data_dir = Path(data_dir)
+ 
+     def rate_for(self, tenant_id: str, country: str, on_date: date) -> Decimal:
++        key = (tenant_id, country, on_date)
++        if key not in _memo:
++            _memo[key] = self._rate_for(tenant_id, country, on_date)
++        return _memo[key]
++
++    def _rate_for(self, tenant_id: str, country: str, on_date: date) -> Decimal:
+         override = store.read_overrides(self.data_dir).get(tenant_id, {}).get(country)
+         if override is not None:
+             return _parse_rate(override.get("rate"), f"override for {tenant_id}/{country}")

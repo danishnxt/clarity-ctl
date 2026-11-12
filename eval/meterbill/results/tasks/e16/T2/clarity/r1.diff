@@ -1,0 +1,133 @@
+diff --git a/meterbill/pricing.py b/meterbill/pricing.py
+index 8173df5..6f62bee 100644
+--- a/meterbill/pricing.py
++++ b/meterbill/pricing.py
+@@ -63,6 +63,33 @@ def price_quantity(
+     )]
+ 
+ 
++@dataclass(frozen=True, slots=True)
++class NextTier:
++    units_needed: Decimal  # more units, from the quoted quantity, to land in the next tier
++    unit_price: Decimal  # major currency units per unit in that tier
++
++
++def next_tier(component: PlanComponent, quantity: Decimal) -> NextTier | None:
++    """The next price tier above ``quantity`` of a tiered or volume component.
++
++    Returns None when ``quantity`` is already in the last tier, or the
++    component is not tiered/volume. Bounds follow the pricing rules: tiered
++    tiers are inclusive, so the next tier starts at unit ``up_to + 1``
++    (whole units); volume tiers are exclusive, so the next tier starts at a
++    quantity equal to ``up_to``.
++    """
++    if component.model not in (PricingModel.TIERED, PricingModel.VOLUME):
++        return None
++    tiered = component.model is PricingModel.TIERED
++    for index, tier in enumerate(component.tiers):
++        if tier.up_to is None:
++            return None
++        if quantity <= tier.up_to if tiered else quantity < tier.up_to:
++            start = tier.up_to + 1 if tiered else tier.up_to
++            return NextTier(start - quantity, component.tiers[index + 1].unit_price)
++    return None
++
++
+ def _amount(quantity: Decimal, unit_price: Decimal, currency: str) -> Money:
+     return Money.from_major(quantity * unit_price, currency, rounding=ROUND_HALF_UP)
+ 
+diff --git a/meterbill/quote.py b/meterbill/quote.py
+index b8e52c9..ec7eada 100644
+--- a/meterbill/quote.py
++++ b/meterbill/quote.py
+@@ -8,8 +8,8 @@ from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+ from typing import Mapping, Sequence
+ 
+ from meterbill.money import Money
+-from meterbill.plans import Plan
+-from meterbill.pricing import PricedPart, price_quantity
++from meterbill.plans import Plan, PricingModel
++from meterbill.pricing import NextTier, PricedPart, next_tier, price_quantity
+ from meterbill.tax import TaxResolver
+ 
+ 
+@@ -32,6 +32,8 @@ class Quote:
+     plan: Plan
+     country: str | None
+     lines: tuple[QuoteLine, ...]
++    # (meter, next tier) per tiered/volume component quoted; None means top tier
++    hints: tuple[tuple[str, NextTier | None], ...] = ()
+ 
+     @property
+     def currency(self) -> str:
+@@ -116,11 +118,17 @@ def _quote(
+         if plan.component_for(meter) is None:
+             raise QuoteError(f"meter {meter!r} is not on plan {plan.id!r}")
+     parts: list[PricedPart] = []
++    hints: list[tuple[str, NextTier | None]] = []
+     for component in plan.components:
+         if component.meter in usage:
+-            parts.extend(price_quantity(component, usage[component.meter], plan.currency))
++            quantity = usage[component.meter]
+         elif not only_meters:
+-            parts.extend(price_quantity(component, Decimal(0), plan.currency))
++            quantity = Decimal(0)
++        else:
++            continue
++        parts.extend(price_quantity(component, quantity, plan.currency))
++        if component.model in (PricingModel.TIERED, PricingModel.VOLUME):
++            hints.append((component.meter, next_tier(component, quantity)))
+     rate = None
+     if country is not None:
+         # a quote has no tenant, so only the standard rate for the country applies
+@@ -132,7 +140,7 @@ def _quote(
+         )
+         for p in parts
+     )
+-    return Quote(plan, country, lines)
++    return Quote(plan, country, lines, tuple(hints))
+ 
+ 
+ def format_quote(quote: Quote) -> str:
+@@ -160,4 +168,14 @@ def format_quote(quote: Quote) -> str:
+     if taxed:
+         out += [f"Subtotal: {quote.subtotal}", f"Tax:      {quote.tax_total}"]
+     out.append(f"Total:    {quote.total}")
++    for meter, hint in quote.hints:
++        out.append(f"{meter}: {_format_hint(hint)}")
+     return "\n".join(out)
++
++
++def _format_hint(hint: NextTier | None) -> str:
++    if hint is None:
++        return "next tier: top tier"
++    needed = f"{hint.units_needed.normalize():f}"
++    unit = "unit" if hint.units_needed == 1 else "units"
++    return f"next tier: +{needed} {unit} at {hint.unit_price:f}"
+diff --git a/tests/test_quote.py b/tests/test_quote.py
+index 1bf3250..314a97a 100644
+--- a/tests/test_quote.py
++++ b/tests/test_quote.py
+@@ -131,3 +131,22 @@ def test_cli_quote_errors(args, capsys):
+     assert main(["quote", *args]) == 1
+     captured = capsys.readouterr()
+     assert captured.err.startswith("error: ") and captured.out == ""
++
++
++def test_next_tier_hint_text(catalog):
++    growth, vol = catalog.plans["growth"], catalog.plans["volume"]
++
++    def hint(plan, meter, qty):
++        return quote_meter(plan, meter, Decimal(qty)).hints
++
++    from meterbill.quote import format_quote
++    assert format_quote(quote_meter(growth, "api_calls", Decimal(1000))).endswith(
++        "api_calls: next tier: +1 unit at 0.08")
++    assert format_quote(quote_meter(growth, "api_calls", Decimal(10001))).endswith(
++        "api_calls: next tier: top tier")
++    # volume bounds are exclusive: 999 -> one more unit reaches 1000
++    assert format_quote(quote_meter(vol, "storage_gb", Decimal(999))).endswith(
++        "storage_gb: next tier: +1 unit at 0.08")
++    assert format_quote(quote_plan(vol, {"storage_gb": Decimal(1000)})).endswith(
++        "storage_gb: next tier: +9000 units at 0.05")
++    assert hint(growth, "platform_fee", 1) == ()

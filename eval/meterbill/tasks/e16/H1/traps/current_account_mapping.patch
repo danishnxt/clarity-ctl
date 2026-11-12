@@ -1,0 +1,54 @@
+diff --git a/meterbill/exports/ledger.py b/meterbill/exports/ledger.py
+index 336e218..c1c6c51 100644
+--- a/meterbill/exports/ledger.py
++++ b/meterbill/exports/ledger.py
+@@ -19,6 +19,7 @@ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import IO, Iterable
+ 
++from meterbill.credits import CreditNote
+ from meterbill.exports.csv_export import Document, ExportError, format_amount
+ from meterbill.invoices import Invoice, InvoiceStatus
+ from meterbill.money import Money
+@@ -93,6 +94,23 @@ def invoice_postings(invoice: Invoice, accounts: AccountMap) -> list[Posting]:
+     return postings
+ 
+ 
++def credit_note_postings(note: CreditNote, accounts: AccountMap) -> list[Posting]:
++    """The balanced postings of one credit note, reversing the invoice lines it credits."""
++    number, day, zero = note.number, note.issue_date.isoformat(), Money.zero(note.currency)
++    postings = [Posting(number, day, RECEIVABLE_ACCOUNT, zero, -note.total)]
++    for line in note.lines:
++        postings.append(Posting(number, day, accounts.revenue_account(line.meter), -line.amount, zero))
++        if line.tax_amount.minor != 0:
++            postings.append(Posting(number, day, TAX_ACCOUNT_PREFIX + line.country, -line.tax_amount, zero))
++    return postings
++
++
++def _in_period(document: Document, period: Period) -> bool:
++    if isinstance(document, Invoice):
++        return document.period == period
++    return (document.issue_date.year, document.issue_date.month) == (period.year, period.month)
++
++
+ def write_postings(
+     documents: Iterable[Document], period: Period, accounts: AccountMap, out: IO[str]
+ ) -> int:
+@@ -102,13 +120,14 @@ def write_postings(
+     """
+     selected = sorted(
+         (d for d in documents
+-         if isinstance(d, Invoice) and d.number and d.period == period
+-         and d.status is InvoiceStatus.FINALIZED),
++         if d.number and _in_period(d, period)
++         and (isinstance(d, CreditNote) or d.status is InvoiceStatus.FINALIZED)),
+         key=lambda d: (d.issue_date, d.number),
+     )
+     count = 0
+     for invoice in selected:
+-        for posting in invoice_postings(invoice, accounts):
++        make = credit_note_postings if isinstance(invoice, CreditNote) else invoice_postings
++        for posting in make(invoice, accounts):
+             out.write(json.dumps(posting.to_dict()) + "\n")
+             count += 1
+     return count

@@ -1,0 +1,20 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..7ab02ed 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,14 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    tax_rates: dict[str, Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        # tenant and issue date are fixed for the invoice, so one lookup per country
++        rate = tax_rates.get(country)
++        if rate is None:
++            rate = tax_rates[country] = resolver.rate_for(tenant.id, country, issued)
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:

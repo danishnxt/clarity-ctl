@@ -1,0 +1,74 @@
+{
+ "at": "e16",
+ "task": "T3",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 31.3,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 18594,
+  "cache_read_input_tokens": 190975,
+  "output_tokens": 3709,
+  "output_tokens_details": {
+   "thinking_tokens": 294
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 18594,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 502,
+    "cache_read_input_tokens": 28489,
+    "cache_creation_input_tokens": 367,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 367
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 9,
+ "total_cost_usd": 0.13059950000000004,
+ "is_error": false,
+ "result": "`ingest` and `ingest --check` now pick up `*.envelope.json` files in the drop directory alongside `.jsonl` and `.csv`. The full test suite passes, including new tests for this.\n\n- **Validation and dedupe:** Each entry in `events` goes through the same validation and `(tenant_id, idempotency_key)` dedupe as the other formats (#24). An envelope event and a JSONL event with the same key count as duplicates.\n- **Bad events:** A bad event is rejected on its own, and its reject-log `line` is its 1-based position in `events`.\n- **Bad envelopes:** An envelope that is invalid JSON, isn't an object, or has no `events` list is rejected as a whole. It is logged under `(unknown)` and moved to `processed/`.\n- **Plain `.json`:** Files named just `*.json` are still ignored. Only the `.envelope.json` suffix counts.\n- **Envelope fields not stored:** `batch_id`, `sent_at` and `device_id` are not stored and aren't used for dedupe, because the idempotency key is what identifies a retry. If the mobile team wants batch-level dedupe or device tracking, that needs a decision.\n- **`--check`:** It dry-runs envelopes too: it writes, logs and moves nothing.\n\nThe code change is in `meterbill/ingest/importer.py`. I also updated the CLI help text and added tests to `tests/test_ingest.py`. I logged the choices above as a note on epoch #40 and closed it.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/040_2026-11-11__envelope-ingest/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "The mobile team's new uploader doesn't write JSONL. It drops batch envelope files named\n*.envelope.json: {\"batch_id\": \"...\", \"sent_at\": \"...\", \"device_id\": \"...\", \"events\": [...]}\nwith the usual event fields inside each event. Make `ingest` (and `ingest --check`) accept\nthem in the drop directory alongside the existing formats.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_envelope_is_ingested_into_the_store": true,
+   "test_target::test_envelope_next_to_a_jsonl_file": true,
+   "test_target::test_check_counts_an_envelope_and_writes_nothing": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_resent_envelope_with_new_batch_and_event_ids_adds_nothing": true,
+   "test_keep::test_event_without_idempotency_key_is_rejected_and_the_rest_accepted": true,
+   "test_keep::test_duplicate_inside_one_envelope_is_counted_once": true
+  },
+  "hidden_collected": 6
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

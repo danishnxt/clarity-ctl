@@ -1,0 +1,73 @@
+{
+ "at": "e24",
+ "task": "H1",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 79.2,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 32,
+  "cache_creation_input_tokens": 35800,
+  "cache_read_input_tokens": 484210,
+  "output_tokens": 9070,
+  "output_tokens_details": {
+   "thinking_tokens": 1111
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 35800,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 507,
+    "cache_read_input_tokens": 45352,
+    "cache_creation_input_tokens": 710,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 710
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 16,
+ "total_cost_usd": 0.28238499999999994,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes. All 487 tests pass, including new ones for this. I closed #38 in clarity with a `DECISION:` note, and nothing is committed.\n\n- **Postings:** A credit note mirrors its invoice with the sides swapped. Each line debits its revenue account and `2200-<country>`, and one credit of `1200` covers the gross total. Every document balances.\n- **Period:** Credit notes are picked by the month they were issued, the same as the CSV export. Drafts and voided invoices are still skipped.\n- **Revenue account:** This follows your plan in #38, so a year-end remap of meters can't change what a credit note posts to.\n  - `InvoiceLine` has a new `revenue_account` field, recorded when the invoice is built.\n  - It is saved with the invoice and copied onto each credit note line.\n  - The CLI fills it from `data/accounts.json` when that file exists. `build_invoice` takes the lookup as a new optional argument.\n- **Older documents:** Invoices and credit notes written before this have no recorded account, and they still load. Their lines use the current `accounts.json` mapping. I chose that because `accounts.json` was only introduced with #37, so there is no earlier mapping to use. If accounting remaps meters before these invoices are backfilled, credit notes on them will post to the new accounts. Say so if you'd rather those fail loudly.\n\nThe main changes are in `meterbill/exports/ledger.py`, `meterbill/invoices/` and `meterbill/credits/`.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/038_2026-11-11__ledger-postings-for-credit/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

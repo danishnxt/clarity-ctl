@@ -1,0 +1,45 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..ecd6920 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,14 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    # Tax rates memoised for this call only (issue date is fixed); never kept across calls.
++    tax_rates: dict[tuple[str, str], Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if (tenant.id, country) not in tax_rates:
++            tax_rates[(tenant.id, country)] = resolver.rate_for(tenant.id, country, issued)
++        rate = tax_rates[(tenant.id, country)]
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:
+diff --git a/tests/test_invoices.py b/tests/test_invoices.py
+index de2f704..958e123 100644
+--- a/tests/test_invoices.py
++++ b/tests/test_invoices.py
+@@ -224,3 +224,20 @@ def test_lines_split_by_country_with_per_country_tax(catalog):
+     ]
+     assert [l.tax_rate for l in inv.lines] == [Decimal("0.19"), Decimal("0.20")]
+     assert [l.tax_amount.minor for l in inv.lines] == [28, 60]  # 150 * 0.19 = 28.5 -> 28; 300 * 0.20 = 60
++
++
++def test_tax_rate_looked_up_once_per_country_per_call_not_across_calls(catalog):
++    from meterbill.tax import TaxResolver
++
++    class Counting(TaxResolver):
++        calls = 0
++
++        def rate_for(self, *a):
++            Counting.calls += 1
++            return super().rate_for(*a)
++
++    r = Counting()
++    build_invoice("NWD", OCT, events(), catalog, date(2026, 11, 2), r)
++    assert Counting.calls == 1  # two lines, one country
++    build_invoice("NWD", OCT, events(), catalog, date(2026, 11, 2), r)
++    assert Counting.calls == 2  # nothing carried over to the next call

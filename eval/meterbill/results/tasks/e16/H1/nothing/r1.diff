@@ -1,0 +1,136 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..eec9cb9 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -150,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
+     ex.add_argument("--out", required=True, help="CSV file to write")
+     ex.add_argument("--documents-dir", default=str(DEFAULT_DATA_DIR / "documents"),
+                     help="directory of invoice / credit note JSON files")
+-    lg = sub.add_parser("ledger", help="write double-entry postings of a period's invoices as JSONL")
++    lg = sub.add_parser("ledger", help="write double-entry postings of a period's invoices and credit notes as JSONL")
+     lg.add_argument("--period", required=True, help="period, YYYY-MM")
+     lg.add_argument("--out", required=True, help="JSONL file to write")
+     lg.add_argument("--documents-dir", default=str(DEFAULT_DATA_DIR / "documents"),
+diff --git a/meterbill/exports/__init__.py b/meterbill/exports/__init__.py
+index c9c10c5..4568488 100644
+--- a/meterbill/exports/__init__.py
++++ b/meterbill/exports/__init__.py
+@@ -2,10 +2,10 @@ from meterbill.exports.csv_export import (
+     CSV_COLUMNS, ExportError, format_amount, load_documents, write_csv,
+ )
+ from meterbill.exports.ledger import (
+-    AccountMap, Posting, invoice_postings, load_accounts, write_postings,
++    AccountMap, Posting, credit_note_postings, invoice_postings, load_accounts, write_postings,
+ )
+ 
+ __all__ = [
+-    "AccountMap", "CSV_COLUMNS", "ExportError", "Posting", "format_amount", "invoice_postings",
++    "AccountMap", "CSV_COLUMNS", "ExportError", "Posting", "credit_note_postings", "format_amount", "invoice_postings",
+     "load_accounts", "load_documents", "write_csv", "write_postings",
+ ]
+diff --git a/meterbill/exports/ledger.py b/meterbill/exports/ledger.py
+index 336e218..3a94265 100644
+--- a/meterbill/exports/ledger.py
++++ b/meterbill/exports/ledger.py
+@@ -6,6 +6,10 @@ Each finalized invoice produces:
+ * per line, one credit of the line's revenue account for its net amount;
+ * per line, one credit of tax payable ``2200-<country>`` for its tax.
+ 
++Each credit note reverses its invoice: one credit of accounts receivable for the
++(absolute) total, and per line a debit of the revenue account and of tax payable.
++Credit note amounts are stored negative; postings always carry non-negative amounts.
++
+ Postings are never netted across lines. A line with zero tax gets no tax
+ posting, since it would carry no amount. Amounts are major-unit decimal strings
+ with the currency's number of decimal places; each posting has a debit and a
+@@ -19,7 +23,8 @@ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import IO, Iterable
+ 
+-from meterbill.exports.csv_export import Document, ExportError, format_amount
++from meterbill.credits import CreditNote
++from meterbill.exports.csv_export import Document, ExportError, _in_period, format_amount
+ from meterbill.invoices import Invoice, InvoiceStatus
+ from meterbill.money import Money
+ from meterbill.period import Period
+@@ -93,22 +98,42 @@ def invoice_postings(invoice: Invoice, accounts: AccountMap) -> list[Posting]:
+     return postings
+ 
+ 
++def credit_note_postings(note: CreditNote, accounts: AccountMap) -> list[Posting]:
++    """The balanced postings of one credit note (the mirror image of its invoice's)."""
++    if not note.number:
++        raise ExportError("cannot post a credit note without a number")
++    number, day, zero = note.number, note.issue_date.isoformat(), Money.zero(note.currency)
++    postings = [Posting(number, day, RECEIVABLE_ACCOUNT, zero, -note.total)]
++    for line in note.lines:
++        postings.append(Posting(number, day, accounts.revenue_account(line.meter),
++                                -line.amount, zero))
++        if line.tax_amount.minor != 0:
++            if not line.country:
++                raise ExportError(f"{number}: line for {line.meter!r} has tax but no country")
++            postings.append(Posting(number, day, TAX_ACCOUNT_PREFIX + line.country,
++                                    -line.tax_amount, zero))
++    return postings
++
++
+ def write_postings(
+     documents: Iterable[Document], period: Period, accounts: AccountMap, out: IO[str]
+ ) -> int:
+-    """Write one JSON object per posting for the finalized invoices of ``period``.
++    """Write one JSON object per posting for the documents of ``period``.
+ 
+-    Credit notes and drafts are skipped. Returns the number of postings written.
++    Finalized invoices belong to their billing period, credit notes to their issue
++    month. Drafts are skipped. Returns the number of postings written.
+     """
+     selected = sorted(
+         (d for d in documents
+-         if isinstance(d, Invoice) and d.number and d.period == period
+-         and d.status is InvoiceStatus.FINALIZED),
++         if d.number and _in_period(d, period)
++         and not (isinstance(d, Invoice) and d.status is not InvoiceStatus.FINALIZED)),
+         key=lambda d: (d.issue_date, d.number),
+     )
+     count = 0
+-    for invoice in selected:
+-        for posting in invoice_postings(invoice, accounts):
++    for document in selected:
++        postings = (invoice_postings(document, accounts) if isinstance(document, Invoice)
++                    else credit_note_postings(document, accounts))
++        for posting in postings:
+             out.write(json.dumps(posting.to_dict()) + "\n")
+             count += 1
+     return count
+diff --git a/tests/test_ledger.py b/tests/test_ledger.py
+index c5b2953..8ba117a 100644
+--- a/tests/test_ledger.py
++++ b/tests/test_ledger.py
+@@ -93,3 +93,27 @@ def test_cli_ledger(tmp_path):
+     assert code == 0
+     rows = [json.loads(r) for r in out.read_text().splitlines()]
+     assert [r["account"] for r in rows] == ["1200", "4010", "2200-DE"]
++
++
++def _credit_note(number="CN-ACM-2026-00001", issue=date(2026, 11, 20)):
++    from meterbill.credits import CreditNote, CreditNoteLine
++    lines = (CreditNoteLine(1, "api_calls", "DE", Decimal(-1), Money(-1000, "EUR"),
++                            Decimal("0.19"), Money(-190, "EUR")),)
++    return CreditNote(number, "INV-ACM-2026-00001", "ACM", "Acme", "EUR", "oops", issue, lines)
++
++
++def test_credit_note_postings_reverse_invoice():
++    from meterbill.exports import credit_note_postings
++    postings = credit_note_postings(_credit_note(), ACCOUNTS)
++    assert [(p.account, p.debit.minor, p.credit.minor) for p in postings] == [
++        ("1200", 0, 1190), ("4010", 1000, 0), ("2200-DE", 190, 0)]
++    assert _balance(postings) == 0
++
++
++def test_write_postings_includes_credit_notes_by_issue_month():
++    out = io.StringIO()
++    note = _credit_note()
++    assert write_postings([note], Period(2026, 10), ACCOUNTS, io.StringIO()) == 0
++    assert write_postings([note], Period(2026, 11), ACCOUNTS, out) == 3
++    rows = [json.loads(r) for r in out.getvalue().splitlines()]
++    assert rows[0]["document_number"] == "CN-ACM-2026-00001" and rows[0]["credit"] == "11.90"

@@ -1,0 +1,76 @@
+{
+ "at": "e16",
+ "task": "T1",
+ "arm": "clarity",
+ "rep": 3,
+ "returncode": 0,
+ "wall_s": 29.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 18027,
+  "cache_read_input_tokens": 199199,
+  "output_tokens": 3494,
+  "output_tokens_details": {
+   "thinking_tokens": 368
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 18027,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 437,
+    "cache_read_input_tokens": 27747,
+    "cache_creation_input_tokens": 542,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 542
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.1270039,
+ "is_error": false,
+ "result": "I changed `build_invoice` so it reads the tax files once per country per invoice instead of once per line. That should remove most of the October slowdown. I haven't timed it against Northwind's data. The full suite passes (377 tests).\n\n- **The cause:** since #7 removed the process-wide tax cache, `rate_for` re-read `tax_rates.json` and `tax_overrides.json` for every invoice line.\n- **The fix:** in `meterbill/invoices/builder.py`, a plain dict keyed by country holds the rates found during that one call. It is dropped when the call returns, so nothing carries over to the next invoice. This is the per-call cache that #7 and idea #8 allow.\n- **Behaviour:** the same rates, rounding and `TaxError`s come out as before, since a failed lookup still raises on the first line that needs it. An edit to `tax_overrides.json` shows up on the next invoice.\n- **Test:** I added one to `tests/test_tax.py` that checks both properties: one lookup per country within a call, and a fresh lookup on the next call.\n\nI closed #8 with that outcome, but I didn't commit anything, so the change is still uncommitted.\n\nIf it's still slow, the next suspect is `FxConverter.rate`, which reads `fx_rates.json` once per invoice. I didn't touch it.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/008_2026-11-11__per-build-invoice-tax-lookup/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Northwind's monthly invoice run is slow again \u2014 about 50 seconds for October. Most of the\ntime is in tax lookups. Make invoicing fast. Behaviour must stay the same.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_large_multi_country_invoice_reads_each_tax_file_per_country_at_most_once": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_override_edited_between_invoices_is_used[new_resolver_each_time]": true,
+   "test_keep::test_override_edited_between_invoices_is_used[same_resolver_object]": true,
+   "test_keep::test_rates_edited_between_invoices_is_used": true,
+   "test_keep::test_each_line_tax_is_rounded_on_its_own_and_summed": true,
+   "test_keep::test_line_tax_rounds_half_even": true,
+   "test_keep::test_credit_note_after_rate_change_reverses_original_tax": true,
+   "test_keep::test_large_multi_country_invoice_taxes_every_line": true
+  },
+  "hidden_collected": 8
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

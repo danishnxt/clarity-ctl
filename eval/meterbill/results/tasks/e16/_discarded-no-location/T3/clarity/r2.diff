@@ -1,0 +1,117 @@
+diff --git a/meterbill/ingest/importer.py b/meterbill/ingest/importer.py
+index 28b0ac4..f1d548e 100644
+--- a/meterbill/ingest/importer.py
++++ b/meterbill/ingest/importer.py
+@@ -1,4 +1,4 @@
+-"""Import JSONL and CSV event files from a drop directory into the event store."""
++"""Import JSONL, CSV and ``*.envelope.json`` event files from a drop directory into the event store."""
+ 
+ from __future__ import annotations
+ 
+@@ -20,6 +20,7 @@ MISSING_KEY_REASON = "missing idempotency_key"
+ # idempotency_key is not required in the header: rows without it are rejected one by one.
+ CSV_COLUMNS = ("tenant_id", "meter", "quantity", "timestamp", "event_id")
+ _SUFFIXES = {".jsonl", ".csv"}
++ENVELOPE_SUFFIX = ".envelope.json"
+ 
+ 
+ @dataclass
+@@ -103,6 +104,30 @@ def _csv_rows(path: Path) -> Iterator[_Row]:
+             yield _validate(record, line)
+ 
+ 
++def _envelope_rows(path: Path) -> Iterator[_Row]:
++    """Rows of a batch envelope; ``line`` is the 1-based position in ``events``.
++
++    A malformed envelope (bad JSON, not an object, ``events`` not a list) is one
++    reject at line 0 and nothing from the file is stored.
++    """
++    with open(path, encoding="utf-8-sig") as handle:
++        text = handle.read()
++    try:
++        envelope = json.loads(text, parse_float=Decimal)
++    except json.JSONDecodeError as exc:
++        yield _Row(0, text, error=f"invalid JSON ({exc.msg})")
++        return
++    if not isinstance(envelope, dict) or not isinstance(envelope.get("events"), list):
++        yield _Row(0, envelope, error="envelope must be an object with an 'events' list")
++        return
++    for number, record in enumerate(envelope["events"], start=1):
++        yield _validate(record, number)
++
++
++def _is_envelope(path: Path) -> bool:
++    return path.name.lower().endswith(ENVELOPE_SUFFIX)
++
++
+ def _tenant_of(row: _Row) -> str:
+     if row.event is not None:
+         return row.event.tenant_id
+@@ -123,12 +148,13 @@ def _unique_destination(directory: Path, name: str) -> Path:
+ 
+ 
+ def drop_files(drop: Path) -> list[Path]:
+-    return sorted(p for p in drop.iterdir() if p.is_file() and p.suffix.lower() in _SUFFIXES)
++    return sorted(p for p in drop.iterdir()
++                  if p.is_file() and (p.suffix.lower() in _SUFFIXES or _is_envelope(p)))
+ 
+ 
+ def ingest_drop(drop: str | Path, data_dir: str | Path, rejects: RejectLog | None = None,
+                 dry_run: bool = False) -> dict[str, TenantCounts]:
+-    """Import every ``.jsonl`` / ``.csv`` file directly inside ``drop``.
++    """Import every ``.jsonl`` / ``.csv`` / ``.envelope.json`` file directly inside ``drop``.
+ 
+     Valid events whose (tenant_id, idempotency_key) is new go to ``<data_dir>/events``;
+     invalid rows, including those without an idempotency_key, go to
+@@ -148,7 +174,10 @@ def ingest_drop(drop: str | Path, data_dir: str | Path, rejects: RejectLog | Non
+     counts: dict[str, TenantCounts] = defaultdict(TenantCounts)
+ 
+     for path in drop_files(drop):
+-        reader = _csv_rows if path.suffix.lower() == ".csv" else _jsonl_rows
++        if _is_envelope(path):
++            reader = _envelope_rows
++        else:
++            reader = _csv_rows if path.suffix.lower() == ".csv" else _jsonl_rows
+         valid: list[_Row] = []
+         entries: list[dict[str, Any]] = []
+ 
+diff --git a/tests/test_ingest.py b/tests/test_ingest.py
+index f4ebf60..ceb5ebd 100644
+--- a/tests/test_ingest.py
++++ b/tests/test_ingest.py
+@@ -298,3 +298,35 @@ def test_invoice_reads_from_store_when_events_omitted(data_dir, drop, capsys):
+     assert "1800.15 EUR" in from_store
+     # a tenant or period with no stored events yields an empty invoice, not an error
+     assert main(args("2026-08")) == 0
++
++
++def write_envelope(path, events, **extra):
++    envelope = {"batch_id": "b1", "sent_at": "2026-10-05T12:01:00+00:00", "device_id": "d1",
++                "events": events, **extra}
++    path.write_text(json.dumps(envelope))
++
++
++def test_envelope_file_is_stored_and_moved(drop, data):
++    write_envelope(drop / "b1.envelope.json",
++                   [event_record(), event_record(event_id="e2", idempotency_key="k2"), event_record(idempotency_key="")])
++    counts = ingest_drop(drop, data)
++    assert (counts["NWD"].accepted, counts["NWD"].rejected) == (2, 1)
++    assert [r["event_id"] for r in store_lines(data)] == ["e1", "e2"]
++    assert rejects(data)[0]["file"] == "b1.envelope.json" and rejects(data)[0]["line"] == 3
++    assert (drop / "processed" / "b1.envelope.json").exists()
++
++
++def test_envelope_check_writes_nothing_and_dedupes(drop, data):
++    write_envelope(drop / "b1.envelope.json", [event_record(), event_record(event_id="e9")])
++    counts = ingest_drop(drop, data, dry_run=True)
++    assert (counts["NWD"].accepted, counts["NWD"].duplicate) == (1, 1)
++    assert (drop / "b1.envelope.json").exists() and not (data / "events").exists()
++
++
++def test_malformed_envelope_is_one_reject(drop, data):
++    (drop / "bad.envelope.json").write_text("{nope")
++    (drop / "noevents.envelope.json").write_text('{"batch_id": "x"}')
++    (drop / "other.json").write_text("{}")
++    counts = ingest_drop(drop, data)
++    assert counts["(unknown)"].rejected == 2
++    assert (drop / "other.json").exists()

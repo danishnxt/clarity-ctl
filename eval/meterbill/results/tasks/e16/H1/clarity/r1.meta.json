@@ -1,0 +1,73 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 67.0,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 26,
+  "cache_creation_input_tokens": 31898,
+  "cache_read_input_tokens": 392108,
+  "output_tokens": 9118,
+  "output_tokens_details": {
+   "thinking_tokens": 1730
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 31898,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 477,
+    "cache_read_input_tokens": 41575,
+    "cache_creation_input_tokens": 585,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 585
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.25803480000000006,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes, and the full suite passes (382 tests). I haven't committed anything.\n\n- **Posting shape:** Each credit note credits 1200 for the gross. Per line it debits the revenue account and debits `2200-<country>` for the tax. It is dated by its issue date and falls in the period of that issue month, the same rule the CSV export uses.\n- **Original revenue account:** `InvoiceLine` now has an optional `revenue_account`, set when the invoice is built. The `invoice` CLI command passes in the meter map from `accounts.json`. Credit notes copy it from the invoice line, and both JSON formats store it. A later remap of meters therefore doesn't move a credit note's postings.\n- **Older documents:** Invoices and credit notes made before this change have no stored account. Those lines fall back to the current `accounts.json` map. A credit of an old invoice after a year-end remap would post to the new account. I didn't write a migration, so you'll need to decide whether to backfill them.\n- **Tests:** I added tests for the remap case, the legacy fallback, the JSON round trip, period selection, and tax without a country.\n- **Clarity:** Epoch #40 and idea #38 are closed, with the decision and the fallback caveat noted on #40.\n\nThe main changes are in `meterbill/exports/ledger.py`, `meterbill/invoices/builder.py` and `meterbill/credits/issue.py`.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/040_2026-11-11__ledger-credit-note-postings/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

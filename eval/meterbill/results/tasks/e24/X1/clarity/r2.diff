@@ -1,0 +1,360 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..631c9c7 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -14,7 +14,7 @@ from meterbill.credits import (
+ )
+ from meterbill.attribution import attribute, tier_totals
+ from meterbill.events import EventValidationError, iter_unique_events, stream_events
+-from meterbill.ingest import EventStore, collect_stats, compact_month, ingest_drop, scrub_month
++from meterbill.ingest import EventStore, collect_stats, compact_month, ingest_drop, purge, scrub_month
+ from meterbill.fx import MAX_RATE_AGE_DAYS, FxConverter, FxError
+ from meterbill.exports import ExportError, load_accounts, load_documents, write_csv, write_postings
+ from meterbill.invoices import (
+@@ -231,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
+     evs.add_argument("--tenant", help="only this tenant")
+     evs.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                      help="directory holding the events/ store")
++    pg = sub.add_parser("purge", help="delete stored data past its retention as of a date")
++    pg.add_argument("--date", required=True, help="purge as of this date, YYYY-MM-DD")
++    pg.add_argument("--dry-run", action="store_true", help="only list what would be deleted")
++    pg.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory holding events/, rejects/, invoices/ and documents/")
+     cr = sub.add_parser("credit", help="issue a credit note for a finalized invoice")
+     cr.add_argument("--invoice", required=True, help="path to an invoice JSON file")
+     cr.add_argument("--line", type=int, action="append",
+@@ -581,6 +586,17 @@ def _run_ingest(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_purge(args: argparse.Namespace) -> int:
++    try:
++        result = purge(args.data_dir, date.fromisoformat(args.date), dry_run=args.dry_run)
++    except (ValueError, OSError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    for path in result.deleted:
++        print(path)
++    return 0
++
++
+ def _run_credit(args: argparse.Namespace) -> int:
+     try:
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()
+@@ -693,6 +709,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_ingest(args)
+     if args.command == "events":
+         return _run_events(args)
++    if args.command == "purge":
++        return _run_purge(args)
+     if args.command == "credit":
+         return _run_credit(args)
+     if args.command == "export":
+diff --git a/meterbill/ingest/__init__.py b/meterbill/ingest/__init__.py
+index c2198da..97d0d0b 100644
+--- a/meterbill/ingest/__init__.py
++++ b/meterbill/ingest/__init__.py
+@@ -1,7 +1,8 @@
+ from meterbill.ingest.compact import CompactResult, MonthStats, collect_stats, compact_month
+ from meterbill.ingest.importer import TenantCounts, ingest_drop
++from meterbill.ingest.purge import PurgeResult, purge
+ from meterbill.ingest.scrub import ScrubResult, scrub_month
+ from meterbill.ingest.store import EventStore, RejectLog
+ 
+-__all__ = ["CompactResult", "EventStore", "MonthStats", "RejectLog", "ScrubResult", "TenantCounts",
+-           "collect_stats", "compact_month", "ingest_drop", "scrub_month"]
++__all__ = ["CompactResult", "EventStore", "MonthStats", "PurgeResult", "RejectLog", "ScrubResult", "TenantCounts",
++           "collect_stats", "compact_month", "ingest_drop", "purge", "scrub_month"]
+diff --git a/meterbill/ingest/purge.py b/meterbill/ingest/purge.py
+new file mode 100644
+index 0000000..b720116
+--- /dev/null
++++ b/meterbill/ingest/purge.py
+@@ -0,0 +1,169 @@
++"""Retention purge: delete stored data that is past its retention as of a given date.
++
++Rules (decisions #47 and #52):
++
++* ``rejects/<YYYY-MM-DD>.jsonl`` is kept 30 days: deleted when older than 30 days.
++* Raw event month files are kept 25 months after the END of their billing period:
++  ``events/<tenant>/<YYYY-MM>.jsonl`` goes once the date is past the last day of the
++  month 25 months after the file's month.
++* HARD RULE, whatever the age: never delete events of a period with no finalized
++  invoice, or whose invoices have a credit note issued in the last 12 months (or
++  dated later). Month files are by UTC month, but a tenant on another timezone
++  reads the neighbouring months too when rating a period, so for such tenants (or
++  unknown ones) a file is also kept while a neighbouring month is protected.
++  A credit note whose invoice cannot be found protects all of its tenant's events.
++
++Deleting a month file also deletes its ``.idem`` (and legacy ``.seen``) index, index
++first, so a crash leaves a file the store can re-index rather than an index of
++vanished events. Index files are not reported.
++"""
++
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass
++from datetime import date, timedelta
++from pathlib import Path
++
++from meterbill.credits import CreditNote
++from meterbill.exports import load_documents
++from meterbill.ingest.store import is_valid_tenant_dir_name
++from meterbill.invoices import InvoiceStatus, InvoiceStore
++from meterbill.period import Period
++from meterbill.plans import load_catalog
++from meterbill.plans.catalog import CatalogError
++
++REJECT_DAYS = 30
++EVENT_MONTHS = 25
++CREDIT_GUARD_MONTHS = 12
++
++_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
++_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
++
++
++@dataclass(frozen=True, slots=True)
++class PurgeResult:
++    deleted: tuple[Path, ...]  # data files, sorted; index files are not listed
++
++
++def _add_months(day: date, months: int) -> date:
++    index = day.year * 12 + day.month - 1 + months
++    year, month = divmod(index, 12)
++    month += 1
++    for d in range(day.day, 0, -1):
++        try:
++            return date(year, month, d)
++        except ValueError:
++            continue
++    raise AssertionError("unreachable")
++
++
++def _month_index(period: Period) -> int:
++    return period.year * 12 + period.month - 1
++
++
++def _period_from_index(index: int) -> Period:
++    return Period(index // 12, index % 12 + 1)
++
++
++def _events_expired(period: Period, today: date) -> bool:
++    """True once ``today`` is past the last day of the month 25 months after ``period``."""
++    last_kept = _period_from_index(_month_index(period) + EVENT_MONTHS + 1).first_day
++    return today >= last_kept
++
++
++def _protected_periods(data_dir: Path, today: date) -> tuple[dict[str, set[Period]], set[str]]:
++    """(tenant -> periods with a finalized invoice and no recent credit note, tenants blocked)."""
++    invoice_store = InvoiceStore(data_dir / "invoices")
++    cutoff = _add_months(today, -CREDIT_GUARD_MONTHS)
++    notes: list[CreditNote] = []
++    documents = data_dir / "documents"
++    if documents.is_dir():
++        notes = [d for d in load_documents(documents) if isinstance(d, CreditNote)]
++    purgeable: dict[str, set[Period]] = {}
++    blocked: set[str] = set()
++    tenants = {n.tenant_id for n in notes}
++    invoices_root = data_dir / "invoices"
++    if invoices_root.is_dir():
++        tenants |= {p.name for p in invoices_root.iterdir() if p.is_dir()}
++    for tenant in sorted(tenants):
++        try:
++            invoices = invoice_store.list(tenant)
++        except ValueError:
++            blocked.add(tenant)  # unreadable or oddly named: keep everything
++            continue
++        by_number = {i.number: i for i in invoices if i.number}
++        periods = {i.period for i in invoices if i.status is InvoiceStatus.FINALIZED}
++        for note in notes:
++            if note.tenant_id != tenant or note.issue_date < cutoff:
++                continue
++            credited = by_number.get(note.invoice_number)
++            if credited is None:
++                blocked.add(tenant)
++            else:
++                periods.discard(credited.period)
++        purgeable[tenant] = periods
++    return purgeable, blocked
++
++
++def _utc_tenants(data_dir: Path) -> set[str]:
++    try:
++        catalog = load_catalog(data_dir)
++    except (CatalogError, OSError, ValueError):
++        return set()
++    return {t.id for t in catalog.tenants.values() if t.tz == "UTC"}
++
++
++def purge(data_dir: str | Path, today: date, dry_run: bool = False) -> PurgeResult:
++    """Delete (or with ``dry_run`` only list) the data files past retention on ``today``."""
++    data_dir = Path(data_dir)
++    doomed: list[Path] = []
++    indexes: dict[Path, list[Path]] = {}
++
++    rejects = data_dir / "rejects"
++    if rejects.is_dir():
++        for path in rejects.glob("*.jsonl"):
++            if not (path.is_file() and _DAY_RE.match(path.stem)):
++                continue
++            try:
++                day = date.fromisoformat(path.stem)
++            except ValueError:
++                continue
++            if (today - day) > timedelta(days=REJECT_DAYS):
++                doomed.append(path)
++
++    events = data_dir / "events"
++    if events.is_dir():
++        purgeable, blocked = _protected_periods(data_dir, today)
++        utc = _utc_tenants(data_dir)
++        for tenant_dir in sorted(events.iterdir()):
++            tenant = tenant_dir.name
++            if not tenant_dir.is_dir() or not is_valid_tenant_dir_name(tenant) \
++                    or tenant in blocked:
++                continue
++            ok_periods = purgeable.get(tenant, set())
++            for path in sorted(tenant_dir.glob("*.jsonl")):
++                if not (path.is_file() and _MONTH_RE.match(path.stem)):
++                    continue
++                try:
++                    period = Period.parse(path.stem)
++                except ValueError:
++                    continue
++                if not _events_expired(period, today):
++                    continue
++                needed = [period]
++                if tenant not in utc:
++                    i = _month_index(period)
++                    needed += [_period_from_index(i - 1), _period_from_index(i + 1)]
++                if not all(p in ok_periods for p in needed):
++                    continue
++                doomed.append(path)
++                indexes[path] = [path.with_suffix(".idem"), path.with_suffix(".seen")]
++
++    doomed.sort(key=str)
++    if not dry_run:
++        for path in doomed:
++            for index in indexes.get(path, ()):
++                index.unlink(missing_ok=True)
++            path.unlink()
++    return PurgeResult(tuple(doomed))
+diff --git a/tests/test_purge.py b/tests/test_purge.py
+new file mode 100644
+index 0000000..cacda89
+--- /dev/null
++++ b/tests/test_purge.py
+@@ -0,0 +1,112 @@
++import json
++from datetime import date
++from decimal import Decimal
++
++from conftest import event_record
++
++from meterbill.cli import main
++from meterbill.credits import CreditNote, CreditNoteLine, credit_note_to_json
++from meterbill.invoices import Invoice, InvoiceLine, InvoiceStatus, invoice_to_json
++from meterbill.money import Money
++from meterbill.period import Period
++
++TODAY = "2026-11-11"
++
++
++def seed(data_dir, tenant, month):
++    d = data_dir / "events" / tenant
++    d.mkdir(parents=True, exist_ok=True)
++    f = d / f"{month}.jsonl"
++    f.write_text(json.dumps(event_record(tenant_id=tenant, idempotency_key=month)) + "\n")
++    (d / f"{month}.idem").write_text(json.dumps(month) + "\n")
++    return f
++
++
++def finalize(data_dir, tenant, month, n=1, status=InvoiceStatus.FINALIZED):
++    period = Period.parse(month)
++    line = InvoiceLine("api_calls", Decimal(1), Decimal(1), Money(100, "EUR"), "DE",
++                       Decimal("0.19"), Money(19, "EUR"))
++    number = f"INV-MBDE-{tenant}-{period.year}-{n:05d}"
++    inv = Invoice(tenant, tenant, period, "EUR", (line,), date(2026, 1, 1), number=number,
++                  status=status, due_date=date(2026, 1, 15))
++    d = data_dir / "invoices" / tenant
++    d.mkdir(parents=True, exist_ok=True)
++    (d / f"{number}.json").write_text(invoice_to_json(inv))
++    return number
++
++
++def credit(data_dir, tenant, number, issued):
++    line = CreditNoteLine(1, "api_calls", "DE", Decimal(-1), Money(-100, "EUR"),
++                          Decimal("0.19"), Money(-19, "EUR"))
++    note = CreditNote("CN-1", number, tenant, tenant, "EUR", "oops", issued, (line,))
++    d = data_dir / "documents"
++    d.mkdir(exist_ok=True)
++    (d / "CN-1.json").write_text(credit_note_to_json(note))
++
++
++def run(data_dir, capsys, *extra):
++    assert main(["purge", "--date", TODAY, "--data-dir", str(data_dir), *extra]) == 0
++    return capsys.readouterr().out.splitlines()
++
++
++def test_events_retention_boundary_and_indexes(data_dir, capsys):
++    old = seed(data_dir, "GLB", "2024-09")   # kept through 2026-10-31 -> expired
++    edge = seed(data_dir, "GLB", "2024-10")  # kept through 2026-11-30
++    finalize(data_dir, "GLB", "2024-09", 1)
++    finalize(data_dir, "GLB", "2024-10", 2)
++    assert run(data_dir, capsys) == [str(old)]
++    assert not old.exists() and not old.with_suffix(".idem").exists()
++    assert edge.exists() and edge.with_suffix(".idem").exists()
++
++
++def test_dry_run_deletes_nothing(data_dir, capsys):
++    old = seed(data_dir, "GLB", "2024-01")
++    finalize(data_dir, "GLB", "2024-01")
++    assert run(data_dir, capsys, "--dry-run") == [str(old)]
++    assert old.exists() and old.with_suffix(".idem").exists()
++
++
++def test_unfinalized_or_void_period_kept(data_dir, capsys):
++    seed(data_dir, "GLB", "2023-01")
++    seed(data_dir, "ZEN", "2023-01")
++    seed(data_dir, "ZEN", "2023-02")
++    finalize(data_dir, "ZEN", "2023-01", status=InvoiceStatus.VOID)
++    finalize(data_dir, "ZEN", "2023-02")
++    out = run(data_dir, capsys)
++    assert out == [str(data_dir / "events/ZEN/2023-02.jsonl")]
++
++
++def test_recent_credit_note_protects_period(data_dir, capsys):
++    f = seed(data_dir, "GLB", "2023-01")
++    number = finalize(data_dir, "GLB", "2023-01")
++    credit(data_dir, "GLB", number, date(2025, 11, 12))
++    assert run(data_dir, capsys) == []
++    credit(data_dir, "GLB", number, date(2025, 11, 10))
++    assert run(data_dir, capsys) == [str(f)]
++
++
++def test_non_utc_tenant_needs_neighbours_clear(data_dir, capsys):
++    a = seed(data_dir, "NWD", "2023-01")
++    finalize(data_dir, "NWD", "2023-01", 1)
++    assert run(data_dir, capsys) == []  # 2023-02 / 2022-12 have no finalized invoice
++    finalize(data_dir, "NWD", "2022-12", 2)
++    finalize(data_dir, "NWD", "2023-02", 3)
++    assert run(data_dir, capsys) == [str(a)]
++
++
++def test_rejects_30_days(data_dir, capsys):
++    d = data_dir / "rejects"
++    d.mkdir()
++    for name in ("2026-10-11", "2026-10-12", "notes"):
++        (d / f"{name}.jsonl").write_text("{}\n")
++    assert run(data_dir, capsys) == [str(d / "2026-10-11.jsonl")]
++    assert (d / "2026-10-12.jsonl").exists() and (d / "notes.jsonl").exists()
++
++
++def test_output_sorted_and_no_data_dirs(data_dir, capsys):
++    assert run(data_dir, capsys) == []
++    for t in ("ZEN", "GLB"):
++        seed(data_dir, t, "2023-01")
++        finalize(data_dir, t, "2023-01")
++    out = run(data_dir, capsys)
++    assert out == sorted(out) and len(out) == 2

@@ -1,0 +1,69 @@
+{
+ "at": "e16",
+ "task": "H1-oracle",
+ "arm": "nothing",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 44.7,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 30732,
+  "cache_read_input_tokens": 252323,
+  "output_tokens": 5777,
+  "output_tokens_details": {
+   "thinking_tokens": 673
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 30732,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 599,
+    "cache_read_input_tokens": 40704,
+    "cache_creation_input_tokens": 290,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 290
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.2059663,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes, and each credit note posts to the revenue account its original invoice line used. All 377 tests pass, including a new one for credit notes. I haven't run the `ledger` or `credit` commands end to end.\n\n**Revenue account on the line**\n- `InvoiceLine` has a new `revenue_account` field. `build_invoice` takes a `revenue_account` lookup and stores the result on each line when the invoice is built.\n- The `invoice` command fills that lookup from `data/accounts.json`. If the file isn't there, the field stays empty.\n- The field is saved in both the invoice JSON and the credit note JSON.\n- `issue_credit_note` copies the account from the invoice line, the same way it already copies the stored tax.\n\n**Credit notes in the ledger**\n- A credit note posts the reverse of an invoice. It debits each line's stored revenue account and debits `2200-<country>` for the line's stored tax amount. It then credits `1200` for the gross total.\n- Tax is not looked up again, and zero-tax lines get no tax posting.\n- Credit notes are picked up by issue month, the same rule the CSV export uses. Invoices still go by billing period.\n- Each credit note is balanced.\n\n**Old documents have no stored account**\n- Invoices and credit notes created before this change have no stored account. For those, the ledger falls back to the current `accounts.json`.\n- If accounting remaps meters at year end, any credit note against an old invoice would post to the new account. Old invoices that were already exported also posted to whatever the map said at the time.\n- I can't recover those accounts from the files. The fix is to backfill `revenue_account` on existing invoice JSON using the mapping that was in force when each was issued, before the remap.\n- I can write that backfill if you give me the old mapping or the date it changed.",
+ "memory_changed": [],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.\n\nContext from earlier sessions: accounting remaps meters to new revenue accounts at year end, and a credit note has to post to the accounts the original invoice posted to, not to today's mapping. The plan was to record the revenue account on each InvoiceLine when the invoice is built. Credit notes reverse tax at the original line's stored tax amounts.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

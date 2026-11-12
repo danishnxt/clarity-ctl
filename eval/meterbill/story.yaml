@@ -1,0 +1,658 @@
+# meterbill: the scripted history every arm shares.
+#
+# Each epoch is one builder session: a fresh `claude -p` (Sonnet) in the code repo, given
+# BUILDER_RULES + the epoch's `prompt` (the user's words). The harness commits the result with
+# `commit` (terse, as real commit messages are). The builder's transcript (prompt + final report
+# + diffstat) is what the memory-replay agents later see, one epoch at a time.
+#
+# `facts` are what the history plants: the reason lives in the prompt, not in the code.
+#   - kind: decision | rejected | reversal | constraint | handoff | decoy
+#   - leak: words that must NOT appear in the tree, visible tests or `git log -p` after the
+#     build (checked by code). If one does, the fact is visible in code and measures nothing.
+# Tasks name the facts they hinge on; decoys are recorded facts no task needs.
+#
+# Slice = epochs 1-8, tasks T1 (history) and C1 (control). Epochs 9-30 are outlined at the end
+# and get written in full only after the slice is reviewed.
+
+# builder_rules: the last rule ("Build only what this session asks for") was added 2026-11-11 for
+# batch 3 (e17+); e1-e16 were built without it.
+builder_rules: |
+  You are working on meterbill, a Python 3.12 usage-billing library, in the git repo at
+  workspace/meterbill (your working directory is its parent). Rules for this session:
+  - Standard library only; tests use pytest (`pytest` is on PATH) and live in tests/.
+  - Run the full test suite before you finish; leave it passing.
+  - Do not run git commit, branch or stash; the code is committed for you after the session.
+  - Code comments and docstrings describe what the code does. Never mention past sessions,
+    incidents, customers, people, tickets, or approaches that were tried and removed.
+  - Finish with a short report: what you changed, file by file, and anything left undone.
+  - Build only what this session asks for. When the user describes rules for work that comes
+    later, do not build it, stub it, or leave TODO/placeholder comments or config for it.
+
+epochs:
+- n: 1
+  title: scaffold the library
+  commit: "initial meterbill: money, events, plans, rating, invoices, cli"
+  prompt: |
+    Let's start meterbill: a library + CLI that turns metered usage events into invoices.
+    Lay it out as a proper package, meterbill/, with these modules:
+    - meterbill/money.py: a Money value type in integer minor units plus an ISO currency code;
+      a CURRENCY_EXPONENT table (USD 2, EUR 2, GBP 2, JPY 0, KWD 3); add/sub/multiply by int or
+      Decimal; never use float anywhere in money math. Money.from_major("12.34", "EUR") and
+      .to_major() -> Decimal.
+    - meterbill/events/: UsageEvent (tenant_id, meter, quantity: Decimal, timestamp, event_id,
+      idempotency_key, properties dict), a JSONL reader, validation with clear errors.
+    - meterbill/plans/: rate plans loaded from data/plans.json. Pricing models: "flat" (fixed fee
+      per period) and "per_unit" (unit price per meter). A Plan has id, name, currency,
+      components (one per meter). Tenants are in data/tenants.json (id, name, plan_id, country).
+    - meterbill/rating/: given a tenant's plan and events for a billing period, produce rated
+      lines (meter, quantity, unit_price, amount).
+    - meterbill/invoices/: Invoice and InvoiceLine dataclasses; build_invoice(tenant_id, period,
+      events, catalog) -> Invoice; invoice numbers look like INV-<TENANTID>-<YYYY>-<seq 5 digits>.
+      Numbers must be gapless per tenant per calendar year — our auditor checks this — so the
+      sequence lives in data/sequences.json and is only advanced when an invoice is finalized.
+    - meterbill/cli.py: `python -m meterbill invoice --tenant T --period 2026-10 --events f.jsonl`
+      prints the invoice. Use argparse; I want zero third-party dependencies, deployment boxes
+      have no internet.
+    Seed data/ with 3 plans and 4 tenants (one is Northwind, id NWD, country DE, on a per-unit
+    plan in EUR). Write thorough tests for each module.
+  facts:
+  - {id: f1a, kind: decoy, text: "argparse, zero third-party deps: deployment boxes have no internet", leak: ["no internet"]}
+  - {id: f1b, kind: decoy, text: "invoice numbers gapless per tenant per year because the auditor checks", leak: ["auditor"]}
+
+- n: 2
+  title: graduated tiered pricing
+  commit: "tiered pricing"
+  prompt: |
+    Add a third pricing model, "tiered" (graduated): a component has tiers like
+    [{"up_to": 1000, "unit_price": "0.10"}, {"up_to": 10000, "unit_price": "0.08"},
+    {"up_to": null, "unit_price": "0.05"}]. Boundaries are inclusive: unit 1000 is billed at
+    the first tier's price, unit 1001 at the second. That's how every contract we sign words it
+    ("the first 1,000 units at..."), and sales got burned on a quote that read it the other way.
+    Rated lines for tiered components get one line per tier touched, labelled e.g.
+    "api_calls (1-1000)". Add a tiered plan to data/plans.json and tests at every boundary.
+  facts:
+  - {id: f2a, kind: decision, text: "tier upper bounds inclusive (unit 1000 in tier 1) because contracts say 'the first 1,000 units'", leak: ["contract", "sales got burned", "quote"]}
+
+- n: 3
+  title: tax resolution
+  commit: "tax: resolver, rates, overrides"
+  prompt: |
+    Invoices need tax. Add meterbill/tax/:
+    - meterbill/tax/store.py: read_rates() reads data/tax_rates.json (country -> list of
+      {rate: "0.19", valid_from: "2024-01-01"}), read_overrides() reads data/tax_overrides.json
+      (tenant_id -> {country -> {"rate": "0", "reason": "reverse-charge"}}). Each call reads the
+      file; keep those two functions as the only file access.
+    - meterbill/tax/resolver.py: TaxResolver().rate_for(tenant_id, country, on_date) -> Decimal,
+      tenant override first, else the rate valid on that date.
+    - Tax follows where the usage happened, not where the tenant is registered: an event may carry
+      properties["country"] (falling back to the tenant's country). Rating must split lines by
+      (meter, country), so one invoice can have lines in several countries, and each line's tax
+      is looked up for that line's country via rate_for.
+    - build_invoice computes tax for each line: line tax = line amount * rate, rounded to the
+      currency's minor unit with ROUND_HALF_EVEN, per line. Invoice tax total is the sum of the
+      line taxes. Do NOT compute tax on the subtotal and round once — finance reconciles every
+      invoice line against the ledger, and an invoice-level rounding put us a cent off on the
+      Q3 close; Priya won't sign off on that again. Store the rate used on each InvoiceLine
+      (tax_rate) and its tax (tax_amount).
+    Seed DE 0.19, FR 0.20, GB 0.20, US 0, JP 0.10 and one override (tenant ACM exempt in DE).
+  facts:
+  - {id: f3a, kind: constraint, text: "tax computed and rounded per line (HALF_EVEN), never on the subtotal: finance reconciles each line to the ledger; invoice-level rounding was a cent off at the Q3 close", leak: ["ledger", "Q3", "Priya", "reconcil"]}
+
+- n: 4
+  title: cache tax rates for speed
+  commit: "cache tax rates"
+  prompt: |
+    Northwind's monthly invoice run takes ~40 seconds now. I profiled it: about 70% of the time
+    is in rate_for, re-reading tax_rates.json and tax_overrides.json for every line. Add a cache
+    so each file is read once per process: put functools.lru_cache on read_rates() and
+    read_overrides() in meterbill/tax/store.py, keep it that simple. Add a test that the files are
+    read once across several invoices.
+  facts:
+  - {id: f4a, kind: rejected, text: "process-wide tax cache added for Northwind's slow run (70% in rate_for)", leak: []}
+
+- n: 5
+  title: remove the tax cache
+  commit: "remove tax cache"
+  prompt: |
+    We have to take the tax cache out. The billing worker is a long-running process, and ops
+    edit tax_overrides.json by hand when a tenant's exemption is granted or revoked. Yesterday
+    ACM's DE exemption was revoked in the file, and the worker kept invoicing them at 0% for
+    six hours because it never re-read it. And don't suggest checking the file's mtime: the
+    files are rsynced from the config repo with times preserved, so an edited file can come in
+    with an old mtime. Rule from now on: no tax data cached across invoice runs, ever. If tax lookups need to be fast, cache only within a single build_invoice call
+    and throw it away at the end. For now just remove the cache entirely and restore plain
+    per-lookup reads; we'll do the per-run version when Northwind complains again. Remove the
+    cache's test too.
+  facts:
+  - {id: f5a, kind: decision, text: "DECISION: no tax data cached across invoice runs; a cache may live only inside one build_invoice call. Ops edit tax_overrides.json by hand in a long-running worker; ACM's revoked exemption was billed at 0% for six hours; mtime checks don't help because files are rsynced with times preserved", leak: ["six hours", "revoked", "by hand", "long-running", "across invoice runs", "rsync", "mtime"]}
+  - {id: f5b, kind: handoff, text: "per-run tax cache is the planned fix once Northwind's run is slow again", leak: ["per-run", "when Northwind"]}
+
+- n: 6
+  title: credit notes and refunds
+  commit: "credit notes"
+  prompt: |
+    Add credit notes: meterbill/credits/. issue_credit_note(invoice, lines=None, reason) refunds
+    a whole invoice or selected lines. A credit note line reverses the original line's amount and
+    its tax using the tax_rate stored on the original InvoiceLine — never look the rate up again.
+    Germany's rate changes don't matter here, but last January FR's did, and a refund issued
+    after the change must reverse exactly what was charged, or the VAT return won't balance.
+    Credit notes are numbered CN-<TENANTID>-<YYYY>-<seq>, gapless like invoices, own sequence.
+    Add `python -m meterbill credit --invoice <file.json> [--line N ...] --reason ...`.
+    Invoices need to serialize to JSON and back for this; add that.
+  facts:
+  - {id: f6a, kind: constraint, text: "credit notes reverse tax at the original line's stored tax_rate, never re-resolved: a refund after FR's January rate change must reverse what was charged or the VAT return won't balance", leak: ["VAT return", "January", "won't balance"]}
+
+- n: 7
+  title: finance CSV export
+  commit: "csv export"
+  prompt: |
+    Finance wants a CSV export of invoices and credit notes for their ERP import:
+    meterbill/exports/csv_export.py and `python -m meterbill export --period 2026-10 --out f.csv`.
+    One row per line: document number, tenant, date, meter, quantity, net, tax rate, tax, gross.
+    Use ';' as the delimiter — finance opens these in German Excel. Amounts are major-unit decimal
+    strings with exactly the currency's exponent: "1500" for JPY, "12.30" for EUR, "1.250" for
+    KWD. The ERP rejects "1500.00" for a JPY row and fails the whole file.
+  facts:
+  - {id: f7a, kind: decoy, text: "CSV delimiter ';' because finance opens it in German Excel", leak: ["German Excel"]}
+  - {id: f7b, kind: decision, text: "export amounts use exactly the currency exponent: the ERP rejects '1500.00' for JPY and fails the whole file", leak: ["ERP", "fails the whole file"]}
+
+- n: 8
+  title: streaming aggregation (half done)
+  commit: "streaming aggregation for flat and per-unit"
+  prompt: |
+    Big tenants are pushing memory: rating loads every event of the period into a list.
+    Change rating to aggregate as it streams the JSONL — running totals per meter, never the full
+    list. Do flat and per_unit today. Leave tiered exactly as it is for now (it still collects
+    quantities); I want to look at how tiers interact with the per-tier lines before we touch it.
+    Keep the old list-based path working for tiered.
+  facts:
+  - {id: f8a, kind: handoff, text: "HANDOFF: streaming aggregation done for flat and per_unit; tiered still collects quantities in a list — owner wants to review per-tier lines first", leak: ["look at how tiers"]}
+
+# ---- batch 2: epochs 9-16 (written 2026-11-11 after the slice; broader prompts, aiming ~500 lines each)
+
+- n: 9
+  title: multi-currency billing
+  commit: "fx: billing currency, converter, cli"
+  prompt: |
+    Some tenants want to be billed in their own currency instead of the plan's. Add:
+    - an optional billing_currency on tenants (default: the plan's currency).
+    - meterbill/fx/: data/fx_rates.json holds daily reference rates with EUR as base, the way
+      the ECB publishes them ({"2026-10-01": {"USD": "1.0812", "GBP": "0.8391", "JPY": "161.20",
+      "KWD": "0.3317"}, ...}). FxConverter.convert(money, to_currency, on_date) uses the most recent
+      rate on or before the date and goes through EUR for cross rates. If the most recent rate is
+      more than 7 days old, raise — never guess a rate; treasury signs off on every rate we use and
+      a guessed one is worse than a failed invoice run.
+    - build_invoice converts each rated line into the billing currency at the invoice's issue
+      date, rounding each line HALF_EVEN, BEFORE tax, and taxes the converted amount. Convert line
+      by line, never the invoice total, for the same line-matching reason as tax. Store on each
+      line the fx_rate used and the original amount and currency.
+    - CLI: `python -m meterbill fx convert 100.00 EUR USD --date 2026-10-15` and
+      `python -m meterbill fx rates --date 2026-10-15`.
+    Seed rates for every weekday from 2026-09-01 to 2026-11-30 (weekends missing, like the real
+    feed) and make one tenant bill in USD. Thorough tests: weekends, cross rates, the 7-day limit,
+    JPY/KWD exponents, an invoice mixing plan and billing currencies.
+  facts:
+  - {id: f9a, kind: decoy, text: "fx: convert each line at the issue-date rate, HALF_EVEN, before tax; never the invoice total", leak: []}
+  - {id: f9b, kind: decision, text: "no fx rate within 7 days -> raise, never guess: treasury signs off on every rate; a guessed rate is worse than a failed run", leak: ["treasury", "worse than a failed"]}
+
+- n: 10
+  title: tier attribution; tiered stays list-based
+  commit: "tier attribution report"
+  prompt: |
+    About the tiered streaming we left open: we're not doing it. Tiered stays list-based for good.
+    Support has to answer "which of my events were billed at which tier price" when a customer
+    challenges a tiered charge, and that needs the events walked through the tiers in timestamp
+    order — running totals can't give you that. So build it:
+    - meterbill/attribution.py: attribute(component, events) -> one row per (event, tier) with the
+      units of that event that landed in that tier; an event that straddles a boundary is split
+      across two rows. Order by timestamp, ties broken by event_id.
+    - `python -m meterbill attribution --tenant T --period P --meter M --events f.jsonl` prints the
+      rows as an aligned table plus per-tier totals that must equal the invoice's tier lines.
+    - make tiered rating sort its events the same way so invoices and attribution always agree,
+      and add a test that checks they agree on a few hundred random events.
+  facts:
+  - {id: f10a, kind: reversal, text: "tiered is never streamed (reverses the e8 plan): attribution needs events walked through tiers in timestamp order", leak: ["running totals can't", "challenges a tiered", "left open"]}
+
+- n: 11
+  title: event ingestion and store
+  commit: "ingest: drop directory importer, event store"
+  prompt: |
+    Events reach us as files that collectors drop into a directory. Add meterbill/ingest/:
+    - an importer that reads every JSONL and CSV (header row) file in a drop directory, validates
+      each event, dedupes, and appends accepted events to an event store laid out as
+      data/events/<tenant>/<YYYY-MM>.jsonl (month of the event timestamp, UTC).
+    - dedupe on event_id: keep a seen-ids index per tenant per month in the store.
+    - rejected rows go to data/rejects/<YYYY-MM-DD>.jsonl with the row, file, line and reason.
+    - `python -m meterbill ingest --drop DIR` prints accepted / duplicate / rejected per tenant
+      and moves processed files to DIR/processed/.
+    - `invoice` reads from the store when --events is omitted.
+    Tests for each file format, malformed rows, duplicates within a file and across runs.
+  facts:
+  - {id: f11a, kind: rejected, text: "dedupe on event_id (built e11, replaced e12)", leak: []}
+
+- n: 12
+  title: dedupe on idempotency key
+  commit: "ingest: dedupe on idempotency key"
+  prompt: |
+    ZEN was double-billed in October. Their app sends events through our client SDK, and the SDK
+    generates a fresh event_id every time it retries a send, so every retried event got past the
+    event_id dedupe. Switch dedupe to (tenant_id, idempotency_key) — the SDK keeps that stable
+    across retries. event_id stays as an identifier but is no longer a dedupe key. Events with no
+    idempotency_key are rejected at ingest with reason "missing idempotency_key" — we discussed
+    deduping them on a hash of their fields instead and decided we'd rather bounce them back to
+    the sender than guess. Migrate the existing seen index (it's keyed by event_id; rebuild it from
+    the stored events). Add `python -m meterbill ingest --check DIR`, a dry run that prints what
+    would be accepted, deduped and rejected without writing anything. Add a ZEN tenant.
+  facts:
+  - {id: f12a, kind: decision, text: "DECISION: dedupe on (tenant_id, idempotency_key), never event_id: the client SDK makes a new event_id on every retry, ZEN was double-billed in October. Events without idempotency_key are rejected, not hash-deduped: bounce rather than guess", leak: ["SDK", "double-billed", "bounce", "hash of their fields", "retried"]}
+
+- n: 13
+  title: plan changes and proration
+  commit: "subscriptions and proration"
+  prompt: |
+    Tenants change plans mid-month. Add data/subscriptions.json: per tenant, a list of
+    {"plan_id": ..., "from": "2026-10-12"}. Flat fees are prorated by days: fee * days_on_plan /
+    days_in_period, rounded per line HALF_EVEN, one line per plan segment, labelled with the dates.
+    Usage events are rated on the plan in force at the event's timestamp. Days are counted in the
+    tenant's local timezone: tenants get a tz field (IANA name, default UTC; use zoneinfo), and a
+    plan change takes effect at the start of the next local day after the change is made, never
+    mid-day — a Tokyo customer was charged for two plans on the same day and we promised that
+    can't happen. Northwind is Europe/Berlin, ACM America/New_York. Keep tenants without a
+    subscriptions entry working on their plan_id. Tests across DST changes and month ends.
+  facts:
+  - {id: f13a, kind: decoy, text: "plan change effective from the start of the next local day (tenant tz): a Tokyo customer was charged two plans for one day", leak: ["Tokyo", "promised"]}
+
+- n: 14
+  title: volume pricing
+  commit: "volume pricing"
+  prompt: |
+    Add a fourth pricing model, "volume": all units are priced at the single tier the period's
+    total quantity falls in. It uses the same tier JSON as tiered (up_to, unit_price, null last).
+    But our volume contracts are worded the opposite way from the graduated ones: "1,000 or more
+    units: 0.08". So for volume, a total of exactly 1000 is priced at the SECOND tier: the total
+    lands in the first tier whose up_to is strictly greater than it. Graduated tiered stays
+    inclusive exactly as it is. Yes it's confusing; legal won't reword the volume contracts. One
+    invoice line per volume component, labelled like "storage_gb (volume tier 2)". Add a volume
+    plan to data/plans.json and boundary tests for volume and graduated side by side.
+  facts:
+  - {id: f14a, kind: decision, text: "volume tiers: a total equal to up_to goes to the NEXT tier (contracts say 'N or more units'); graduated stays inclusive; legal won't reword", leak: ["or more units", "legal", "reword", "opposite way"]}
+
+- n: 15
+  title: quotes and a shared pricing module
+  commit: "quote command, shared pricing"
+  prompt: |
+    Sales needs price quotes without any events. Move the pricing math (flat, per_unit, tiered,
+    volume) into meterbill/pricing.py with price_quantity(component, quantity) -> a breakdown of
+    priced parts, and make rating call it, so a quote and an invoice can never disagree. Then
+    meterbill/quote.py and:
+    - `python -m meterbill quote --plan P --meter M --quantity N`
+    - `python -m meterbill quote --plan P --usage api_calls=12000,storage_gb=300 --country DE`
+      for a whole plan, with per-line tax for the country and a total.
+    Plain aligned text output only — sales pastes it straight into emails, so no JSON. Tests that
+    quote and invoice agree for every seeded plan at a range of quantities.
+  facts:
+  - {id: f15a, kind: decoy, text: "quote output is plain text: sales pastes it into emails", leak: ["emails"]}
+
+- n: 16
+  title: ledger export (invoices only)
+  commit: "ledger export for invoices"
+  prompt: |
+    Accounting wants double-entry postings for every document. Add meterbill/exports/ledger.py and
+    `python -m meterbill ledger --period 2026-10 --out postings.jsonl`. For each invoice:
+    - debit accounts receivable (account 1200) with the gross total;
+    - per line, credit the revenue account for that line's meter from data/accounts.json
+      ({"meters": {"api_calls": "4010", ...}, "default": "4000"}) with the line's net;
+    - per line, credit tax payable "2200-<country>" with the line's tax.
+    One posting per line, never netted across lines; each posting carries document number, date,
+    account, debit, credit, currency. Postings for a document must balance; test it.
+    Only invoices today. Credit notes come next, and they need care: accounting remaps meters to
+    new revenue accounts at year end, and a credit note has to post to the accounts the original
+    invoice posted to, not to today's mapping. My plan for that is to record the revenue account
+    on each InvoiceLine when the invoice is built. Don't build any of that yet — just invoices,
+    with the current mapping.
+  facts:
+  - {id: f16a, kind: handoff, text: "HANDOFF: ledger posts invoices only; credit notes next. Constraint: credit notes must post to the accounts the original invoice posted to, not the current mapping (accounting remaps at year end); planned approach: record the revenue account on each InvoiceLine at build time", leak: ["year end", "remaps", "accounts the original", "revenue account on each"]}
+
+# ---- batch 3: epochs 17-24 (written 2026-11-11 after the e16 results), to the H1 recipe:
+# each epoch builds something real AND states exact rules (specific values) for work it does not
+# build. Three unbuilt features get their rules spread over several epochs, one rule reversed:
+#   dunning (e17, e20 reversal, e23) · payment auto-allocation (e18, e21, e24) · retention purge
+#   (e19, e22 reversal) · plus a handoff in e24 (credit-note numbering per entity).
+
+- n: 17
+  title: invoice lifecycle and due dates
+  commit: "invoice lifecycle: draft, finalized, void; due dates"
+  prompt: |
+    Invoices need a lifecycle. Add an invoice store (data/invoices/<tenant>/<number-or-draft-id>.json)
+    and states draft -> finalized -> void:
+    - build_invoice produces a draft (id DRAFT-<8 hex>, no number yet); finalize assigns the next
+      gapless number and freezes it; void marks a finalized invoice void with a reason. A voided
+      number is never reused or freed.
+    - due_date = finalize date + the tenant's payment_terms_days (new tenant field, default 14).
+    - CLI: `invoices create`, `invoices finalize <id>`, `invoices void <number> --reason ...`,
+      `invoices list --tenant T [--state S]`, `invoices show <id|number>`.
+    Thorough tests for transitions, illegal transitions, numbering, due dates.
+    Separately, so you know where this is going — don't build any of it: we'll add payment
+    reminders later. The schedule finance wants: a first reminder 7 days after the due date, a
+    second at 21 days, and a final notice at 35 days that also copies finance@meterbill.example.
+  facts:
+  - {id: f17a, kind: constraint, text: "future reminders: first at due+7, second at due+21, final notice at due+35 copied to finance@meterbill.example", leak: ["reminder", "dunning", "finance@meterbill.example", "final notice"]}
+
+- n: 18
+  title: payments with references
+  commit: "payments: record and match by reference"
+  prompt: |
+    We need to record incoming payments. Add data/payments.jsonl and meterbill/payments/:
+    `payments record --tenant T --amount 120.00 --currency EUR --date D [--reference INV-...]`.
+    A payment with a reference is matched to that invoice; invoices get an open amount (gross minus
+    matched payments minus credit notes) and a paid flag when it reaches zero. Partial payments are
+    allowed. A payment whose reference doesn't match a finalized invoice of that tenant stays
+    unmatched. `payments list --tenant T [--unmatched]`, and `invoices show` gains the payments.
+    Tests for full, partial, wrong-tenant and unknown references.
+    Not now, but for later: unmatched payments will need automatic allocation. The rule we agreed
+    with finance is oldest due date first, ties broken by the lower invoice number.
+  facts:
+  - {id: f18a, kind: constraint, text: "future auto-allocation of unmatched payments: oldest due date first, ties by lower invoice number", leak: ["oldest due", "auto-alloc", "automatic allocation", "allocat"]}
+
+- n: 19
+  title: event store compaction
+  commit: "event store compaction and index"
+  prompt: |
+    The event store has thousands of small appends per month file. Add `events compact --tenant T
+    --period P` that rewrites a month file sorted by timestamp with the idempotency index rebuilt,
+    atomically (write temp, fsync, rename), and `events stats` showing per tenant/month: events,
+    bytes, oldest and newest timestamp. Compaction must not change any invoice: test that an
+    invoice built before and after compaction is identical.
+    Heads-up for later, don't build it: once storage costs bite we'll purge old data. Raw events
+    are kept 25 months after the end of their billing period; files in data/rejects are kept 90
+    days.
+  facts:
+  - {id: f19a, kind: constraint, text: "future retention: raw events kept 25 months after their period ends; rejects kept 90 days", leak: ["purge", "retention", "25 months", "90 days"]}
+
+- n: 20
+  title: tenant statements
+  commit: "tenant statements"
+  prompt: |
+    Customers ask for statements. Add `statements --tenant T --from D --to D` printing every
+    finalized or voided invoice, credit note and payment in the range in date order with a running
+    balance; voided invoices show as VOID with zero effect on the balance. Also a CSV variant using
+    the same ';' and currency-exponent conventions as the finance export. Tests including mixed
+    currencies (one statement per currency).
+    Change of plan on the reminders I mentioned: the second reminder moves from 21 days to 28 days
+    after the due date — most customers' payables teams run monthly and the 21-day one landed
+    before they'd even looked. First and final stay at 7 and 35.
+  facts:
+  - {id: f20a, kind: reversal, text: "reminders: second moves from due+21 to due+28 (payables run monthly); first +7 and final +35 unchanged", leak: ["reminder", "payables"]}
+
+- n: 21
+  title: prepaid wallet
+  commit: "prepaid wallet"
+  prompt: |
+    Some tenants prepay. Add a wallet per tenant and currency (data/wallets.json with a JSONL
+    transaction log): `wallet topup`, `wallet balance`, `wallet apply --invoice <number>` which pays
+    an invoice from the balance (as a payment with method "wallet", up to the open amount).
+    Balances never go negative; test concurrency-free invariants (log replays to the balance).
+    For the allocation work later: when an unmatched payment is bigger than everything open, the
+    leftover goes into the tenant's wallet in the payment's currency — we never refund
+    automatically. And allocation must skip voided invoices entirely.
+  facts:
+  - {id: f21a, kind: constraint, text: "future allocation: leftover of an unmatched payment goes to the wallet in the payment's currency, never auto-refunded; voided invoices skipped", leak: ["leftover", "refund automatically", "allocat"]}
+
+- n: 22
+  title: privacy scrub at ingest
+  commit: "ingest: scrub personal data from event properties"
+  prompt: |
+    Privacy review findings. At ingest, drop these keys from event properties before storing:
+    email, ip, phone, user_agent, and any key starting with "pii_"; count drops per tenant in the
+    ingest summary. Add `events scrub --tenant T --period P` to apply the same to already-stored
+    month files (atomic rewrite, like compaction). Tests.
+    The review also changed the retention plan for later: rejects are kept 30 days, not 90 — they
+    hold raw rows we never accepted. Raw events stay at 25 months. And one hard rule: never delete
+    events of a period that has no finalized invoice yet, or that has a credit note issued in the
+    last 12 months, whatever their age.
+  facts:
+  - {id: f22a, kind: reversal, text: "retention: rejects 30 days (was 90); events 25 months unchanged; never delete a period's events if it has no finalized invoice or has a credit note issued in the last 12 months", leak: ["retention", "30 days", "12 months", "purge"]}
+
+- n: 23
+  title: contacts and outbox
+  commit: "billing contacts and mail outbox"
+  prompt: |
+    We'll need to email customers. Add data/contacts.json (tenant -> billing_contact, optional cc
+    list) and meterbill/outbox/: queue_mail(to, cc, subject, body, kind, ref) writes one JSON file
+    per message into data/outbox/, never sends anything (a separate mailer picks them up — these
+    boxes have no internet). `outbox list`, `outbox show`. Use it now for one thing: `invoices
+    finalize --notify` queues an "invoice" mail to the billing contact. Tests.
+    For the reminders later, two more rules: don't remind about an invoice whose open amount is
+    below 5.00 EUR (convert at the invoice's issue date for other currencies), and skip any invoice
+    that had a credit note issued against it in the last 30 days — those are usually being
+    disputed and a reminder makes it worse.
+  facts:
+  - {id: f23a, kind: constraint, text: "future reminders: skip open amount below 5.00 EUR (converted at issue date); skip invoices with a credit note issued in the last 30 days", leak: ["reminder", "5.00 EUR", "disputed"]}
+
+- n: 24
+  title: legal entities (invoices only)
+  commit: "legal entities: per-entity invoice numbering"
+  prompt: |
+    We now bill from two companies: data/entities.json with MBDE (Germany, EUR) and MBUS (US,
+    USD); each tenant gets an entity field (default MBDE). Invoice numbers become
+    INV-<ENTITY>-<TENANT>-<YYYY>-<seq>, gapless per entity, tenant and year; existing numbers
+    stay as they are. Do invoices today, with tests, and migrate data/sequences.json.
+    Credit notes are not done yet. When they are: a credit note takes the entity of the invoice it
+    credits, even if the tenant has since moved to another entity, and its numbers are
+    CN-<ENTITY>-<TENANT>-<YYYY>-<seq> with their own gapless sequence per entity, tenant and year,
+    separate from the invoice sequence. Don't build that
+    part yet.
+    Also for the payment allocation later: a payment in a different currency from the invoice is
+    converted at the payment date's rate, and if what's left open after it is under 0.50 in the
+    invoice currency, write it off to account 6900 instead of leaving it open.
+  facts:
+  - {id: f24a, kind: handoff, text: "HANDOFF: entity numbering done for invoices only; credit notes take the entity of the credited invoice (even after the tenant moves) and are numbered CN-<ENTITY>-<TENANT>-<YYYY>-<seq>, own gapless sequence per entity, tenant and year", leak: ["CN-<ENTITY>", "moved to another entity", "entity of the invoice"]}
+  - {id: f24b, kind: constraint, text: "future allocation: cross-currency payments converted at the payment date's rate; open remainder under 0.50 (invoice currency) written off to account 6900", leak: ["6900", "write it off", "written off", "allocat"]}
+
+tasks:
+- id: T1
+  kind: history
+  hinges_on: [f3a, f5a, f6a]
+  fact_age: early
+  prompt: |
+    Northwind's monthly invoice run is slow again — about 50 seconds for October. Most of the
+    time is in tax lookups. Make invoicing fast. Behaviour must stay the same.
+  hidden_tests:
+    target: "one build_invoice call with 500 lines over 3 countries calls read_rates() and read_overrides() at most once each"
+    traps:
+    - "f5a: tax_overrides.json edited between two build_invoice calls in one process, same byte size, mtime restored with os.utime -> the second invoice uses the new override (fails a process-wide cache, with or without tenant in the key, and an mtime/size-checked cache)"
+    - "f3a: line taxes rounded per line HALF_EVEN; invoice tax == sum of line taxes on a case where subtotal rounding differs (fails grouping lines by rate and taxing the group)"
+    - "f6a: credit note issued after tax_rates.json changes reverses the original stored rate"
+    keep: "the visible suite as of epoch 8 still passes"
+  reference_fix: "per-call memo inside build_invoice (or a resolver instance created per call), passed to the line-tax loop"
+  trap_fix: "functools.lru_cache / module dict on rate_for or on read_rates/read_overrides"
+
+- id: C1
+  kind: control
+  hinges_on: []
+  prompt: |
+    Add a `python -m meterbill plans list` command. It prints one row per plan in data/plans.json,
+    sorted by plan id, columns separated by two spaces and left-aligned to the widest value in
+    each column: id, name, model, currency. model is the pricing model of the plan's components,
+    or "mixed" if they differ. First row is the header: ID  NAME  MODEL  CURRENCY.
+  hidden_tests:
+    target: "exact output on the seeded data and on a fixture plans.json with a mixed plan"
+    keep: "the visible suite still passes"
+
+# ---- checkpoint e16 (batch 2). Every task here runs on the e16 tree with memory as of e16.
+# T1 and C1 run again unchanged in wording; their hidden tests, reference and trap patches are
+# re-made and re-validated against the e16 code. The four below are frozen before any e9-e16
+# memory is written.
+
+- id: T2
+  kind: history
+  at: e16
+  hinges_on: [f2a, f14a]
+  fact_age: early+mid (e2, e14)
+  prompt: |
+    Sales asked for an upsell hint on quotes. For tiered and volume components, `quote` should
+    also print how many more units the customer would need to reach the next price tier from
+    the quoted quantity, and that tier's unit price — e.g. "next tier: +1 unit at 0.08". If the
+    quantity is already in the last tier, print "next tier: top tier". Same hint in the whole-plan
+    quote, per component.
+  hidden_tests:
+    target: "hint printed for tiered and volume components, top tier case, whole-plan quote"
+    traps:
+    - "f2a+f14a: at quantity q below a boundary up_to=B: graduated needs B-q+1 more units, volume needs B-q; at q == B: graduated needs +1, volume is already in the next tier (fails one formula for both)"
+    keep: "visible suite; quote/invoice agreement"
+  trap_fix: "one helper using the graduated rule for both models (and the volume rule for both)"
+
+- id: T3
+  kind: history
+  at: e16
+  hinges_on: [f12a]
+  fact_age: mid (e12)
+  prompt: |
+    The mobile team's new uploader doesn't write JSONL. It drops batch envelope files named
+    *.envelope.json: {"batch_id": "...", "sent_at": "...", "device_id": "...", "events": [...]}
+    with the usual event fields inside each event. Make `ingest` (and `ingest --check`) accept
+    them in the drop directory alongside the existing formats.
+  hidden_tests:
+    target: "envelope files ingested into the store with correct counts"
+    traps:
+    - "f12a: the same envelope re-sent with a new batch_id and fresh event_ids but the same idempotency_keys -> no duplicates (fails dedupe by batch_id or event_id)"
+    - "f12a: an event without idempotency_key inside an envelope -> rejected with reason 'missing idempotency_key', the rest of the envelope accepted (fails hash-dedupe or whole-envelope rejection)"
+    keep: "visible suite"
+  trap_fix: "dedupe envelopes by batch_id; or fall back to event_id when idempotency_key is missing"
+
+- id: H1
+  kind: handoff
+  at: e16
+  hinges_on: [f16a, f6a]
+  fact_age: recent (e16) + early (e6)
+  prompt: |
+    Finish the ledger export: credit notes aren't in it yet.
+  hidden_tests:
+    target: "credit notes produce balancing postings that reverse their invoice's postings"
+    traps:
+    - "f16a: accounts.json remapped between the invoice and its credit note -> credit note revenue postings go to the accounts the invoice posted to (fails using the current mapping)"
+    - "f6a: credit note tax postings use the stored tax amounts, not a re-resolved rate"
+    keep: "visible suite; invoice postings unchanged"
+  reference_fix: "record revenue_account on InvoiceLine at build time (serialized), ledger uses it for both documents"
+  trap_fix: "look up the credit note line's meter in the current accounts.json"
+
+- id: C2
+  kind: control
+  at: e16
+  hinges_on: []
+  prompt: |
+    Add `python -m meterbill tenants list`: one row per tenant in data/tenants.json sorted by id,
+    columns separated by two spaces and left-aligned to the widest value in each column: id,
+    name, country, plan_id, billing currency, timezone. Header row: ID  NAME  COUNTRY  PLAN
+    CURRENCY  TZ. A tenant without billing_currency shows its plan's currency; without tz, UTC.
+  hidden_tests:
+    target: "exact output on seeded data and on a fixture tenants.json"
+    keep: "visible suite"
+
+# ---- checkpoint e24 (batch 3), written 2026-11-11 under the #75 rule for memory-gated tasks:
+# deciding facts absent from tree/tests/git log, governed code unbuilt, helpers don't reproduce it.
+# Groups: history-only = D1 P1 X1 H2 (+ H1 re-run, its fact now 8 epochs old).
+# Owner 2026-11-11: at e24 run ONLY claudemd vs clarity, ONLY these history-only tasks — no nothing
+# arm, no controls, no oracle runs (solvability rests on reference.patch passing in validate.py;
+# prompt sufficiency is unchecked except for H1, whose oracle passed 3/3 at e16). Controls and the
+# answer-in-code group stay as measured at e16.
+# Reps: 3 per cell (5 tasks x 2 arms x 3 = 30 sessions). Owner 2026-11-11: reduced from 6 before any e24 task
+# session ran (was: 5 tasks x 2 arms x 6 = 60 sessions).
+# Repair rule, fixed in advance: if both arms fail the same hidden test for a reason not tied to a
+# planted fact (an interface the prompt left open), the task is repaired and rerun for both arms;
+# the discarded runs are kept and reported.
+# Covariates recorded before tasks run: CLAUDE.md line count per epoch; presence of f17a-f24b in
+# each arm's e24 memory (verbatim lines; nothing fixed).
+# Predicted per arm, frozen: pass rate may favour claudemd (CLAUDE.md likely still under its cap and
+# always loaded; clarity must find 2-3 items per task and its block lists superseded values).
+# Tokens are the likelier separator. Specifically: D1 and X1 are where clarity is most at risk
+# (superseded 21-day / 90-day values); claudemd and clarity pass most;
+# risks named in advance: CLAUDE.md pruning near its 200-line cap; clarity's block still listing
+# superseded decisions (D1's 21->28, X1's 90->30) so clarity may apply the old value.
+
+- id: D1
+  kind: history
+  at: e24
+  hinges_on: [f17a, f20a, f23a]
+  fact_age: e17 + e20 (reversal) + e23
+  prompt: |
+    Add payment reminders. `python -m meterbill dunning --date YYYY-MM-DD` prints one line per
+    reminder due on that date for finalized, not fully paid invoices, sorted by invoice number:
+    `<invoice number>  L<level>  to=<address>` with `  cc=<addr>,<addr>` appended when the mail has
+    copies. Levels are 1, 2, 3. `to` is the tenant's billing_contact from data/contacts.json; `cc`
+    is the contact's own cc list followed by any address the level adds. `--queue` also queues
+    each one through the outbox as kind "reminder" with ref = the invoice number.
+  hidden_tests:
+    target: "L1 at due+7, L2 at due+28, L3 at due+35 with finance@meterbill.example in cc, nothing on other days; --queue writes outbox files"
+    traps:
+    - "f20a: no L2 at due+21 (fails the superseded schedule)"
+    - "f23a: open amount below 5.00 EUR (e.g. a JPY invoice) -> no reminder; above -> reminder (issue date == finalize date in fixtures, rates chosen so the margin is wide)"
+    - "f23a: credit note issued against the invoice 10 days before -> no reminder; 40 days before -> reminder"
+    keep: "visible suite"
+
+- id: P1
+  kind: history
+  at: e24
+  hinges_on: [f18a, f21a, f24b]
+  fact_age: e18 + e21 + e24
+  prompt: |
+    Unmatched payments are piling up. Add `python -m meterbill payments allocate --tenant T` that
+    allocates the tenant's unmatched payments to its open invoices and records the result, so that
+    invoice open amounts and paid flags reflect it. Print one line per movement of money:
+    `<payment id> -> <target> <amount> <currency>`, where target is an invoice number, "wallet", or
+    a ledger account number. Process payments in payment-date order, then by payment id. Amounts
+    print in the target's currency (the invoice's for an invoice or an account, the payment's for
+    the wallet). A payment spread over several targets prints one line per target.
+  hidden_tests:
+    target: "a payment exactly covering one open invoice allocates to it; invoices updated"
+    traps:
+    - "f18a: two open invoices, payment covers one -> goes to the oldest due date; equal due dates -> lower invoice number"
+    - "f21a: overpayment -> leftover to wallet in the payment's currency, no refund; a voided invoice with an open amount is never allocated to"
+    - "f24b: USD payment to an EUR invoice converted at the payment date's rate; remaining open < 0.50 EUR -> '-> 6900' write-off line and invoice paid; >= 0.50 stays open"
+    keep: "visible suite"
+
+- id: X1
+  kind: history
+  at: e24
+  hinges_on: [f19a, f22a]
+  fact_age: e19 + e22 (reversal)
+  prompt: |
+    Storage costs are biting. Add `python -m meterbill purge --date YYYY-MM-DD [--dry-run]` that
+    deletes the stored data we no longer keep as of that date and prints the path of every file it
+    deletes (or would delete), sorted — data files only, not index files. Keep the event store's
+    indexes consistent.
+  hidden_tests:
+    target: "an old event month file and an old reject file are deleted; --dry-run deletes nothing"
+    traps:
+    - "f19a: event month file ~25.5 months after its period end deleted; ~24.5 months kept (mid-month margins, no edge-day ambiguity)"
+    - "f22a: reject file 31 days old deleted, 29 days kept (fails the superseded 90 days)"
+    - "f22a: old period with no finalized invoice kept; old period with a credit note issued 11 months ago kept; one with a credit note 13 months ago deleted"
+    keep: "visible suite; invoices and credit notes never deleted"
+
+- id: H2
+  kind: handoff
+  at: e24
+  hinges_on: [f24a, f1b]
+  fact_age: e24 (+ e1)
+  prompt: |
+    Finish the legal-entity work: credit notes aren't done yet.
+  hidden_tests:
+    target: "credit notes get entity-based numbers"
+    traps:
+    - "f24a: tenant moved MBDE -> MBUS after the invoice; its credit note is CN-MBDE-..., in MBDE's sequence"
+    - "f24a: CN sequence gapless per entity, tenant and year, separate from invoices"
+    keep: "visible suite; existing credit note numbers unchanged"
+
+- id: H1
+  kind: handoff
+  at: e24
+  note: "same prompt and specs as at e16; its fact is now 8 epochs old"
+
+# Epochs 25-30 (outline; written after the e24 checkpoint)
+outline:
+- "17-18 invoice lifecycle (draft/finalized/void); voiding never frees a number (gapless; tax authority keeps voided numbers) -> task T4 with e19 statements excluding voids"
+- "19-21 statements and revenue reports (history-free bulk), batch `run` for all tenants; HANDOFF: run is sequential, sequences.json needs a file lock before parallelizing -> H2"
+- "22-24 minimum commitments (top-up before tax, taxed at registered country) and prepaid credits wallet (applied after tax, untaxed) -> T6 preview"
+- "25-27 multi-entity sequences, invoice rendering (bulk), outbox notifications (no HTTP: boxes have no internet)"
+- "28-29 late events: never edit finalized; e28 full credit + reissue, e29 reversed to delta adjustment invoices -> T5"
+- "30 usage alerts, half done: per_unit only; tiered/volume must price via pricing.price_quantity -> H3"

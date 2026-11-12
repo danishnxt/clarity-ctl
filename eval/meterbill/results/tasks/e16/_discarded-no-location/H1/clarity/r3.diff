@@ -1,0 +1,321 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..dc3a61e 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -364,12 +364,14 @@ def main(argv: Sequence[str] | None = None) -> int:
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()
+         catalog = load_catalog(args.data_dir)
+         zone = catalog.tenant(args.tenant).zone
++        accounts_file = Path(args.data_dir) / "accounts.json"
++        accounts = load_accounts(accounts_file) if accounts_file.exists() else None
+         events = (stream_events(args.events) if args.events
+                   else EventStore(Path(args.data_dir) / "events").read_period(
+                       args.tenant, period, zone))
+         invoice = build_invoice(
+             args.tenant, period, events, catalog, issue_date, TaxResolver(args.data_dir),
+-            FxConverter(args.data_dir),
++            FxConverter(args.data_dir), accounts,
+         )
+         if args.finalize:
+             invoice = finalize_invoice(invoice, SequenceStore(Path(args.data_dir) / "sequences.json"))
+diff --git a/meterbill/credits/issue.py b/meterbill/credits/issue.py
+index 0cd0077..f9e5899 100644
+--- a/meterbill/credits/issue.py
++++ b/meterbill/credits/issue.py
+@@ -54,6 +54,7 @@ def issue_credit_note(
+             amount=-invoice.lines[n - 1].amount,
+             tax_rate=invoice.lines[n - 1].tax_rate,
+             tax_amount=-invoice.lines[n - 1].tax_amount,
++            revenue_account=invoice.lines[n - 1].revenue_account,
+         )
+         for n in selected
+     )
+diff --git a/meterbill/credits/models.py b/meterbill/credits/models.py
+index ea02abb..026beb8 100644
+--- a/meterbill/credits/models.py
++++ b/meterbill/credits/models.py
+@@ -19,6 +19,7 @@ class CreditNoteLine:
+     amount: Money  # negation of the invoice line amount
+     tax_rate: Decimal  # copied from the invoice line
+     tax_amount: Money  # negation of the invoice line tax
++    revenue_account: str | None = None  # copied from the invoice line; None if it had none
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff --git a/meterbill/credits/serialization.py b/meterbill/credits/serialization.py
+index 2cc9fb1..31a9cf2 100644
+--- a/meterbill/credits/serialization.py
++++ b/meterbill/credits/serialization.py
+@@ -34,6 +34,7 @@ def credit_note_to_dict(note: CreditNote) -> dict[str, Any]:
+                 "amount": line.amount.minor,
+                 "tax_rate": str(line.tax_rate),
+                 "tax_amount": line.tax_amount.minor,
++                "revenue_account": line.revenue_account,
+             }
+             for line in note.lines
+         ],
+@@ -68,6 +69,7 @@ def credit_note_from_dict(data: Any) -> CreditNote:
+                 amount=Money(raw["amount"], currency),
+                 tax_rate=_decimal(raw["tax_rate"], "tax_rate"),
+                 tax_amount=Money(raw["tax_amount"], currency),
++                revenue_account=raw.get("revenue_account"),
+             )
+             for raw in data["lines"]
+         )
+diff --git a/meterbill/exports/__init__.py b/meterbill/exports/__init__.py
+index c9c10c5..4568488 100644
+--- a/meterbill/exports/__init__.py
++++ b/meterbill/exports/__init__.py
+@@ -2,10 +2,10 @@ from meterbill.exports.csv_export import (
+     CSV_COLUMNS, ExportError, format_amount, load_documents, write_csv,
+ )
+ from meterbill.exports.ledger import (
+-    AccountMap, Posting, invoice_postings, load_accounts, write_postings,
++    AccountMap, Posting, credit_note_postings, invoice_postings, load_accounts, write_postings,
+ )
+ 
+ __all__ = [
+-    "AccountMap", "CSV_COLUMNS", "ExportError", "Posting", "format_amount", "invoice_postings",
++    "AccountMap", "CSV_COLUMNS", "ExportError", "Posting", "credit_note_postings", "format_amount", "invoice_postings",
+     "load_accounts", "load_documents", "write_csv", "write_postings",
+ ]
+diff --git a/meterbill/exports/ledger.py b/meterbill/exports/ledger.py
+index 336e218..9b36a24 100644
+--- a/meterbill/exports/ledger.py
++++ b/meterbill/exports/ledger.py
+@@ -8,7 +8,8 @@ Each finalized invoice produces:
+ 
+ Postings are never netted across lines. A line with zero tax gets no tax
+ posting, since it would carry no amount. Amounts are major-unit decimal strings
+-with the currency's number of decimal places; each posting has a debit and a
++with the currency's number of decimal places; credit notes post the mirror
++image (see ``credit_note_postings``); each posting has a debit and a
+ credit column, one of which is zero.
+ """
+ 
+@@ -19,7 +20,8 @@ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import IO, Iterable
+ 
+-from meterbill.exports.csv_export import Document, ExportError, format_amount
++from meterbill.credits import CreditNote
++from meterbill.exports.csv_export import Document, ExportError, _in_period, format_amount
+ from meterbill.invoices import Invoice, InvoiceStatus
+ from meterbill.money import Money
+ from meterbill.period import Period
+@@ -83,8 +85,8 @@ def invoice_postings(invoice: Invoice, accounts: AccountMap) -> list[Posting]:
+     number, day, zero = invoice.number, invoice.issue_date.isoformat(), Money.zero(invoice.currency)
+     postings = [Posting(number, day, RECEIVABLE_ACCOUNT, invoice.total, zero)]
+     for line in invoice.lines:
+-        postings.append(Posting(number, day, accounts.revenue_account(line.meter),
+-                                zero, line.amount))
++        account = line.revenue_account or accounts.revenue_account(line.meter)
++        postings.append(Posting(number, day, account, zero, line.amount))
+         if line.tax_amount.minor != 0:
+             if not line.country:
+                 raise ExportError(f"{number}: line for {line.meter!r} has tax but no country")
+@@ -93,22 +95,52 @@ def invoice_postings(invoice: Invoice, accounts: AccountMap) -> list[Posting]:
+     return postings
+ 
+ 
++def credit_note_postings(note: CreditNote) -> list[Posting]:
++    """The balanced reversal of a credit note: it undoes what the invoice posted.
++
++    Revenue and tax are debited and receivable credited, each line to the
++    revenue account recorded on the line (never today's meter mapping, which
++    accounting may have changed since). A line without a recorded account, from
++    an invoice built before accounts were recorded, is an error: guessing could
++    reverse revenue out of the wrong account.
++    """
++    number, day, zero = note.number, note.issue_date.isoformat(), Money.zero(note.currency)
++    postings = [Posting(number, day, RECEIVABLE_ACCOUNT, zero, -note.total)]
++    for line in note.lines:
++        if not line.revenue_account:
++            raise ExportError(
++                f"{number}: line {line.invoice_line} ({line.meter!r}) has no recorded "
++                f"revenue account (invoice {note.invoice_number} predates it)"
++            )
++        postings.append(Posting(number, day, line.revenue_account, -line.amount, zero))
++        if line.tax_amount.minor != 0:
++            if not line.country:
++                raise ExportError(f"{number}: line for {line.meter!r} has tax but no country")
++            postings.append(Posting(number, day, TAX_ACCOUNT_PREFIX + line.country,
++                                    -line.tax_amount, zero))
++    return postings
++
++
+ def write_postings(
+     documents: Iterable[Document], period: Period, accounts: AccountMap, out: IO[str]
+ ) -> int:
+-    """Write one JSON object per posting for the finalized invoices of ``period``.
++    """Write one JSON object per posting for the documents of ``period``.
+ 
+-    Credit notes and drafts are skipped. Returns the number of postings written.
++    Finalized invoices belong to their billing period, credit notes to their
++    issue month (as in the CSV export); drafts are skipped. Returns the number
++    of postings written.
+     """
+     selected = sorted(
+         (d for d in documents
+-         if isinstance(d, Invoice) and d.number and d.period == period
+-         and d.status is InvoiceStatus.FINALIZED),
++         if d.number and _in_period(d, period)
++         and not (isinstance(d, Invoice) and d.status is not InvoiceStatus.FINALIZED)),
+         key=lambda d: (d.issue_date, d.number),
+     )
+     count = 0
+-    for invoice in selected:
+-        for posting in invoice_postings(invoice, accounts):
++    for document in selected:
++        postings = (invoice_postings(document, accounts) if isinstance(document, Invoice)
++                    else credit_note_postings(document))
++        for posting in postings:
+             out.write(json.dumps(posting.to_dict()) + "\n")
+             count += 1
+     return count
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..84bb60b 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -5,7 +5,7 @@ from __future__ import annotations
+ from dataclasses import replace
+ from datetime import date
+ from decimal import ROUND_HALF_EVEN, Decimal
+-from typing import Iterable
++from typing import Iterable, Protocol
+ 
+ from meterbill.events import UsageEvent
+ from meterbill.fx import FxConverter
+@@ -17,6 +17,10 @@ from meterbill.rating import rate_segments
+ from meterbill.tax import TaxResolver
+ 
+ 
++class RevenueAccounts(Protocol):
++    def revenue_account(self, meter: str) -> str: ...
++
++
+ def build_invoice(
+     tenant_id: str,
+     period: Period,
+@@ -25,6 +29,7 @@ def build_invoice(
+     issue_date: date | None = None,
+     tax_resolver: TaxResolver | None = None,
+     fx_converter: FxConverter | None = None,
++    revenue_accounts: RevenueAccounts | None = None,
+ ) -> Invoice:
+     """Rate the events and return a draft invoice; no sequence number is consumed.
+ 
+@@ -40,6 +45,9 @@ def build_invoice(
+     then taxed on its own: the rate for the line's country (the tenant's country when the line has none) on the issue
+     date is applied to the converted line amount and rounded half-even. The
+     invoice tax total is the sum of those rounded line taxes.
++
++    ``revenue_accounts`` (e.g. the ledger ``AccountMap``) records each line's
++    revenue account at build time, so later credit notes post to it.
+     """
+     tenant = catalog.tenant(tenant_id)
+     segments = segments_for(catalog, tenant, period)
+@@ -68,6 +76,7 @@ def build_invoice(
+                 r.meter, r.quantity, r.unit_price, amount, country, rate,
+                 amount.multiply(rate, ROUND_HALF_EVEN),
+                 fx_rate=fx_rate, original_amount=original,
++                revenue_account=revenue_accounts.revenue_account(r.meter) if revenue_accounts else None,
+             )
+         )
+     return Invoice(
+diff --git a/meterbill/invoices/models.py b/meterbill/invoices/models.py
+index 46fe17e..67cb905 100644
+--- a/meterbill/invoices/models.py
++++ b/meterbill/invoices/models.py
+@@ -29,6 +29,10 @@ class InvoiceLine:
+     # currency: ``amount`` is ``original_amount`` times ``fx_rate``.
+     fx_rate: Decimal | None = None  # billing currency per 1 unit of the original currency
+     original_amount: Money | None = None  # the rated amount in the plan currency
++    # Ledger revenue account the line was built against; credit notes post back
++    # to it even after accounting remaps meters. None on invoices built before
++    # this field existed.
++    revenue_account: str | None = None
+ 
+     def __post_init__(self) -> None:
+         if (self.fx_rate is None) != (self.original_amount is None):
+diff --git a/meterbill/invoices/serialization.py b/meterbill/invoices/serialization.py
+index 13dfc26..916f68a 100644
+--- a/meterbill/invoices/serialization.py
++++ b/meterbill/invoices/serialization.py
+@@ -36,6 +36,7 @@ def invoice_to_dict(invoice: Invoice) -> dict[str, Any]:
+                 "country": line.country,
+                 "tax_rate": str(line.tax_rate),
+                 "tax_amount": line.tax_amount.minor,
++                "revenue_account": line.revenue_account,
+                 "fx_rate": None if line.fx_rate is None else str(line.fx_rate),
+                 "original_amount": (
+                     None if line.original_amount is None else line.original_amount.minor
+@@ -92,6 +93,7 @@ def invoice_from_dict(data: Any) -> Invoice:
+                 country=raw["country"],
+                 tax_rate=_decimal(raw["tax_rate"], "tax_rate"),
+                 tax_amount=Money(raw["tax_amount"], currency),
++                revenue_account=raw.get("revenue_account"),
+                 **_fx_fields(raw),
+             )
+             for raw in data["lines"]
+diff --git a/tests/test_ledger.py b/tests/test_ledger.py
+index c5b2953..6925f39 100644
+--- a/tests/test_ledger.py
++++ b/tests/test_ledger.py
+@@ -93,3 +93,56 @@ def test_cli_ledger(tmp_path):
+     assert code == 0
+     rows = [json.loads(r) for r in out.read_text().splitlines()]
+     assert [r["account"] for r in rows] == ["1200", "4010", "2200-DE"]
++
++
++def _cn_line(meter, net, tax, country, account, cur="EUR"):
++    from meterbill.credits import CreditNoteLine
++    return CreditNoteLine(1, meter, country, Decimal(-1), Money(-net, cur), Decimal("0.19"),
++                          Money(-tax, cur), revenue_account=account)
++
++
++def _note(lines, cur="EUR", day=date(2026, 11, 20)):
++    from meterbill.credits import CreditNote
++    return CreditNote("CN-ACM-2026-00001", "INV-ACM-2026-00001", "ACM", "Acme", cur, "oops",
++                      day, tuple(lines))
++
++
++def test_credit_note_posts_to_recorded_account_not_current_mapping():
++    from meterbill.exports import credit_note_postings
++    # api_calls is mapped to 4010 today, but the invoice posted it to 4999.
++    postings = credit_note_postings(_note([_cn_line("api_calls", 1000, 190, "DE", "4999")]))
++    assert _balance(postings) == 0
++    by_account = {p.account: p for p in postings}
++    assert by_account["4999"].debit.minor == 1000
++    assert by_account["2200-DE"].debit.minor == 190
++    assert by_account["1200"].credit.minor == 1190
++    assert "4010" not in by_account
++
++
++def test_credit_note_without_recorded_account_is_an_error():
++    from meterbill.exports import credit_note_postings
++    with pytest.raises(ExportError, match="no recorded revenue account"):
++        credit_note_postings(_note([_cn_line("api_calls", 1000, 190, "DE", None)]))
++
++
++def test_invoice_posts_to_recorded_account():
++    line = InvoiceLine("api_calls", Decimal(1), Decimal(1), Money(100, "EUR"), "DE",
++                       Decimal("0.19"), Money(19, "EUR"), revenue_account="4999")
++    assert "4999" in {p.account for p in invoice_postings(_invoice([line]), ACCOUNTS)}
++
++
++def test_write_postings_includes_credit_notes_by_issue_month():
++    note = _note([_cn_line("api_calls", 1000, 190, "DE", "4010")])
++    out = io.StringIO()
++    assert write_postings([note], Period(2026, 11), ACCOUNTS, out) == 3
++    assert write_postings([note], P, ACCOUNTS, io.StringIO()) == 0
++
++
++def test_account_round_trips_through_json(tmp_path):
++    from meterbill.credits import credit_note_from_json, credit_note_to_json
++    from meterbill.invoices import invoice_from_json
++    line = InvoiceLine("api_calls", Decimal(1), Decimal(1), Money(100, "EUR"), "DE",
++                       Decimal("0.19"), Money(19, "EUR"), revenue_account="4999")
++    assert invoice_from_json(invoice_to_json(_invoice([line]))).lines[0].revenue_account == "4999"
++    note = _note([_cn_line("api_calls", 1000, 190, "DE", "4999")])
++    assert credit_note_from_json(credit_note_to_json(note)).lines[0].revenue_account == "4999"

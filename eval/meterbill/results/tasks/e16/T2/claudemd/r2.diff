@@ -1,0 +1,159 @@
+diff --git a/meterbill/pricing.py b/meterbill/pricing.py
+index 8173df5..74563b7 100644
+--- a/meterbill/pricing.py
++++ b/meterbill/pricing.py
+@@ -3,7 +3,7 @@
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+-from decimal import ROUND_HALF_UP, Decimal
++from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+ 
+ from meterbill.money import Money
+ from meterbill.plans import PlanComponent, PricingModel, Tier
+@@ -63,6 +63,33 @@ def price_quantity(
+     )]
+ 
+ 
++def next_tier(component: PlanComponent, quantity: Decimal) -> tuple[Decimal, Decimal] | None:
++    """Whole extra units needed to reach the next tier, and that tier's unit price.
++
++    Only for tiered and volume components; None when ``quantity`` is already in
++    the last tier. Graduated bounds are inclusive (1000 is still tier 1, so
++    1001 is needed); volume bounds are strict (1000 already is tier 2).
++    """
++    if component.model not in (PricingModel.TIERED, PricingModel.VOLUME):
++        raise ValueError(f"{component.meter!r} has no tiers")
++    if quantity < 0 or not quantity.is_finite():
++        raise ValueError(f"quantity must be finite and not negative: {quantity}")
++    tiers = component.tiers
++    for index, tier in enumerate(tiers):
++        if tier.up_to is None:
++            return None
++        if component.model is PricingModel.TIERED:
++            if quantity > tier.up_to:
++                continue
++            needed = (tier.up_to - quantity).to_integral_value(rounding=ROUND_FLOOR) + 1
++        else:
++            if quantity >= tier.up_to:
++                continue
++            needed = (tier.up_to - quantity).to_integral_value(rounding=ROUND_CEILING)
++        return needed, tiers[index + 1].unit_price
++    return None
++
++
+ def _amount(quantity: Decimal, unit_price: Decimal, currency: str) -> Money:
+     return Money.from_major(quantity * unit_price, currency, rounding=ROUND_HALF_UP)
+ 
+diff --git a/meterbill/quote.py b/meterbill/quote.py
+index b8e52c9..ee453d4 100644
+--- a/meterbill/quote.py
++++ b/meterbill/quote.py
+@@ -8,8 +8,8 @@ from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+ from typing import Mapping, Sequence
+ 
+ from meterbill.money import Money
+-from meterbill.plans import Plan
+-from meterbill.pricing import PricedPart, price_quantity
++from meterbill.plans import Plan, PricingModel
++from meterbill.pricing import PricedPart, next_tier, price_quantity
+ from meterbill.tax import TaxResolver
+ 
+ 
+@@ -32,6 +32,7 @@ class Quote:
+     plan: Plan
+     country: str | None
+     lines: tuple[QuoteLine, ...]
++    hints: tuple[tuple[str, str], ...] = ()  # (meter, upsell text) per tiered/volume component
+ 
+     @property
+     def currency(self) -> str:
+@@ -116,11 +117,17 @@ def _quote(
+         if plan.component_for(meter) is None:
+             raise QuoteError(f"meter {meter!r} is not on plan {plan.id!r}")
+     parts: list[PricedPart] = []
++    hints: list[tuple[str, str]] = []
+     for component in plan.components:
+         if component.meter in usage:
+-            parts.extend(price_quantity(component, usage[component.meter], plan.currency))
++            quantity = usage[component.meter]
+         elif not only_meters:
+-            parts.extend(price_quantity(component, Decimal(0), plan.currency))
++            quantity = Decimal(0)
++        else:
++            continue
++        parts.extend(price_quantity(component, quantity, plan.currency))
++        if component.model in (PricingModel.TIERED, PricingModel.VOLUME):
++            hints.append((component.meter, _hint(next_tier(component, quantity))))
+     rate = None
+     if country is not None:
+         # a quote has no tenant, so only the standard rate for the country applies
+@@ -132,7 +139,15 @@ def _quote(
+         )
+         for p in parts
+     )
+-    return Quote(plan, country, lines)
++    return Quote(plan, country, lines, tuple(hints))
++
++
++def _hint(step: tuple[Decimal, Decimal] | None) -> str:
++    if step is None:
++        return "next tier: top tier"
++    units, price = step
++    noun = "unit" if units == 1 else "units"
++    return f"next tier: +{units:f} {noun} at {price:f}"
+ 
+ 
+ def format_quote(quote: Quote) -> str:
+@@ -160,4 +175,7 @@ def format_quote(quote: Quote) -> str:
+     if taxed:
+         out += [f"Subtotal: {quote.subtotal}", f"Tax:      {quote.tax_total}"]
+     out.append(f"Total:    {quote.total}")
++    if quote.hints:
++        out.append("")
++        out += [f"{meter}: {text}" for meter, text in quote.hints]
+     return "\n".join(out)
+diff --git a/tests/test_quote.py b/tests/test_quote.py
+index 1bf3250..1a1c877 100644
+--- a/tests/test_quote.py
++++ b/tests/test_quote.py
+@@ -131,3 +131,39 @@ def test_cli_quote_errors(args, capsys):
+     assert main(["quote", *args]) == 1
+     captured = capsys.readouterr()
+     assert captured.err.startswith("error: ") and captured.out == ""
++
++
++def _three_tiers():
++    return [Tier(Decimal(1000), Decimal("0.10")), Tier(Decimal(10000), Decimal("0.08")),
++            Tier(None, Decimal("0.05"))]
++
++
++@pytest.mark.parametrize("model, qty, expected", [
++    (PricingModel.TIERED, "0", (1001, "0.08")),
++    (PricingModel.TIERED, "999", (2, "0.08")),
++    (PricingModel.TIERED, "1000", (1, "0.08")),
++    (PricingModel.TIERED, "1000.5", (9000, "0.05")),
++    (PricingModel.TIERED, "999.5", (1, "0.08")),
++    (PricingModel.TIERED, "10000", (1, "0.05")),
++    (PricingModel.TIERED, "10001", None),
++    (PricingModel.VOLUME, "0", (1000, "0.08")),
++    (PricingModel.VOLUME, "999", (1, "0.08")),
++    (PricingModel.VOLUME, "1000", (9000, "0.05")),
++    (PricingModel.VOLUME, "9999", (1, "0.05")),
++    (PricingModel.VOLUME, "10000", None),
++])
++def test_next_tier(model, qty, expected):
++    from meterbill.pricing import next_tier
++    got = next_tier(PlanComponent("m", model, tiers=_three_tiers()), Decimal(qty))
++    assert got == (None if expected is None else (expected[0], Decimal(expected[1])))
++
++
++def test_cli_quote_hints(capsys):
++    assert main(["quote", "--plan", "growth", "--meter", "api_calls", "--quantity", "1000"]) == 0
++    assert "api_calls: next tier: +1 unit at" in capsys.readouterr().out
++    assert main(["quote", "--plan", "volume", "--usage", "storage_gb=999"]) == 0
++    assert "storage_gb: next tier: +1 unit at 0.08" in capsys.readouterr().out
++    assert main(["quote", "--plan", "volume", "--usage", "storage_gb=10000"]) == 0
++    assert "storage_gb: next tier: top tier" in capsys.readouterr().out
++    assert main(["quote", "--plan", "starter", "--usage", "api_calls=5"]) == 0
++    assert "next tier" not in capsys.readouterr().out

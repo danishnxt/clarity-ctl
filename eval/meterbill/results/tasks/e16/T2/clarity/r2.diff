@@ -1,0 +1,139 @@
+diff --git a/meterbill/pricing.py b/meterbill/pricing.py
+index 8173df5..db3aecb 100644
+--- a/meterbill/pricing.py
++++ b/meterbill/pricing.py
+@@ -91,3 +91,32 @@ def _price_volume(component: PlanComponent, quantity: Decimal, currency: str) ->
+         f"{component.meter} (volume tier {number})", quantity, tier.unit_price,
+         _amount(quantity, tier.unit_price, currency),
+     )
++
++
++@dataclass(frozen=True, slots=True)
++class NextTier:
++    """How far a quantity is from the next price tier; None from ``next_tier`` means top tier."""
++    units_needed: Decimal
++    unit_price: Decimal  # major currency units per unit, of the next tier
++
++
++def next_tier(component: PlanComponent, quantity: Decimal) -> NextTier | None:
++    """The next tier above ``quantity`` for a tiered or volume component.
++
++    Returns None when ``quantity`` is already in the last tier. Bounds follow
++    the pricing rules: for tiered (inclusive) the next tier starts at
++    ``up_to + 1``; for volume (exclusive) it starts at ``up_to`` itself.
++    Other models have no tiers and raise ValueError.
++    """
++    if component.model not in (PricingModel.TIERED, PricingModel.VOLUME):
++        raise ValueError(f"{component.meter!r} has no tiers")
++    if quantity < 0 or not quantity.is_finite():
++        raise ValueError(f"quantity must be finite and not negative: {quantity}")
++    inclusive = component.model is PricingModel.TIERED
++    for index, tier in enumerate(component.tiers):
++        if tier.up_to is None:
++            return None
++        if (quantity <= tier.up_to) if inclusive else (quantity < tier.up_to):
++            start = tier.up_to + 1 if inclusive else tier.up_to
++            return NextTier(start - quantity, component.tiers[index + 1].unit_price)
++    return None
+diff --git a/meterbill/quote.py b/meterbill/quote.py
+index b8e52c9..c995d88 100644
+--- a/meterbill/quote.py
++++ b/meterbill/quote.py
+@@ -8,8 +8,8 @@ from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+ from typing import Mapping, Sequence
+ 
+ from meterbill.money import Money
+-from meterbill.plans import Plan
+-from meterbill.pricing import PricedPart, price_quantity
++from meterbill.plans import Plan, PricingModel
++from meterbill.pricing import PricedPart, next_tier, price_quantity
+ from meterbill.tax import TaxResolver
+ 
+ 
+@@ -32,6 +32,8 @@ class Quote:
+     plan: Plan
+     country: str | None
+     lines: tuple[QuoteLine, ...]
++    # (meter, upsell hint) per tiered or volume component quoted
++    hints: tuple[tuple[str, str], ...] = ()
+ 
+     @property
+     def currency(self) -> str:
+@@ -116,11 +118,17 @@ def _quote(
+         if plan.component_for(meter) is None:
+             raise QuoteError(f"meter {meter!r} is not on plan {plan.id!r}")
+     parts: list[PricedPart] = []
++    hints: list[tuple[str, str]] = []
+     for component in plan.components:
+         if component.meter in usage:
+-            parts.extend(price_quantity(component, usage[component.meter], plan.currency))
++            quantity = usage[component.meter]
+         elif not only_meters:
+-            parts.extend(price_quantity(component, Decimal(0), plan.currency))
++            quantity = Decimal(0)
++        else:
++            continue
++        parts.extend(price_quantity(component, quantity, plan.currency))
++        if component.model in (PricingModel.TIERED, PricingModel.VOLUME):
++            hints.append((component.meter, _next_tier_hint(component, quantity)))
+     rate = None
+     if country is not None:
+         # a quote has no tenant, so only the standard rate for the country applies
+@@ -132,7 +140,16 @@ def _quote(
+         )
+         for p in parts
+     )
+-    return Quote(plan, country, lines)
++    return Quote(plan, country, lines, tuple(hints))
++
++
++def _next_tier_hint(component, quantity: Decimal) -> str:
++    nxt = next_tier(component, quantity)
++    if nxt is None:
++        return "next tier: top tier"
++    units = f"{nxt.units_needed.normalize():f}"
++    noun = "unit" if nxt.units_needed == 1 else "units"
++    return f"next tier: +{units} {noun} at {nxt.unit_price:f}"
+ 
+ 
+ def format_quote(quote: Quote) -> str:
+@@ -157,6 +174,8 @@ def format_quote(quote: Quote) -> str:
+     if taxed:
+         out.append(f"Country:  {quote.country}")
+     out += ["", fmt(header), rule, *(fmt(r) for r in rows), rule]
++    if quote.hints:
++        out += [f"{meter}: {hint}" for meter, hint in quote.hints] + [""]
+     if taxed:
+         out += [f"Subtotal: {quote.subtotal}", f"Tax:      {quote.tax_total}"]
+     out.append(f"Total:    {quote.total}")
+diff --git a/tests/test_quote.py b/tests/test_quote.py
+index 1bf3250..c5b8d90 100644
+--- a/tests/test_quote.py
++++ b/tests/test_quote.py
+@@ -131,3 +131,26 @@ def test_cli_quote_errors(args, capsys):
+     assert main(["quote", *args]) == 1
+     captured = capsys.readouterr()
+     assert captured.err.startswith("error: ") and captured.out == ""
++
++
++def test_next_tier_hints():
++    from meterbill.pricing import next_tier
++    from meterbill.quote import _next_tier_hint
++    tiers = (Tier(Decimal(1000), Decimal("0.10")), Tier(Decimal(5000), Decimal("0.08")),
++             Tier(None, Decimal("0.05")))
++    tiered = PlanComponent("m", PricingModel.TIERED, tiers=tiers)
++    volume = PlanComponent("m", PricingModel.VOLUME, tiers=tiers)
++    h = lambda c, q: _next_tier_hint(c, Decimal(q))
++    # tiered: unit 1001 is the first at tier 2
++    assert h(tiered, 1000) == "next tier: +1 unit at 0.08"
++    assert h(tiered, 990) == "next tier: +11 units at 0.08"
++    assert h(tiered, 0) == "next tier: +1001 units at 0.08"
++    assert h(tiered, 1001) == "next tier: +4000 units at 0.05"
++    assert h(tiered, 5001) == "next tier: top tier"
++    # volume: a total of 1000 already prices at tier 2
++    assert h(volume, 999) == "next tier: +1 unit at 0.08"
++    assert h(volume, 1000) == "next tier: +4000 units at 0.05"
++    assert h(volume, 5000) == "next tier: top tier"
++    flat = PlanComponent("f", PricingModel.PER_UNIT, unit_price=Decimal(1))
++    with pytest.raises(ValueError):
++        next_tier(flat, Decimal(1))

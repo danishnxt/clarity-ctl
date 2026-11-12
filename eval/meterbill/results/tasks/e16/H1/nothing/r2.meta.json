@@ -1,0 +1,69 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "nothing",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 32.9,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 16,
+  "cache_creation_input_tokens": 18081,
+  "cache_read_input_tokens": 168943,
+  "output_tokens": 4493,
+  "output_tokens_details": {
+   "thinking_tokens": 284
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 18081,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 465,
+    "cache_read_input_tokens": 28497,
+    "cache_creation_input_tokens": 328,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 328
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 12,
+ "total_cost_usd": 0.13418030000000003,
+ "is_error": false,
+ "result": "Credit notes are now in the ledger export, and the full test suite passes (378 tests).\n\n- **Postings:** `credit_note_postings` in `meterbill/exports/ledger.py` mirrors the invoice postings.\n  - It credits accounts receivable (`1200`) for the note's gross total.\n  - Each line debits its revenue account for the net amount.\n  - Each line with tax debits `2200-<country>` for the tax.\n  - Postings stay per line and are never netted, and zero-tax lines get no tax posting.\n  - The note's negative amounts are flipped to positive in the debit and credit columns.\n  - A taxed line with no country raises `ExportError`, as it does for invoices.\n- **Period selection:** `write_postings` now includes credit notes by issue month, the same rule the CSV export uses. A credit note issued in a later month than its invoice lands in that later month's ledger. Draft invoices are still skipped.\n- **Other changes:** I exported `credit_note_postings` from `meterbill.exports` and updated the `ledger` CLI help text to mention credit notes.\n- **Tests:** I added two tests in `tests/test_ledger.py`. One checks the reversal and that the postings balance. The other checks selection by issue month.\n\nIf your accountants want credit notes posted in the invoice's billing period instead of their issue month, say so and I'll change it. That would also break the match with the CSV export.",
+ "memory_changed": [],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": false,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": false,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

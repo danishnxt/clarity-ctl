@@ -1,0 +1,55 @@
+{
+ "n": 21,
+ "title": "prepaid wallet",
+ "commit_msg": "prepaid wallet",
+ "prompt": "Some tenants prepay. Add a wallet per tenant and currency (data/wallets.json with a JSONL\ntransaction log): `wallet topup`, `wallet balance`, `wallet apply --invoice <number>` which pays\nan invoice from the balance (as a payment with method \"wallet\", up to the open amount).\nBalances never go negative; test concurrency-free invariants (log replays to the balance).\nFor the allocation work later: when an unmatched payment is bigger than everything open, the\nleftover goes into the tenant's wallet in the payment's currency \u2014 we never refund\nautomatically. And allocation must skip voided invoices entirely.\n",
+ "report": "Wallets are in. The full suite passes, 449 tests including the new ones.\n\n**Changes**\n- `meterbill/wallets/__init__.py` and `meterbill/wallets/store.py` (new):\n  - `WalletStore` keeps one balance per tenant and currency in `wallets.json`.\n  - Every change is also appended to the log `wallet_transactions.jsonl`. I chose that file name, so say if you want a different one.\n  - A top-up adds funds and a spend subtracts them. Both run under a file lock, and a change that would take a balance below zero is rejected.\n  - `replay()` rebuilds the balances from the log.\n- `meterbill/payments/models.py` and `meterbill/payments/store.py`: `Payment` has a new optional `method` field. It is written to the file only when set, so existing `payments.jsonl` lines still load.\n- `meterbill/cli.py`: new `wallet` command, with `--data-dir` like the other commands.\n  - `wallet topup --tenant --amount --currency [--date]`\n  - `wallet balance --tenant [--currency]` lists every currency, or just the one you name.\n  - `wallet apply --invoice <number> [--date]` records a payment with method `\"wallet\"` for the smaller of the invoice's open amount and the wallet balance, and debits the wallet.\n  - Apply refuses voided or draft invoices, invoices with nothing open, and empty wallets. The wallet used is the one in the invoice's currency.\n- `tests/test_wallets.py` (new):\n  - Top-up and balance, including multiple currencies.\n  - Partial and full apply.\n  - Apply error cases.\n  - Balances never go negative.\n  - The log replays to the balances.\n\n**Left undone**\n- I did not build the allocation work: the wallet leftover for an unmatched payment bigger than everything open, and skipping voided invoices. You said those come later.\n- `wallets.json` can drift from the log if someone edits it by hand. Nothing checks for that at read time.\n- The two files are updated one after the other, not atomically. A crash between them leaves the log ahead of `wallets.json`.\n- If recording the payment fails after the wallet is debited, the debit is not reversed.",
+ "diffstat": " meterbill/cli.py              |  60 ++++++++++++++++\n meterbill/payments/models.py  |   1 +\n meterbill/payments/store.py   |   9 ++-\n meterbill/wallets/__init__.py |   8 +++\n meterbill/wallets/store.py    | 160 ++++++++++++++++++++++++++++++++++++++++++\n tests/test_wallets.py         | 113 +++++++++++++++++++++++++++++\n 6 files changed, 350 insertions(+), 1 deletion(-)\n",
+ "shortstat": "6 files changed, 350 insertions(+), 1 deletion(-)",
+ "usage": {
+  "input_tokens": 26,
+  "cache_creation_input_tokens": 30063,
+  "cache_read_input_tokens": 332591,
+  "output_tokens": 10917,
+  "output_tokens_details": {
+   "thinking_tokens": 1002
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 30063,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 734,
+    "cache_read_input_tokens": 40373,
+    "cache_creation_input_tokens": 234,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 234
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 13,
+ "total_cost_usd": 0.2627331,
+ "duration_ms": 77937,
+ "wall_s": 78.3,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 16%]\n........................................................................ [ 32%]\n........................................................................ [ 48%]\n........................................................................ [ 64%]\n........................................................................ [ 80%]\n........................................................................ [ 96%]\n.................                                                        [100%]\n449 passed in 0.77s",
+ "tree_dirty_after_pytest": ""
+}

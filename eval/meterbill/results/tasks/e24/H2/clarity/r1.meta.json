@@ -1,0 +1,75 @@
+{
+ "at": "e24",
+ "task": "H2",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 61.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 34,
+  "cache_creation_input_tokens": 24160,
+  "cache_read_input_tokens": 431594,
+  "output_tokens": 5907,
+  "output_tokens_details": {
+   "thinking_tokens": 932
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 24160,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 526,
+    "cache_read_input_tokens": 33628,
+    "cache_creation_input_tokens": 794,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 794
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 18,
+ "total_cost_usd": 0.1989374,
+ "is_error": false,
+ "result": "Credit notes now take the entity of the invoice they credit, and the full test suite passes (487 tests, three of them new). They are numbered `CN-<ENTITY>-<TENANT>-<YYYY>-<seq>`, e.g. `CN-MBUS-NWD-2027-00001`. Each entity, tenant and year has its own gapless counter, separate from the invoice counter.\n\n- **Entity:** `CreditNote` has a new `entity` field, copied from the invoice. A credit note keeps the invoice's entity even if the tenant has since moved to another entity. The field is written to the JSON only when set.\n- **Old notes:** Credit notes in the old `CN-<TENANT>-<YYYY>-<seq>` format still load. They have no entity.\n- **Old sequence file:** If `credit_sequences.json` is still in the old layout, the `credit` CLI command moves its counters under MBDE (the default entity) before issuing. Numbering continues from the old counter. No such file exists in `data/` today, so this only matters for other deployments.\n- **Existing tests:** The ones in `tests/test_credits.py` now expect `CN-MBDE-NWD-...` numbers, because the sample invoice is on MBDE.\n- **New tests:** Separate counters per entity, entity kept on the note through JSON, old-format notes loading, and the old-file migration.\n- **Allocation:** The payment-allocation rule (#59) isn't part of this. It's still unbuilt, as you asked.\n\nI started and closed clarity epoch #58 for this, and nothing is committed to git.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/058_2026-11-11__credit-notes-entity-from/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the legal-entity work: credit notes aren't done yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_credit_note_number_has_the_invoices_entity": true,
+   "test_target::test_each_entity_numbers_its_own_credit_notes": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_credit_note_after_the_tenant_moved_keeps_the_invoices_entity": true,
+   "test_keep::test_sequence_is_per_entity_tenant_and_year": true,
+   "test_keep::test_credit_note_sequence_is_separate_from_the_invoice_sequence": true,
+   "test_keep::test_a_refused_credit_note_leaves_no_gap": true,
+   "test_keep::test_existing_credit_note_documents_keep_their_numbers": true
+  },
+  "hidden_collected": 7
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

@@ -1,0 +1,28 @@
+diff --git a/meterbill/tax/store.py b/meterbill/tax/store.py
+index 62f1281..d27fdc0 100644
+--- a/meterbill/tax/store.py
++++ b/meterbill/tax/store.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ import json
++from functools import lru_cache
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -13,6 +14,7 @@ def _read_json(path: Path) -> Any:
+     return json.loads(path.read_text(encoding="utf-8"))
+ 
+ 
++@lru_cache(maxsize=None)
+ def read_rates(data_dir: str | Path = DEFAULT_DATA_DIR) -> dict[str, list[dict[str, str]]]:
+     """Read ``tax_rates.json``:
+ 
+@@ -21,6 +23,7 @@ def read_rates(data_dir: str | Path = DEFAULT_DATA_DIR) -> dict[str, list[dict[s
+     return _read_json(Path(data_dir) / "tax_rates.json")
+ 
+ 
++@lru_cache(maxsize=None)
+ def read_overrides(data_dir: str | Path = DEFAULT_DATA_DIR) -> dict[str, dict[str, dict[str, str]]]:
+     """Read ``tax_overrides.json``:
+ 

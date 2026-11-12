@@ -1,0 +1,130 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..0fe2547 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
+     at.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory with plans and tenants JSON files")
+     ing = sub.add_parser("ingest", help="import event files from a drop directory into the store")
+-    ing.add_argument("--drop", help="directory holding .jsonl / .csv event files")
++    ing.add_argument("--drop", help="directory holding .jsonl / .csv / .envelope.json event files")
+     ing.add_argument("--check", metavar="DIR",
+                      help="dry run: report what would be accepted, deduped and rejected for the "
+                           "files in DIR without storing, logging or moving anything")
+diff --git a/meterbill/ingest/importer.py b/meterbill/ingest/importer.py
+index 28b0ac4..cb1512e 100644
+--- a/meterbill/ingest/importer.py
++++ b/meterbill/ingest/importer.py
+@@ -1,4 +1,4 @@
+-"""Import JSONL and CSV event files from a drop directory into the event store."""
++"""Import JSONL, CSV and ``*.envelope.json`` batch event files from a drop directory into the event store."""
+ 
+ from __future__ import annotations
+ 
+@@ -20,6 +20,7 @@ MISSING_KEY_REASON = "missing idempotency_key"
+ # idempotency_key is not required in the header: rows without it are rejected one by one.
+ CSV_COLUMNS = ("tenant_id", "meter", "quantity", "timestamp", "event_id")
+ _SUFFIXES = {".jsonl", ".csv"}
++ENVELOPE_SUFFIX = ".envelope.json"
+ 
+ 
+ @dataclass
+@@ -103,6 +104,30 @@ def _csv_rows(path: Path) -> Iterator[_Row]:
+             yield _validate(record, line)
+ 
+ 
++def _envelope_rows(path: Path) -> Iterator[_Row]:
++    """Rows of a batch envelope; ``line`` is the 1-based position in ``events``."""
++    with open(path, encoding="utf-8-sig") as handle:
++        text = handle.read()
++    try:
++        envelope = json.loads(text, parse_float=Decimal)
++    except json.JSONDecodeError as exc:
++        yield _Row(0, None, error=f"invalid JSON ({exc.msg})")
++        return
++    if not isinstance(envelope, dict):
++        yield _Row(0, envelope, error="envelope must be a JSON object")
++        return
++    events = envelope.get("events")
++    if not isinstance(events, list):
++        yield _Row(0, None, error="envelope events must be a list")
++        return
++    for number, record in enumerate(events, start=1):
++        yield _validate(record, number)
++
++
++def _is_envelope(path: Path) -> bool:
++    return path.name.lower().endswith(ENVELOPE_SUFFIX)
++
++
+ def _tenant_of(row: _Row) -> str:
+     if row.event is not None:
+         return row.event.tenant_id
+@@ -123,12 +148,13 @@ def _unique_destination(directory: Path, name: str) -> Path:
+ 
+ 
+ def drop_files(drop: Path) -> list[Path]:
+-    return sorted(p for p in drop.iterdir() if p.is_file() and p.suffix.lower() in _SUFFIXES)
++    return sorted(p for p in drop.iterdir()
++                  if p.is_file() and (p.suffix.lower() in _SUFFIXES or _is_envelope(p)))
+ 
+ 
+ def ingest_drop(drop: str | Path, data_dir: str | Path, rejects: RejectLog | None = None,
+                 dry_run: bool = False) -> dict[str, TenantCounts]:
+-    """Import every ``.jsonl`` / ``.csv`` file directly inside ``drop``.
++    """Import every ``.jsonl`` / ``.csv`` / ``.envelope.json`` file directly inside ``drop``.
+ 
+     Valid events whose (tenant_id, idempotency_key) is new go to ``<data_dir>/events``;
+     invalid rows, including those without an idempotency_key, go to
+@@ -148,7 +174,10 @@ def ingest_drop(drop: str | Path, data_dir: str | Path, rejects: RejectLog | Non
+     counts: dict[str, TenantCounts] = defaultdict(TenantCounts)
+ 
+     for path in drop_files(drop):
+-        reader = _csv_rows if path.suffix.lower() == ".csv" else _jsonl_rows
++        if _is_envelope(path):
++            reader = _envelope_rows
++        else:
++            reader = _csv_rows if path.suffix.lower() == ".csv" else _jsonl_rows
+         valid: list[_Row] = []
+         entries: list[dict[str, Any]] = []
+ 
+diff --git a/tests/test_ingest.py b/tests/test_ingest.py
+index f4ebf60..364f5d6 100644
+--- a/tests/test_ingest.py
++++ b/tests/test_ingest.py
+@@ -298,3 +298,35 @@ def test_invoice_reads_from_store_when_events_omitted(data_dir, drop, capsys):
+     assert "1800.15 EUR" in from_store
+     # a tenant or period with no stored events yields an empty invoice, not an error
+     assert main(args("2026-08")) == 0
++
++
++def write_envelope(path, events, **extra):
++    envelope = {"batch_id": "b1", "sent_at": "2026-10-06T00:00:00+00:00", "device_id": "d1",
++                "events": events, **extra}
++    path.write_text(json.dumps(envelope))
++
++
++def test_envelope_file_is_stored_deduped_and_moved(drop, data):
++    write_envelope(drop / "a.envelope.json",
++                   [event_record(), event_record(event_id="e2", idempotency_key="k2"),
++                    event_record(event_id="e3", quantity="-1"), event_record()])
++    (drop / "plain.json").write_text("{}")
++    counts = ingest_drop(drop, data, RejectLog(data / "rejects", date(2026, 11, 2)))
++    assert (counts["NWD"].accepted, counts["NWD"].duplicate, counts["NWD"].rejected) == (2, 1, 1)
++    assert (drop / "processed" / "a.envelope.json").exists() and (drop / "plain.json").exists()
++    entry = rejects(data)[0]
++    assert (entry["file"], entry["line"]) == ("a.envelope.json", 3)
++
++
++def test_malformed_envelopes_are_rejected(drop, data):
++    (drop / "a.envelope.json").write_text("{nope")
++    (drop / "b.envelope.json").write_text(json.dumps({"events": "x"}))
++    counts = ingest_drop(drop, data)
++    assert counts["(unknown)"].rejected == 2
++
++
++def test_check_counts_envelopes_without_moving(drop, data, capsys):
++    write_envelope(drop / "a.envelope.json", [event_record()])
++    assert main(["ingest", "--check", str(drop), "--data-dir", str(data)]) == 0
++    assert "NWD" in capsys.readouterr().out
++    assert (drop / "a.envelope.json").exists()

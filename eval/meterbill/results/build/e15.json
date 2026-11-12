@@ -1,0 +1,55 @@
+{
+ "n": 15,
+ "title": "quotes and a shared pricing module",
+ "commit_msg": "quote command, shared pricing",
+ "prompt": "Sales needs price quotes without any events. Move the pricing math (flat, per_unit, tiered,\nvolume) into meterbill/pricing.py with price_quantity(component, quantity) -> a breakdown of\npriced parts, and make rating call it, so a quote and an invoice can never disagree. Then\nmeterbill/quote.py and:\n- `python -m meterbill quote --plan P --meter M --quantity N`\n- `python -m meterbill quote --plan P --usage api_calls=12000,storage_gb=300 --country DE`\n  for a whole plan, with per-line tax for the country and a total.\nPlain aligned text output only \u2014 sales pastes it straight into emails, so no JSON. Tests that\nquote and invoice agree for every seeded plan at a range of quantities.\n",
+ "report": "I added `price_quantity` and the `quote` command, and rating now prices through it. The full suite passes (368 tests, 65 of them new).\n\n**`meterbill/pricing.py` (new)**\n- `price_quantity(component, quantity, currency=None)` returns a list of `PricedPart(label, quantity, unit_price, amount)`. It covers flat, per_unit, tiered (inclusive bounds) and volume (strictly-greater tier), with half-up rounding.\n- `currency` is an optional third argument, which you didn't specify. Only flat components can do without it, because their fee carries its own currency.\n- A negative or non-finite quantity raises `ValueError`. Zero quantity gives no parts for non-flat components.\n- `tier_span` moved here from the rating engine.\n\n**`meterbill/rating/engine.py`**: `_rate_plan` now calls `price_quantity` and builds its lines from the parts. For flat components it prorates the part's fee as before. I removed the old private tier, volume and per-unit code. Invoice output is unchanged and all existing tests still pass.\n\n**`meterbill/attribution.py`**: imports `tier_span` from `pricing`.\n\n**`meterbill/quote.py` (new)**\n- `quote_meter` and `quote_plan` build the quote, and `format_quote` renders it as aligned plain text.\n- A whole-plan quote includes every flat fee in full, with no proration. A meter missing from `--usage` is quoted at zero.\n- Tax is added per line only when a country is given, using the same half-even rounding as invoices. Tax uses the standard rate, because a quote has no tenant to apply a tenant override to.\n\n**`meterbill/cli.py`**\n- `quote` takes `--plan`, then either `--meter` with `--quantity` or `--usage a=1,b=2`.\n- The optional flags are `--country`, `--date` (the date the tax rate applies on, default today) and `--data-dir`.\n- Errors print `error: ...` to stderr and exit 1.\n\n**`tests/test_quote.py` (new)**\n- For every seeded plan, 13 quantities (boundaries 999, 1000, 1001, 10000, 10001 and fractions) and 3 countries, the quote lines, tax and totals equal those of an invoice built through `build_invoice`.\n- It also covers single-meter quotes against the matching invoice lines, the `price_quantity` edge cases, usage parsing, and CLI output and error cases.\n\n**Left undone**\n- Quotes are in the plan's currency, with no FX conversion.\n- There is no way to apply a tenant's tax override. I can add a `--tenant` option if sales needs one.",
+ "diffstat": " meterbill/attribution.py   |   3 +-\n meterbill/cli.py           |  36 ++++++++++\n meterbill/pricing.py       |  93 ++++++++++++++++++++++++++\n meterbill/quote.py         | 163 +++++++++++++++++++++++++++++++++++++++++++++\n meterbill/rating/engine.py |  68 +++----------------\n tests/test_quote.py        | 133 ++++++++++++++++++++++++++++++++++++\n 6 files changed, 436 insertions(+), 60 deletions(-)\n",
+ "shortstat": "6 files changed, 436 insertions(+), 60 deletions(-)",
+ "usage": {
+  "input_tokens": 26,
+  "cache_creation_input_tokens": 41314,
+  "cache_read_input_tokens": 439953,
+  "output_tokens": 12513,
+  "output_tokens_details": {
+   "thinking_tokens": 1798
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 41314,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 887,
+    "cache_read_input_tokens": 51406,
+    "cache_creation_input_tokens": 397,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 397
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.33443330000000004,
+ "duration_ms": 87170,
+ "wall_s": 87.6,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 19%]\n........................................................................ [ 39%]\n........................................................................ [ 58%]\n........................................................................ [ 78%]\n........................................................................ [ 97%]\n........                                                                 [100%]\n368 passed in 0.42s",
+ "tree_dirty_after_pytest": ""
+}

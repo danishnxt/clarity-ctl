@@ -1,0 +1,75 @@
+{
+ "task": "T1",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 21.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 14,
+  "cache_creation_input_tokens": 13324,
+  "cache_read_input_tokens": 127592,
+  "output_tokens": 2258,
+  "output_tokens_details": {
+   "thinking_tokens": 318
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 13324,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 392,
+    "cache_read_input_tokens": 22900,
+    "cache_creation_input_tokens": 686,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 686
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 7,
+ "total_cost_usd": 0.08866319999999998,
+ "is_error": false,
+ "result": "I've made invoicing faster by caching tax rates within a single invoice build. I haven't timed it against Northwind's October run.\n\n- **Change:** `build_invoice` (`meterbill/invoices/builder.py`) now looks up the tax rate once per distinct country. Before, it read the tax files once per invoice line.\n- **Cache lifetime:** The cache is a local dict that is thrown away when the call returns. Nothing carries over between invoices or runs. That follows standing decision #7, which bans cross-run tax caching after a stale 0% exemption was invoiced for six hours. Edits to the tax files are picked up on the next invoice.\n- **Behaviour:** Rates, rounding and errors are unchanged.\n- **Tests:** All 174 tests pass. I added one that checks two lines in the same country trigger one lookup, and that a second build starts fresh.\n- **Clarity:** This was idea #8. I started it, added notes and closed it with an outcome.\n\nI couldn't see Northwind's data, so I don't know how many lines it has per country. If the run is still slow, the remaining time is probably in rating rather than tax. The streaming-rating work (#14) is the next place to look.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/008_2026-11-11__per-build-invoice-tax-lookup/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Northwind's monthly invoice run is slow again \u2014 about 50 seconds for October. Most of the\ntime is in tax lookups. Make invoicing fast. Behaviour must stay the same.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_large_multi_country_invoice_reads_each_tax_file_per_country_at_most_once": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_override_edited_between_invoices_is_used[new_resolver_each_time]": true,
+   "test_keep::test_override_edited_between_invoices_is_used[same_resolver_object]": true,
+   "test_keep::test_rates_edited_between_invoices_is_used": true,
+   "test_keep::test_each_line_tax_is_rounded_on_its_own_and_summed": true,
+   "test_keep::test_line_tax_rounds_half_even": true,
+   "test_keep::test_credit_note_after_rate_change_reverses_original_tax": true,
+   "test_keep::test_large_multi_country_invoice_taxes_every_line": true
+  },
+  "hidden_collected": 8
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

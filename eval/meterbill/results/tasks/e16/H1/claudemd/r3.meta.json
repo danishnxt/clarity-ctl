@@ -1,0 +1,71 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "claudemd",
+ "rep": 3,
+ "returncode": 0,
+ "wall_s": 68.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 28,
+  "cache_creation_input_tokens": 38569,
+  "cache_read_input_tokens": 521980,
+  "output_tokens": 9180,
+  "output_tokens_details": {
+   "thinking_tokens": 1429
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 38569,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 675,
+    "cache_read_input_tokens": 48587,
+    "cache_creation_input_tokens": 244,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 244
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.29833,
+ "is_error": false,
+ "result": "Credit notes are now in the ledger export. All 384 tests pass (376 before), and CLAUDE.md is updated.\n\n- **Revenue account on each line:** `InvoiceLine` now has a `revenue_account` field. `build_invoice(accounts=...)` fills it, and the `invoice` command loads `data/accounts.json` when the file exists. It is saved in the invoice JSON and copied onto each credit note line, and old documents without it still load.\n- **Posting rule:** `credit_note_postings` mirrors the invoice postings. It credits 1200 for the gross, then debits the revenue account stored on the original line and `2200-<country>` for the tax. Each note balances, including JPY and KWD.\n- **Which notes are exported:** `write_postings` now includes credit notes, matched by issue month like the CSV export.\n- **Fallbacks:**\n  - A credit note line with no stored account raises `ExportError` instead of guessing, because posting to today's mapping is what you wanted to avoid.\n  - Old invoices without a stored account still post with the current mapping, as they did before.\n- **Tiered meters:** the account is looked up by the meter name without its tier or date label, for example `api_calls (1-1000)` becomes `api_calls`. The ledger's fallback for old invoices still uses the full label. So tiered lines on old invoices land on the default account (4000) instead of the meter's own account. I noted this in CLAUDE.md and did not change it.\n\nInvoices you have already saved have no `revenue_account`, so credit notes against them will fail the ledger export. Either re-issue or backfill those invoices, or allow a fallback mapping for them. This is the choice that's yours to make.\n\nThe 4010, 4020 and 4030 account numbers in `accounts.json` are still made up. Accounting needs to replace them.\n\nCLAUDE.md now records the new rule, my two unconfirmed choices (the error on missing accounts and the base-meter lookup), and the open question about old invoices. I removed the \"Next\" item for credit-note postings.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

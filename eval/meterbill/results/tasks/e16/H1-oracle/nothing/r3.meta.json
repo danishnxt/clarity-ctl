@@ -1,0 +1,69 @@
+{
+ "at": "e16",
+ "task": "H1-oracle",
+ "arm": "nothing",
+ "rep": 3,
+ "returncode": 0,
+ "wall_s": 51.9,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 26,
+  "cache_creation_input_tokens": 29207,
+  "cache_read_input_tokens": 373185,
+  "output_tokens": 6340,
+  "output_tokens_details": {
+   "thinking_tokens": 975
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 29207,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 558,
+    "cache_read_input_tokens": 39156,
+    "cache_creation_input_tokens": 313,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 313
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.21759850000000003,
+ "is_error": false,
+ "result": "Credit notes are now in the ledger export, and the full suite passes (378 tests, including 2 new ones).\n\n- **Stored account:** `InvoiceLine` has a new `revenue_account` field. `build_invoice` fills it from the account map, and the `invoice` CLI command passes the map in. Invoice and credit-note JSON both read and write the field.\n- **Credit notes copy it:** `issue_credit_note` takes the account from the original invoice line, alongside the negated amounts and the stored tax rate and tax amount.\n- **Ledger:** the new `credit_note_postings` mirrors the invoice postings. It credits receivable (1200) for the total and debits each line's stored revenue account for its net amount. It also debits `2200-<country>` for the stored tax amount. The current account map is never consulted.\n- **Period selection:** `write_postings` picks credit notes by issue month, the same rule the CSV export uses. Invoices still go by billing period.\n- **Invoice export:** `invoice_postings` uses the stored account when present and falls back to the current map when it is absent.\n\nDecisions for you:\n- **Older invoices:** Invoices finalized before this change have no stored account. A credit note against one makes the ledger export fail with a message naming the invoice line, instead of silently using today's mapping. Backfilling the stored accounts from the pre-remap mapping would clear it. If you'd rather fall back to the current map, say so; I think a wrong account is worse than a blocked export.\n- **`accounts.json` is now required for invoicing:** The `invoice` command now needs `accounts.json` in the data directory and errors if it's missing. I added it to the test `data_dir` fixture to match.",
+ "memory_changed": [],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.\n\nContext from earlier sessions: accounting remaps meters to new revenue accounts at year end, and a credit note has to post to the accounts the original invoice posted to, not to today's mapping. The plan was to record the revenue account on each InvoiceLine when the invoice is built. Credit notes reverse tax at the original line's stored tax amounts.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

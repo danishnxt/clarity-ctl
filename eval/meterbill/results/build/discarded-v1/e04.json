@@ -1,0 +1,55 @@
+{
+ "n": 4,
+ "title": "cache tax rates for speed",
+ "commit_msg": "cache tax rates",
+ "prompt": "Northwind's monthly invoice run takes ~40 seconds now. I profiled it: about 70% of the time\nis in rate_for, re-reading tax_rates.json and tax_overrides.json for every line. Add a cache\nso each file is read once per process \u2014 a module-level cache in meterbill/tax/ is fine, keyed\nhowever it needs to be. Add a test that the files are read once across several invoices.\n",
+ "report": "I added a per-process cache for the tax files. The full suite passes (161 tests). I didn't re-time the invoice run, so the speedup on Northwind's ~40s run is unmeasured.\n\n**`meterbill/tax/store.py`**\n- `read_rates` and `read_overrides` now go through a module-level cache. Each file is parsed once per process.\n- The cache is keyed by the file's resolved path. Each entry also records the file's mtime and size, so a file that changes on disk is re-read. That costs one `stat` per call instead of a full read and parse, and it keeps tests that rewrite a file in place working.\n- The parsing code is unchanged. It moved into `_parse_rates` and `_parse_overrides`.\n- I added `clear_cache()` to drop everything.\n- Callers share the returned dicts, so they must not mutate them. `TaxResolver` doesn't, and the docstring says so.\n\n**`meterbill/tax/__init__.py`**\n- Exports `clear_cache`.\n\n**`tests/test_tax.py`**\n- `test_tax_files_read_once_across_invoices` builds four invoices with one resolver and counts `Path.read_text` calls. It expects exactly one read of each tax file.\n- `test_cache_reloads_when_file_changes` checks that rewriting `tax_rates.json` is picked up on the next lookup.\n\nI left `TaxResolver` and the invoice builder alone. Nothing is left undone.",
+ "diffstat": " meterbill/tax/__init__.py |  4 ++--\n meterbill/tax/store.py    | 38 ++++++++++++++++++++++++++++++++++----\n tests/test_tax.py         | 30 ++++++++++++++++++++++++++++++\n 3 files changed, 66 insertions(+), 6 deletions(-)\n",
+ "shortstat": "3 files changed, 66 insertions(+), 6 deletions(-)",
+ "usage": {
+  "input_tokens": 10,
+  "cache_creation_input_tokens": 10409,
+  "cache_read_input_tokens": 81906,
+  "output_tokens": 2916,
+  "output_tokens_details": {
+   "thinking_tokens": 263
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 10409,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 479,
+    "cache_read_input_tokens": 20928,
+    "cache_creation_input_tokens": 690,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 690
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 6,
+ "total_cost_usd": 0.0790066,
+ "duration_ms": 22820,
+ "wall_s": 23.3,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 44%]\n........................................................................ [ 89%]\n.................                                                        [100%]\n161 passed in 0.14s",
+ "tree_dirty_after_pytest": ""
+}

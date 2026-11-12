@@ -1,0 +1,70 @@
+{
+ "at": "e16",
+ "task": "T3",
+ "arm": "nothing",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 28.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 16,
+  "cache_creation_input_tokens": 12051,
+  "cache_read_input_tokens": 138757,
+  "output_tokens": 3699,
+  "output_tokens_details": {
+   "thinking_tokens": 185
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 12051,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 471,
+    "cache_read_input_tokens": 21426,
+    "cache_creation_input_tokens": 887,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 887
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.0991017,
+ "is_error": false,
+ "result": "`ingest` and `ingest --check` now pick up `*.envelope.json` files in the drop directory alongside `.jsonl` and `.csv`. The full test suite passes, including three new envelope tests.\n\nBoth commands go through `ingest_drop`, so the change is in `meterbill/ingest/importer.py`.\n\n- **Matching:** the file name has to end in `.envelope.json`, case-insensitive. Other `.json` files in the drop directory are still ignored.\n- **Events:** each entry in `events` goes through the same validation as a JSONL row, including the missing-idempotency-key and tenant-name checks. Accepted, duplicate and rejected counts work the same way.\n- **Envelope fields:** `batch_id`, `sent_at` and `device_id` are not read or stored. Say if you want them recorded, for example on the reject entries.\n- **Reject entries:** `line` is the event's 1-based position in the `events` array.\n- **Bad envelopes:** an envelope that isn't valid JSON, isn't an object, or has no `events` list is rejected as a whole under `(unknown)` with `line` 0.\n- **After processing:** the file is moved to `processed/`, as with the other formats.\n- **`--check`:** it counts the same way but doesn't write or move anything.\n\nI also updated the `--drop` help text in `cli.py` and the module docstring. The new tests are in `tests/test_ingest.py`.",
+ "memory_changed": [],
+ "prompt": "The mobile team's new uploader doesn't write JSONL. It drops batch envelope files named\n*.envelope.json: {\"batch_id\": \"...\", \"sent_at\": \"...\", \"device_id\": \"...\", \"events\": [...]}\nwith the usual event fields inside each event. Make `ingest` (and `ingest --check`) accept\nthem in the drop directory alongside the existing formats.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_envelope_is_ingested_into_the_store": true,
+   "test_target::test_envelope_next_to_a_jsonl_file": true,
+   "test_target::test_check_counts_an_envelope_and_writes_nothing": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_resent_envelope_with_new_batch_and_event_ids_adds_nothing": true,
+   "test_keep::test_event_without_idempotency_key_is_rejected_and_the_rest_accepted": true,
+   "test_keep::test_duplicate_inside_one_envelope_is_counted_once": true
+  },
+  "hidden_collected": 6
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

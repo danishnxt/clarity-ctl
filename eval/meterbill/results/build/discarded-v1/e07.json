@@ -1,0 +1,55 @@
+{
+ "n": 7,
+ "title": "finance CSV export",
+ "commit_msg": "csv export",
+ "prompt": "Finance wants a CSV export of invoices and credit notes for their ERP import:\nmeterbill/exports/csv_export.py and `python -m meterbill export --period 2026-10 --out f.csv`.\nOne row per line: document number, tenant, date, meter, quantity, net, tax rate, tax, gross.\nUse ';' as the delimiter \u2014 finance opens these in German Excel. Amounts are major-unit decimal\nstrings with exactly the currency's exponent: \"1500\" for JPY, \"12.30\" for EUR, \"1.250\" for\nKWD. The ERP rejects \"1500.00\" for a JPY row and fails the whole file.\n",
+ "report": "The CSV export is built and the full suite passes (170 tests).\n\n**One thing to confirm:** meterbill never stored finished invoices or credit notes, so `export` had nothing to read. It now reads invoice and credit-note JSON files from a folder. Invoices only get there if someone saves them with `invoice --json-out`. I added `--json-out` to the `credit` command so credit notes can be saved the same way. If finance expects the export to find documents automatically, we need a storage step. That wasn't part of the request.\n\n**Changes by file**\n- `meterbill/exports/csv_export.py` (new): writes the CSV.\n  - Delimiter is `;`, line endings are CRLF, and the header is `document_number;tenant;date;meter;quantity;net;tax_rate;tax;gross`.\n  - Amounts use exactly the currency's exponent: `1500` for JPY, `12.30` for EUR, `1.250` for KWD. Credit-note amounts are negative.\n  - `gross` is net plus tax.\n- `meterbill/exports/__init__.py` (new): exports the above.\n- `meterbill/credits/serialization.py` (new) and `meterbill/credits/__init__.py`: JSON read/write for credit notes. They didn't have it before.\n- `meterbill/cli.py`: new `export --period YYYY-MM --out FILE [--data-dir DIR] [--documents-dir DIR]`, plus `credit --json-out`. The folder defaults to `<data-dir>/documents`. The command exits 1 with an error if the folder is missing or a file is malformed.\n- `tests/test_export.py` (new): covers the JPY, EUR and KWD formats, negative credit rows, period filtering, drafts, the CLI, and the credit-note JSON round trip.\n\n**Choices I made that finance should check**\n- **Date column:** the document's issue date.\n- **Invoices:** an invoice is included when its billing period matches `--period`. Drafts are skipped.\n- **Credit notes:** a credit note is included when its issue month matches `--period`.\n- **Tax rate:** written as a percentage, such as `19` or `7.5`.\n- **Quantity:** written without trailing zeros, such as `1200.5`.\n- **Encoding:** UTF-8 with no byte-order mark. German Excel may garble umlauts in tenant names. If so, switching to `utf-8-sig` is a one-word change, but I don't know whether the ERP accepts a BOM.\n\n**Left undone:** formula-injection escaping (a tenant or meter name starting with `=` is written as-is), and any automatic storage of documents.",
+ "diffstat": " meterbill/cli.py                   |  29 ++++++++++-\n meterbill/credits/__init__.py      |   7 +++\n meterbill/credits/serialization.py | 102 +++++++++++++++++++++++++++++++++++++\n meterbill/exports/__init__.py      |   9 ++++\n meterbill/exports/csv_export.py    |  99 +++++++++++++++++++++++++++++++++++\n tests/test_export.py               |  71 ++++++++++++++++++++++++++\n 6 files changed, 316 insertions(+), 1 deletion(-)\n",
+ "shortstat": "6 files changed, 316 insertions(+), 1 deletion(-)",
+ "usage": {
+  "input_tokens": 12,
+  "cache_creation_input_tokens": 22811,
+  "cache_read_input_tokens": 126011,
+  "output_tokens": 8803,
+  "output_tokens_details": {
+   "thinking_tokens": 1167
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 22811,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 871,
+    "cache_read_input_tokens": 33400,
+    "cache_creation_input_tokens": 620,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 620
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 6,
+ "total_cost_usd": 0.1918991,
+ "duration_ms": 52991,
+ "wall_s": 53.3,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 42%]\n........................................................................ [ 84%]\n..........................                                               [100%]\n170 passed in 0.17s",
+ "tree_dirty_after_pytest": ""
+}

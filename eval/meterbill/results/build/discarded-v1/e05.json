@@ -1,0 +1,55 @@
+{
+ "n": 5,
+ "title": "remove the tax cache",
+ "commit_msg": "remove tax cache",
+ "prompt": "We have to take the tax cache out. The billing worker is a long-running process, and ops\nedit tax_overrides.json by hand when a tenant's exemption is granted or revoked. Yesterday\nACM's DE exemption was revoked in the file, and the worker kept invoicing them at 0% for\nsix hours because it never re-read it. Rule from now on: no tax data cached across invoice\nruns, ever. If tax lookups need to be fast, cache only within a single build_invoice call\nand throw it away at the end. For now just remove the cache entirely and restore plain\nper-lookup reads; we'll do the per-run version when Northwind complains again. Remove the\ncache's test too.\n",
+ "report": "The tax cache is removed, and every tax lookup now reads the JSON file from disk again. The full suite passes (160 tests).\n\n**Changes**\n- `meterbill/tax/store.py`: I deleted the cache dict, `_cached()` and `clear_cache()`. `read_rates` and `read_overrides` now call `_parse_rates` and `_parse_overrides` directly on the file.\n- `meterbill/tax/__init__.py`: `clear_cache` is no longer imported or listed in `__all__`.\n- `tests/test_tax.py`:\n  - I removed `test_tax_files_read_once_across_invoices`, the cache's test.\n  - I kept the old `test_cache_reloads_when_file_changes`, since it still checks the behavior you want: an edited file is picked up on the next lookup. I renamed it `test_rates_reread_when_file_changes`.\n  - It only covers `tax_rates.json`, not `tax_overrides.json`, which is the file ops edit by hand. I didn't add an override test.\n\n**Not done**\n- The per-`build_invoice` cache is not implemented, as you asked.\n- Nothing else in the repo references `clear_cache`.",
+ "diffstat": " meterbill/tax/__init__.py |  4 ++--\n meterbill/tax/store.py    | 28 ++--------------------------\n tests/test_tax.py         | 23 +----------------------\n 3 files changed, 5 insertions(+), 50 deletions(-)\n",
+ "shortstat": "3 files changed, 5 insertions(+), 50 deletions(-)",
+ "usage": {
+  "input_tokens": 10,
+  "cache_creation_input_tokens": 9874,
+  "cache_read_input_tokens": 81020,
+  "output_tokens": 1845,
+  "output_tokens_details": {
+   "thinking_tokens": 108
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 9874,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 393,
+    "cache_read_input_tokens": 19861,
+    "cache_creation_input_tokens": 1222,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1222
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 7,
+ "total_cost_usd": 0.066068,
+ "duration_ms": 14326,
+ "wall_s": 14.8,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 45%]\n........................................................................ [ 90%]\n................                                                         [100%]\n160 passed in 0.14s",
+ "tree_dirty_after_pytest": ""
+}

@@ -1,0 +1,55 @@
+{
+ "n": 4,
+ "title": "cache tax rates for speed",
+ "commit_msg": "cache tax rates",
+ "prompt": "Northwind's monthly invoice run takes ~40 seconds now. I profiled it: about 70% of the time\nis in rate_for, re-reading tax_rates.json and tax_overrides.json for every line. Add a cache\nso each file is read once per process: put functools.lru_cache on read_rates() and\nread_overrides() in meterbill/tax/store.py, keep it that simple. Add a test that the files are\nread once across several invoices.\n",
+ "report": "I added the cache, and the full suite passes (161 tests).\n\n**What I changed**\n- `meterbill/tax/store.py`:\n  - `read_rates()` and `read_overrides()` now have `@lru_cache(maxsize=None)`.\n  - Each file is read once per data directory per process.\n  - I updated both docstrings to say the result is cached and must not be mutated.\n- `meterbill/tax/resolver.py`: the `TaxResolver` docstring said the files are read on every lookup. It now says they're read once per data directory and cached.\n- `tests/test_tax.py`: I added `test_files_read_once_across_lookups`. It clears the caches and counts disk reads. Three resolvers, five lookups each, read `tax_rates.json` and `tax_overrides.json` once apiece.\n\nI didn't time the Northwind invoice run, so the speed-up isn't measured.\n\n**Caveats**\n- Edits to the tax JSON files won't be picked up until the process restarts. Call `store.read_rates.cache_clear()` and `store.read_overrides.cache_clear()` if you ever need a reload.\n- The cache key is the `data_dir` argument as given, so the same directory passed as a `str` and as a `Path` is cached separately. That only costs one extra read.\n- The cache returns the same dict object every time. `rate_for` only reads it, so that's fine, but a caller that mutated it would change the data for everyone.\n\nNothing is left undone.",
+ "diffstat": " meterbill/tax/resolver.py |  2 +-\n meterbill/tax/store.py    | 15 +++++++++++++--\n tests/test_tax.py         | 19 +++++++++++++++++++\n 3 files changed, 33 insertions(+), 3 deletions(-)\n",
+ "shortstat": "3 files changed, 33 insertions(+), 3 deletions(-)",
+ "usage": {
+  "input_tokens": 10,
+  "cache_creation_input_tokens": 9743,
+  "cache_read_input_tokens": 74846,
+  "output_tokens": 2413,
+  "output_tokens_details": {
+   "thinking_tokens": 151
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 9743,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 482,
+    "cache_read_input_tokens": 19014,
+    "cache_creation_input_tokens": 1218,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1218
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 6,
+ "total_cost_usd": 0.07060659999999999,
+ "duration_ms": 20286,
+ "wall_s": 20.6,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 44%]\n........................................................................ [ 89%]\n.................                                                        [100%]\n161 passed in 0.14s",
+ "tree_dirty_after_pytest": ""
+}

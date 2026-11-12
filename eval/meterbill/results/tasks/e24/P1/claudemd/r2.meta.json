@@ -1,0 +1,78 @@
+{
+ "at": "e24",
+ "task": "P1",
+ "arm": "claudemd",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 142.3,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 52856,
+  "cache_read_input_tokens": 413841,
+  "output_tokens": 18860,
+  "output_tokens_details": {
+   "thinking_tokens": 5368
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 52856,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 833,
+    "cache_read_input_tokens": 61460,
+    "cache_creation_input_tokens": 1658,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1658
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.4414481,
+ "is_error": false,
+ "result": "`python -m meterbill payments allocate --tenant T` now allocates and records the tenant's unmatched payments. The full test suite passes (497 tests, including a new `tests/test_allocation.py`). I didn't run the command against the seed data.\n\nOutput looks like this:\n```\nPAY-1 -> INV-MBDE-NWD-2026-00001 100.00 EUR\nPAY-1 -> wallet 7.00 EUR\n```\n\n**How it behaves**\n- **Order:** payments go in payment-date order, then by payment id. Each one is spread over the tenant's open finalized invoices, oldest due date first and the lower invoice number on a tie. Void invoices are skipped. Payments that already match an invoice by reference are left alone.\n- **Leftover:** whatever a payment doesn't cover goes into the tenant's wallet in the payment's currency. Nothing is refunded.\n- **Other currencies:** a payment in a different currency from the invoice is converted at the payment date's rate. A missing or stale rate stops the whole run with exit 1 and records nothing.\n- **Write-off:** if less than 0.50 stays open on an invoice (in the invoice's currency) after a payment lands on it, the rest goes to account 6900. That prints as `<id> -> 6900 <amount> <ccy>`, and exactly 0.50 stays open.\n- **Recording:** results are appended to `data/allocations.jsonl`. `invoices show`, `wallet apply` and `payments record` now subtract allocations and write-offs from the open amount. A re-run does nothing for payments already allocated, and `payments list --unmatched` no longer shows them.\n\n**Decisions to confirm**\n- **Payment ids:** payments had no id, so I use the line number in `payments.jsonl` and print it as `PAY-<n>`. The file is append-only, so ids never change. `payments list` doesn't show ids yet.\n- **One run per payment:** a payment is fully allocated in a single run.\n- **Crash order:** allocation lines are written before the wallet top-up. A crash in between leaves a wallet line recorded but not credited. I chose that over crediting the wallet twice on a re-run.\n\n**Not done**\n- Write-offs and wallet credits have no ledger entries.\n- `statements` is unchanged.\n- There's no test for the JPY/KWD write-off threshold or for concurrent runs.\n\nI recorded the new module, these decisions and the open items in `CLAUDE.md`, and removed the two allocation items from \"Next\".",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Unmatched payments are piling up. Add `python -m meterbill payments allocate --tenant T` that\nallocates the tenant's unmatched payments to its open invoices and records the result, so that\ninvoice open amounts and paid flags reflect it. Print one line per movement of money:\n`<payment id> -> <target> <amount> <currency>`, where target is an invoice number, \"wallet\", or\na ledger account number. Process payments in payment-date order, then by payment id. Amounts\nprint in the target's currency (the invoice's for an invoice or an account, the payment's for\nthe wallet). A payment spread over several targets prints one line per target.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_payment_exactly_covering_an_invoice_is_allocated_to_it": true,
+   "test_target::test_partial_payment_leaves_the_rest_open": true,
+   "test_target::test_payment_spread_over_two_invoices_prints_one_line_per_target": true,
+   "test_target::test_already_matched_payments_are_left_alone": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_oldest_due_date_is_paid_first": true,
+   "test_keep::test_equal_due_dates_pay_the_lower_invoice_number_first": true,
+   "test_keep::test_payments_are_processed_in_date_order": true,
+   "test_keep::test_a_voided_invoice_is_never_allocated": true,
+   "test_keep::test_leftover_goes_to_the_wallet_in_the_payments_currency": true,
+   "test_keep::test_foreign_currency_leftover_goes_to_the_wallet_in_that_currency": true,
+   "test_keep::test_converted_payment_leaving_under_half_a_unit_is_written_off": true,
+   "test_keep::test_converted_payment_leaving_half_a_unit_or_more_stays_open": true
+  },
+  "hidden_collected": 12
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

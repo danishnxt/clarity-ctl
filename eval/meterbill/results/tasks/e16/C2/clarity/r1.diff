@@ -1,0 +1,67 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..16fd4f8 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -168,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
+         p.add_argument("--date", help="rate date YYYY-MM-DD (default: today)")
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory with fx_rates.json")
++    tn = sub.add_parser("tenants", help="inspect tenants")
++    tn_sub = tn.add_subparsers(dest="tenants_command", required=True)
++    tn_list = tn_sub.add_parser("list", help="list tenants, one row each")
++    tn_list.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                         help="directory with plans and tenants JSON files")
+     qt = sub.add_parser("quote", help="price a plan or one meter from quantities, without events")
+     qt.add_argument("--plan", required=True, help="plan id, e.g. growth")
+     qt.add_argument("--meter", help="quote a single meter of the plan (with --quantity)")
+@@ -224,6 +229,24 @@ def _run_fx(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_tenants(args: argparse.Namespace) -> int:
++    try:
++        catalog = load_catalog(args.data_dir)
++        rows = [
++            (t.id, t.name, t.country, t.plan_id,
++             t.billing_currency or catalog.plan(t.plan_id).currency, t.tz)
++            for t in sorted(catalog.tenants.values(), key=lambda t: t.id)
++        ]
++    except (ValueError, OSError, CatalogError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    table = [("ID", "NAME", "COUNTRY", "PLAN", "CURRENCY", "TZ"), *rows]
++    widths = [max(len(r[i]) for r in table) for i in range(6)]
++    for r in table:
++        print("  ".join(f"{c:<{w}}" for c, w in zip(r, widths)))
++    return 0
++
++
+ def _table(header: Sequence[str], rows: Sequence[Sequence[str]], left: int) -> list[str]:
+     """Aligned columns; the first ``left`` are left-aligned, the rest right-aligned."""
+     widths = [max(len(header[i]), *(len(r[i]) for r in rows)) if rows else len(header[i])
+@@ -359,6 +382,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_fx(args)
+     if args.command == "quote":
+         return _run_quote(args)
++    if args.command == "tenants":
++        return _run_tenants(args)
+     try:
+         period = Period.parse(args.period)
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 005321c..7e933b3 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -83,3 +83,12 @@ def test_missing_required_args_exits_2():
+     proc = subprocess.run([sys.executable, "-m", "meterbill", "invoice"], cwd=ROOT,
+                           capture_output=True, text=True)
+     assert proc.returncode == 2
++
++
++def test_tenants_list(data_dir, capsys):
++    assert main(["tenants", "list", "--data-dir", str(data_dir)]) == 0
++    lines = capsys.readouterr().out.splitlines()
++    assert lines[0].split() == ["ID", "NAME", "COUNTRY", "PLAN", "CURRENCY", "TZ"]
++    ids = [line.split()[0] for line in lines[1:]]
++    assert ids == sorted(ids) and ids
++    assert len({len(line) for line in lines}) == 1  # padded to common widths

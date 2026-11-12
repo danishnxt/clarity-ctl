@@ -1,0 +1,562 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..705e40f 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -32,7 +32,7 @@ from meterbill.invoices import (
+ from meterbill.money import Money
+ from meterbill.outbox import OUTBOX_DIR, Outbox, OutboxError, load_contact
+ from meterbill.payments import (
+-    PAYMENTS_FILE, InvoiceBalance, Payment, PaymentError, PaymentStore, balance_for,
++    ALLOCATIONS_FILE, PAYMENTS_FILE, AllocationStore, InvoiceBalance, plan_allocations, Payment, PaymentError, PaymentStore, balance_for,
+     unmatched_payments,
+ )
+ from meterbill.period import Period
+@@ -180,7 +180,10 @@ def build_parser() -> argparse.ArgumentParser:
+     pl.add_argument("--tenant", required=True, help="tenant id")
+     pl.add_argument("--unmatched", action="store_true",
+                     help="only payments that match no finalized invoice of the tenant")
+-    for p in (pr, pl):
++    pal = pay_sub.add_parser(
++        "allocate", help="allocate a tenant's unmatched payments to its open invoices")
++    pal.add_argument("--tenant", required=True, help="tenant id")
++    for p in (pr, pl, pal):
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory holding payments.jsonl, tenants.json and invoices/")
+     wal = sub.add_parser("wallet", help="prepaid tenant wallets")
+@@ -352,9 +355,12 @@ def _credit_notes(data_dir: Path) -> list[CreditNote]:
+ def format_payments(balance: InvoiceBalance) -> list[str]:
+     out = ["", "Payments:"]
+     rows = [(p.received_date.isoformat(), str(p.amount)) for p in balance.payments]
++    rows += [(a.date.isoformat(), str(a.amount)) for a in balance.allocations]
+     out += _table(("Date", "Amount"), rows, left=1) if rows else ["  none"]
+     out += [
+         f"Credit notes: {balance.credited}",
++        *([f"Written off: {balance.written_off}"]
++          if balance.written_off is not None and balance.written_off.minor else []),
+         f"Paid: {balance.paid_total}",
+         f"Open: {balance.open_amount}",
+         f"Settled: {'yes' if balance.paid else 'no'}",
+@@ -369,6 +375,9 @@ def _run_payments(args: argparse.Namespace) -> int:
+         catalog = load_catalog(data_dir)
+         tenant = catalog.tenant(args.tenant)
+         invoices = InvoiceStore(data_dir / "invoices").list(tenant.id, InvoiceStatus.FINALIZED)
++        allocations = AllocationStore(data_dir / ALLOCATIONS_FILE)
++        if args.payments_command == "allocate":
++            return _allocate_payments(args, data_dir, store, allocations, tenant.id)
+         if args.payments_command == "record":
+             payment = store.record(Payment(
+                 tenant.id, Money.from_major(args.amount, args.currency),
+@@ -378,23 +387,49 @@ def _run_payments(args: argparse.Namespace) -> int:
+             if unmatched_payments([payment], invoices):
+                 print(f"Recorded {payment.amount} for {tenant.id} (unmatched)")
+             else:
+-                balance = balance_for(target, store.load(), _credit_notes(data_dir))
++                balance = balance_for(target, store.load(), _credit_notes(data_dir),
++                                      AllocationStore(data_dir / ALLOCATIONS_FILE).load())
+                 print(f"Recorded {payment.amount} for {tenant.id}, matched to {target.number}; "
+                       f"open {balance.open_amount}")
+         else:
+             payments = [p for p in store.load() if p.tenant_id == tenant.id]
+             if args.unmatched:
+-                payments = unmatched_payments(payments, invoices)
+-            unmatched = {id(p) for p in unmatched_payments(payments, invoices)}
++                payments = unmatched_payments(payments, invoices, allocations.load())
++            done = {a.payment_id for a in allocations.load()}
++            unmatched = {id(p) for p in unmatched_payments(payments, invoices, allocations.load())}
+             rows = [(p.received_date.isoformat(), str(p.amount), p.reference or "-",
+-                     "unmatched" if id(p) in unmatched else "matched") for p in payments]
+-            print("\n".join(_table(("Date", "Amount", "Reference", "State"), rows, left=4)))
++                     "allocated" if p.id in done else
++                     "unmatched" if id(p) in unmatched else "matched", p.id or "-")
++                    for p in payments]
++            print("\n".join(_table(("Date", "Amount", "Reference", "State", "Id"), rows,
++                                   left=5)))
+     except (ValueError, OSError, CatalogError, InvoiceStoreError, PaymentError) as exc:
+         print(f"error: {exc}", file=sys.stderr)
+         return 1
+     return 0
+ 
+ 
++def _allocate_payments(args: argparse.Namespace, data_dir: Path, payments: PaymentStore,
++                       allocations: AllocationStore, tenant_id: str) -> int:
++    invoices = InvoiceStore(data_dir / "invoices").list(tenant_id, InvoiceStatus.FINALIZED)
++    notes = _credit_notes(data_dir)
++    wallets = WalletStore(data_dir)
++    fx = FxConverter(data_dir)
++    stored = payments.load()
++
++    def build(existing):
++        return plan_allocations(tenant_id, stored, invoices, notes, existing, fx)
++
++    # Recorded per payment so a crash between the allocation lines and the wallet
++    # top-up can lose a top-up but never double one.
++    new = allocations.append_locked(build)
++    for a in new:
++        if a.kind == "wallet":
++            wallets.topup(tenant_id, a.amount, a.date)
++        print(f"{a.payment_id} -> {a.target} {a.amount}")
++    return 0
++
++
+ def _run_wallet(args: argparse.Namespace) -> int:
+     try:
+         data_dir = Path(args.data_dir)
+@@ -407,7 +442,9 @@ def _run_wallet(args: argparse.Namespace) -> int:
+                 raise WalletError(f"invoice {args.invoice} is {invoice.status.value}, "
+                                   "only finalized invoices can be paid")
+             payments = PaymentStore(data_dir / PAYMENTS_FILE)
+-            open_amount = balance_for(invoice, payments.load(), _credit_notes(data_dir)).open_amount
++            alloc_store = AllocationStore(data_dir / ALLOCATIONS_FILE)
++            open_amount = balance_for(invoice, payments.load(), _credit_notes(data_dir),
++                                      alloc_store.load()).open_amount
+             if open_amount.minor <= 0:
+                 raise WalletError(f"invoice {invoice.number} has nothing open")
+             available = wallets.balance(invoice.tenant_id, invoice.currency)
+@@ -416,7 +453,8 @@ def _run_wallet(args: argparse.Namespace) -> int:
+                 raise WalletError(f"{invoice.tenant_id} has no {invoice.currency} wallet balance")
+             wallets.spend(invoice.tenant_id, amount, when, invoice.number)
+             payments.record(Payment(invoice.tenant_id, amount, when, invoice.number, "wallet"))
+-            left = balance_for(invoice, payments.load(), _credit_notes(data_dir)).open_amount
++            left = balance_for(invoice, payments.load(), _credit_notes(data_dir),
++                               alloc_store.load()).open_amount
+             print(f"Paid {amount} of {invoice.number} from wallet; open {left}; "
+                   f"wallet {wallets.balance(invoice.tenant_id, invoice.currency)}")
+             return 0
+@@ -486,7 +524,8 @@ def _run_invoices(args: argparse.Namespace) -> int:
+                 if invoice.status is InvoiceStatus.FINALIZED:
+                     balance = balance_for(
+                         invoice, PaymentStore(data_dir / PAYMENTS_FILE).load(),
+-                        _credit_notes(data_dir))
++                        _credit_notes(data_dir),
++                        AllocationStore(data_dir / ALLOCATIONS_FILE).load())
+                     text = "\n".join([text, *format_payments(balance)])
+                 print(text)
+     except (ValueError, OSError, CatalogError, EventValidationError, RatingError, SequenceError,
+diff --git a/meterbill/payments/__init__.py b/meterbill/payments/__init__.py
+index 7adcdeb..833ae56 100644
+--- a/meterbill/payments/__init__.py
++++ b/meterbill/payments/__init__.py
+@@ -1,11 +1,16 @@
+-from meterbill.payments.models import InvoiceBalance, Payment
++from meterbill.payments.models import Allocation, InvoiceBalance, Payment
+ from meterbill.payments.store import (
+     PaymentError, PaymentStore, balance_for, matches, unmatched_payments,
+ )
+ 
+ PAYMENTS_FILE = "payments.jsonl"
+ 
++from meterbill.payments.allocate import (
++    ALLOCATIONS_FILE, WRITE_OFF_ACCOUNT, AllocationStore, plan_allocations,
++)
++
+ __all__ = [
++    "ALLOCATIONS_FILE", "Allocation", "AllocationStore", "WRITE_OFF_ACCOUNT", "plan_allocations",
+     "InvoiceBalance", "PAYMENTS_FILE", "Payment", "PaymentError", "PaymentStore",
+     "balance_for", "matches", "unmatched_payments",
+ ]
+diff --git a/meterbill/payments/allocate.py b/meterbill/payments/allocate.py
+new file mode 100644
+index 0000000..a1cfc04
+--- /dev/null
++++ b/meterbill/payments/allocate.py
+@@ -0,0 +1,155 @@
++"""Allocation of unmatched payments to a tenant's open invoices (decisions #45, #59).
++
++Payments are taken in (payment date, payment id) order. Each goes to the open
++finalized invoices with the oldest due date first (ties: lower invoice number).
++A payment in another currency than the invoice is converted at the rate of the
++payment date. What is left of a payment after every open invoice is paid goes to
++the tenant's wallet in the payment's currency. An invoice that one of these
++payments leaves with less than 0.50 open is written off to ledger account 6900.
++Voided and draft invoices are never touched.
++
++Results are appended to ``allocations.jsonl``; a payment with any line there counts
++as allocated and is no longer unmatched. Nothing is written if planning fails.
++"""
++
++from __future__ import annotations
++
++import fcntl
++import json
++from datetime import date
++from decimal import ROUND_HALF_EVEN, Decimal
++from pathlib import Path
++from typing import Iterable
++
++from meterbill.credits import CreditNote
++from meterbill.fx.converter import FxConverter
++from meterbill.invoices import Invoice, InvoiceStatus
++from meterbill.money import Money
++from meterbill.payments.models import Allocation, Payment
++from meterbill.payments.store import PaymentError, balance_for, unmatched_payments
++
++ALLOCATIONS_FILE = "allocations.jsonl"
++WRITE_OFF_ACCOUNT = "6900"  # not in accounts.json yet; to be confirmed with finance (#59)
++WRITE_OFF_BELOW = Decimal("0.50")  # major units of the invoice currency
++
++
++def _to_dict(a: Allocation) -> dict[str, object]:
++    return {"payment": a.payment_id, "tenant_id": a.tenant_id, "kind": a.kind,
++            "target": a.target, "invoice": a.invoice, "amount": a.amount.minor,
++            "currency": a.amount.currency, "date": a.date.isoformat()}
++
++
++def _from_dict(data: object) -> Allocation:
++    try:
++        if data["kind"] not in ("invoice", "writeoff", "wallet"):
++            raise ValueError("unknown kind")
++        return Allocation(data["payment"], data["tenant_id"], data["kind"], data["target"],
++                          Money(data["amount"], data["currency"]),
++                          date.fromisoformat(data["date"]), data["invoice"])
++    except (KeyError, TypeError) as exc:
++        raise ValueError(f"malformed allocation: {exc!r}") from None
++
++
++class AllocationStore:
++    def __init__(self, path: str | Path) -> None:
++        self.path = Path(path)
++
++    def load(self) -> list[Allocation]:
++        if not self.path.is_file():
++            return []
++        with open(self.path, encoding="utf-8") as handle:
++            return self._read(handle)
++
++    def _read(self, handle) -> list[Allocation]:
++        out = []
++        for n, line in enumerate(handle, 1):
++            if line.strip():
++                try:
++                    out.append(_from_dict(json.loads(line)))
++                except ValueError as exc:
++                    raise PaymentError(f"{self.path.name} line {n}: {exc}") from None
++        return out
++
++    def append_locked(self, build):
++        """Under an exclusive lock call ``build(existing)`` -> list of new allocations,
++        append them in one write and return them."""
++        self.path.parent.mkdir(parents=True, exist_ok=True)
++        with open(self.path, "a+", encoding="utf-8") as handle:
++            fcntl.flock(handle, fcntl.LOCK_EX)
++            handle.seek(0)
++            new = build(self._read(handle))
++            if new:
++                handle.seek(0, 2)
++                handle.write("".join(json.dumps(_to_dict(a)) + "\n" for a in new))
++                handle.flush()
++        return new
++
++
++def plan_allocations(
++    tenant_id: str,
++    payments: Iterable[Payment],
++    invoices: Iterable[Invoice],
++    credit_notes: Iterable[CreditNote],
++    existing: Iterable[Allocation],
++    fx: FxConverter,
++) -> list[Allocation]:
++    """The allocations for the tenant's unmatched payments, in output order."""
++    payments = [p for p in payments if p.tenant_id == tenant_id]
++    existing = list(existing)
++    credit_notes = list(credit_notes)
++    finalized = [i for i in invoices
++                 if i.tenant_id == tenant_id and i.status is InvoiceStatus.FINALIZED
++                 and i.number is not None]
++    todo = sorted(unmatched_payments(payments, finalized, existing),
++                  key=lambda p: (p.received_date, p.id))
++    # Open amounts count payments matched by reference and earlier allocations.
++    open_left = {i.number: balance_for(i, payments, credit_notes, existing).open_amount
++                 for i in finalized}
++    order = sorted(finalized, key=lambda i: (i.due_date or date.max, i.number))
++    by_number = {i.number: i for i in finalized}
++    out: list[Allocation] = []
++    last_payment: dict[str, Payment] = {}  # invoice number -> latest payment that paid it
++    for p in todo:
++        remaining = p.amount
++        for inv in order:
++            if remaining.minor <= 0:
++                break
++            room = open_left[inv.number]
++            if room.minor <= 0:
++                continue
++            if p.amount.currency == inv.currency:
++                rate = None
++                offered = remaining
++            else:
++                rate = fx.rate(p.amount.currency, inv.currency, p.received_date)
++                offered = FxConverter.apply(remaining, inv.currency, rate)
++            if offered.minor <= 0:
++                break  # too small to pay anything in the invoice currency
++            if offered <= room:
++                paid, remaining = offered, Money.zero(remaining.currency)
++            else:
++                paid = room
++                if rate is None:
++                    used = room
++                else:
++                    used = Money.from_major(room.to_major() / rate, remaining.currency,
++                                            ROUND_HALF_EVEN)
++                remaining = Money(max(remaining.minor - used.minor, 0), remaining.currency)
++            open_left[inv.number] = room - paid
++            last_payment[inv.number] = p
++            out.append(Allocation(p.id, tenant_id, "invoice", inv.number, paid,
++                                  p.received_date))
++        if remaining.minor > 0:
++            out.append(Allocation(p.id, tenant_id, "wallet", "wallet", remaining,
++                                  p.received_date))
++    # Residuals left by this run's payments are written off, listed with the payment
++    # that left them (after that payment's invoice lines, before its wallet line).
++    for number, p in last_payment.items():
++        left = open_left[number]
++        if 0 < left.minor and left.to_major() < WRITE_OFF_BELOW:
++            alloc = Allocation(p.id, tenant_id, "writeoff", WRITE_OFF_ACCOUNT, left,
++                               p.received_date, by_number[number].number)
++            at = max(k for k, a in enumerate(out) if a.payment_id == p.id and a.kind == "invoice"
++                     and a.target == number)
++            out.insert(at + 1, alloc)
++    return out
+diff --git a/meterbill/payments/models.py b/meterbill/payments/models.py
+index c021b61..d2ad0f6 100644
+--- a/meterbill/payments/models.py
++++ b/meterbill/payments/models.py
+@@ -2,7 +2,7 @@
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from datetime import date
+ 
+ from meterbill.invoices import Invoice
+@@ -16,6 +16,26 @@ class Payment:
+     received_date: date
+     reference: str | None = None  # invoice number the payer quoted, if any
+     method: str | None = None  # how it was paid, e.g. "wallet"; None if not recorded
++    # PAY-<line number in payments.jsonl>, set when loaded from the store (never written).
++    id: str | None = field(default=None, compare=False)
++
++
++@dataclass(frozen=True, slots=True)
++class Allocation:
++    """Part of one payment applied by ``payments allocate``.
++
++    kind "invoice": ``amount`` (invoice currency) pays invoice ``target``.
++    kind "writeoff": ``amount`` (invoice currency) of invoice ``invoice`` is written off to
++    ledger account ``target``. kind "wallet": ``amount`` (payment currency) went to the wallet.
++    """
++
++    payment_id: str
++    tenant_id: str
++    kind: str
++    target: str
++    amount: Money
++    date: date
++    invoice: str | None = None
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -26,7 +46,9 @@ class InvoiceBalance:
+     payments: tuple[Payment, ...]
+     credited: Money  # credit note totals, as a positive amount
+     paid_total: Money
+-    open_amount: Money  # gross - matched payments - credit notes
++    open_amount: Money  # gross - matched payments - allocations - credit notes - write-offs
++    allocations: tuple[Allocation, ...] = ()  # allocated payments (counted in paid_total)
++    written_off: Money | None = None
+ 
+     @property
+     def paid(self) -> bool:
+diff --git a/meterbill/payments/store.py b/meterbill/payments/store.py
+index 08884ff..1a81f9e 100644
+--- a/meterbill/payments/store.py
++++ b/meterbill/payments/store.py
+@@ -10,6 +10,7 @@ from __future__ import annotations
+ import fcntl
+ import json
+ import re
++from dataclasses import replace
+ from datetime import date
+ from pathlib import Path
+ from typing import Iterable
+@@ -17,7 +18,7 @@ from typing import Iterable
+ from meterbill.credits import CreditNote
+ from meterbill.invoices import Invoice, InvoiceStatus
+ from meterbill.money import Money
+-from meterbill.payments.models import InvoiceBalance, Payment
++from meterbill.payments.models import Allocation, InvoiceBalance, Payment
+ 
+ _TENANT_RE = re.compile(r"^[A-Za-z0-9]+$")
+ 
+@@ -86,7 +87,8 @@ class PaymentStore:
+                 if not line.strip():
+                     continue
+                 try:
+-                    payments.append(payment_from_dict(json.loads(line)))
++                    payments.append(replace(payment_from_dict(json.loads(line)),
++                                            id=f"PAY-{n:06d}"))
+                 except ValueError as exc:
+                     raise PaymentError(f"{self.path.name} line {n}: {exc}") from None
+         return payments
+@@ -103,21 +105,40 @@ def matches(payment: Payment, invoice: Invoice) -> bool:
+ 
+ 
+ def balance_for(
+-    invoice: Invoice, payments: Iterable[Payment], credit_notes: Iterable[CreditNote] = ()
++    invoice: Invoice,
++    payments: Iterable[Payment],
++    credit_notes: Iterable[CreditNote] = (),
++    allocations: Iterable[Allocation] = (),
+ ) -> InvoiceBalance:
+-    """Open amount of one invoice: gross minus matched payments minus credit notes."""
++    """Open amount of one invoice: gross minus matched payments, allocated payments,
++    credit notes and write-offs."""
+     matched = tuple(p for p in payments if matches(p, invoice))
+     paid_total = Money.zero(invoice.currency)
+     for p in matched:
+         paid_total = paid_total + p.amount
++    allocated = tuple(a for a in allocations
++                      if a.kind == "invoice" and a.target == invoice.number
++                      and a.tenant_id == invoice.tenant_id)
++    for a in allocated:
++        paid_total = paid_total + a.amount
++    written_off = Money.zero(invoice.currency)
++    for a in allocations:
++        if a.kind == "writeoff" and a.invoice == invoice.number and a.tenant_id == invoice.tenant_id:
++            written_off = written_off + a.amount
+     credited = Money.zero(invoice.currency)
+     for note in credit_notes:
+         if note.invoice_number == invoice.number and note.currency == invoice.currency:
+             credited = credited - note.total  # credit note totals are negative
+     return InvoiceBalance(invoice, matched, credited, paid_total,
+-                          invoice.total - paid_total - credited)
++                          invoice.total - paid_total - credited - written_off,
++                          allocated, written_off)
+ 
+ 
+-def unmatched_payments(payments: Iterable[Payment], invoices: Iterable[Invoice]) -> list[Payment]:
++def unmatched_payments(
++    payments: Iterable[Payment], invoices: Iterable[Invoice], allocations: Iterable[Allocation] = ()
++) -> list[Payment]:
++    """Payments that match no invoice by reference and have not been allocated."""
+     candidates = list(invoices)
+-    return [p for p in payments if not any(matches(p, i) for i in candidates)]
++    done = {a.payment_id for a in allocations}
++    return [p for p in payments
++            if p.id not in done and not any(matches(p, i) for i in candidates)]
+diff --git a/tests/test_allocation.py b/tests/test_allocation.py
+new file mode 100644
+index 0000000..9867d74
+--- /dev/null
++++ b/tests/test_allocation.py
+@@ -0,0 +1,111 @@
++import json
++from datetime import date
++
++import pytest
++
++from conftest import event_record
++from meterbill.cli import main
++from meterbill.events import stream_events
++from meterbill.invoices import InvoiceStore, SequenceStore, build_invoice
++from meterbill.money import Money
++from meterbill.payments import AllocationStore, Payment, PaymentStore, balance_for
++from meterbill.period import Period
++from meterbill.plans import load_catalog
++from meterbill.wallets import WalletStore
++
++
++@pytest.fixture
++def two(data_dir, tmp_path):
++    """Two finalized NWD invoices: older due date first (2026-09), then 2026-10."""
++    catalog = load_catalog(data_dir)
++    store = InvoiceStore(data_dir / "invoices")
++    seq = SequenceStore(data_dir / "sequences.json")
++    out = []
++    for period, qty, fin in (("2026-10", "100000", date(2026, 11, 3)),
++                             ("2026-09", "50000", date(2026, 10, 3))):
++        f = tmp_path / f"{period}.jsonl"
++        f.write_text(json.dumps(event_record(tenant_id="NWD", quantity=qty,
++                                             timestamp=f"{period}-05T10:00:00Z")) + "\n")
++        d = build_invoice("NWD", Period.parse(period), stream_events(f), catalog, fin)
++        store.save_draft(d)
++        out.append(store.finalize(d.draft_id, seq, 14, fin))
++    return data_dir, sorted(out, key=lambda i: i.due_date)
++
++
++def pay(data_dir, amount, when="2026-11-10", currency="EUR", ref=None, tenant="NWD"):
++    PaymentStore(data_dir / "payments.jsonl").record(
++        Payment(tenant, Money.from_major(amount, currency), date.fromisoformat(when), ref))
++
++
++def allocate(data_dir, capsys):
++    capsys.readouterr()
++    assert main(["payments", "allocate", "--tenant", "NWD", "--data-dir", str(data_dir)]) == 0
++    return capsys.readouterr().out.splitlines()
++
++
++def open_of(data_dir, invoice):
++    return balance_for(invoice, PaymentStore(data_dir / "payments.jsonl").load(), (),
++                       AllocationStore(data_dir / "allocations.jsonl").load())
++
++
++def test_spreads_oldest_due_first_and_wallet_leftover(two, capsys):
++    data_dir, (old, new) = two
++    total = (old.total + new.total).to_major() + 5
++    pay(data_dir, str(total))
++    lines = allocate(data_dir, capsys)
++    assert lines == [f"PAY-000001 -> {old.number} {old.total}",
++                     f"PAY-000001 -> {new.number} {new.total}",
++                     "PAY-000001 -> wallet 5.00 EUR"]
++    assert open_of(data_dir, old).paid and open_of(data_dir, new).paid
++    assert WalletStore(data_dir).balance("NWD", "EUR") == Money(500, "EUR")
++    assert allocate(data_dir, capsys) == []  # idempotent
++
++
++def test_order_by_date_then_id_and_partial(two, capsys):
++    data_dir, (old, new) = two
++    pay(data_dir, "10.00", when="2026-11-12")
++    pay(data_dir, "10.00", when="2026-11-10")
++    lines = allocate(data_dir, capsys)
++    assert lines == [f"PAY-000002 -> {old.number} 10.00 EUR",
++                     f"PAY-000001 -> {old.number} 10.00 EUR"]
++    assert open_of(data_dir, old).open_amount == old.total - Money(2000, "EUR")
++
++
++def test_void_invoice_skipped(two, capsys):
++    data_dir, (old, new) = two
++    InvoiceStore(data_dir / "invoices").void(old.number, "test")
++    pay(data_dir, "10.00")
++    assert allocate(data_dir, capsys) == [f"PAY-000001 -> {new.number} 10.00 EUR"]
++
++
++def test_residual_under_fifty_cents_written_off(two, capsys):
++    data_dir, (old, new) = two
++    short = (old.total.to_major() - Money(30, "EUR").to_major())
++    pay(data_dir, str(short))
++    lines = allocate(data_dir, capsys)
++    assert lines == [f"PAY-000001 -> {old.number} {Money.from_major(short, 'EUR')}",
++                     "PAY-000001 -> 6900 0.30 EUR"]
++    assert open_of(data_dir, old).paid
++    # exactly 0.50 stays open
++    pay(data_dir, str(new.total.to_major() - Money(50, "EUR").to_major()))
++    assert len(allocate(data_dir, capsys)) == 1
++    assert open_of(data_dir, new).open_amount == Money(50, "EUR")
++
++
++def test_foreign_payment_converted_at_payment_date(two, capsys):
++    data_dir, (old, new) = two
++    pay(data_dir, "10.00", when="2026-10-01", currency="USD")
++    (line,) = allocate(data_dir, capsys)
++    assert line == f"PAY-000001 -> {old.number} 9.25 EUR"  # 10 / 1.0812
++
++
++def test_matched_payments_not_reallocated(two, capsys):
++    data_dir, (old, new) = two
++    pay(data_dir, str(old.total.to_major()), ref=old.number)
++    assert allocate(data_dir, capsys) == []
++
++
++def test_other_tenant_untouched(two, capsys):
++    data_dir, _ = two
++    pay(data_dir, "10.00", tenant="ACM")
++    assert allocate(data_dir, capsys) == []

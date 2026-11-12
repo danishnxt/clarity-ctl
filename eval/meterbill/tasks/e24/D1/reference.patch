@@ -1,0 +1,136 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..5cb52b3 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -29,6 +29,7 @@ from meterbill.invoices import (
+     invoice_from_json,
+     invoice_to_json,
+ )
++from meterbill.dunning import due_reminders, format_reminder
+ from meterbill.money import Money
+ from meterbill.outbox import OUTBOX_DIR, Outbox, OutboxError, load_contact
+ from meterbill.payments import (
+@@ -159,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory with plans, tenants and sequences; invoices live in "
+                             "its invoices/ subdirectory")
++    dn = sub.add_parser("dunning", help="print the payment reminders due on a date")
++    dn.add_argument("--date", required=True, help="date YYYY-MM-DD")
++    dn.add_argument("--queue", action="store_true", help="also queue each reminder in the outbox")
++    dn.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory with invoices, payments, contacts and fx data")
+     ob = sub.add_parser("outbox", help="inspect queued mail (a separate mailer sends it)")
+     ob_sub = ob.add_subparsers(dest="outbox_command", required=True)
+     ob_sub.add_parser("list", help="list queued messages")
+@@ -496,6 +502,29 @@ def _run_invoices(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_dunning(args: argparse.Namespace) -> int:
++    try:
++        data_dir = Path(args.data_dir)
++        on = date.fromisoformat(args.date)
++        catalog = load_catalog(data_dir)
++        store = InvoiceStore(data_dir / "invoices")
++        invoices = [i for t in sorted(catalog.tenants) for i in store.list(t)]
++        reminders = due_reminders(
++            on, invoices, PaymentStore(data_dir / PAYMENTS_FILE).load(), _credit_notes(data_dir),
++            lambda tenant: load_contact(data_dir, tenant), FxConverter(data_dir))
++        for reminder in reminders:
++            print(format_reminder(reminder))
++            if args.queue:
++                Outbox(data_dir / OUTBOX_DIR).queue_mail(
++                    reminder.to, reminder.cc, f"Payment reminder for {reminder.invoice_number}",
++                    f"Invoice {reminder.invoice_number} is overdue (reminder {reminder.level}).",
++                    "reminder", reminder.invoice_number)
++    except (ValueError, OSError, CatalogError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    return 0
++
++
+ def _run_outbox(args: argparse.Namespace) -> int:
+     try:
+         outbox = Outbox(Path(args.data_dir) / OUTBOX_DIR)
+@@ -683,6 +712,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_invoices(args)
+     if args.command == "outbox":
+         return _run_outbox(args)
++    if args.command == "dunning":
++        return _run_dunning(args)
+     if args.command == "payments":
+         return _run_payments(args)
+     if args.command == "wallet":
+diff --git a/meterbill/dunning.py b/meterbill/dunning.py
+new file mode 100644
+index 0000000..3ba45c4
+--- /dev/null
++++ b/meterbill/dunning.py
+@@ -0,0 +1,67 @@
++"""Payment reminders: which reminder, if any, is due for each unpaid invoice on a date."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import date, timedelta
++from typing import Callable, Iterable
++
++from meterbill.credits import CreditNote
++from meterbill.fx import FxConverter
++from meterbill.invoices import Invoice, InvoiceStatus
++from meterbill.money import Money
++from meterbill.outbox import Contact
++from meterbill.payments import Payment, balance_for
++
++FINANCE_COPY = "finance@meterbill.example"
++# (level, days after the due date, addresses the level adds to the contact's own cc list)
++LEVELS = ((1, 7, ()), (2, 28, ()), (3, 35, (FINANCE_COPY,)))
++MIN_OPEN = Money(500, "EUR")      # no reminder below this open amount
++CREDIT_NOTE_QUIET_DAYS = 30       # no reminder while a credit note is this recent
++
++
++@dataclass(frozen=True, slots=True)
++class Reminder:
++    invoice_number: str
++    level: int
++    to: str
++    cc: tuple[str, ...]
++
++
++def format_reminder(reminder: Reminder) -> str:
++    line = f"{reminder.invoice_number}  L{reminder.level}  to={reminder.to}"
++    return line + (f"  cc={','.join(reminder.cc)}" if reminder.cc else "")
++
++
++def due_reminders(
++    on: date,
++    invoices: Iterable[Invoice],
++    payments: list[Payment],
++    credit_notes: list[CreditNote],
++    contact_for: Callable[[str], Contact],
++    converter: FxConverter,
++) -> list[Reminder]:
++    """Reminders due on ``on`` for finalized invoices that still have an open amount, by invoice number."""
++    found = []
++    for invoice in invoices:
++        if invoice.status is not InvoiceStatus.FINALIZED or invoice.due_date is None:
++            continue
++        level = next(((n, extra) for n, days, extra in LEVELS
++                      if invoice.due_date + timedelta(days=days) == on), None)
++        if level is None:
++            continue
++        open_amount = balance_for(invoice, payments, credit_notes).open_amount
++        if open_amount.minor <= 0:
++            continue
++        in_eur = (open_amount if open_amount.currency == "EUR"
++                  else converter.convert(open_amount, "EUR", invoice.issue_date))
++        if in_eur.minor < MIN_OPEN.minor:
++            continue
++        if any(note.invoice_number == invoice.number
++               and timedelta(0) <= on - note.issue_date <= timedelta(days=CREDIT_NOTE_QUIET_DAYS)
++               for note in credit_notes):
++            continue
++        contact = contact_for(invoice.tenant_id)
++        found.append(Reminder(invoice.number, level[0], contact.billing_contact,
++                              contact.cc + level[1]))
++    return sorted(found, key=lambda r: r.invoice_number)

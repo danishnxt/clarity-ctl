@@ -1,0 +1,73 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 59.3,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 30,
+  "cache_creation_input_tokens": 31169,
+  "cache_read_input_tokens": 407941,
+  "output_tokens": 7089,
+  "output_tokens_details": {
+   "thinking_tokens": 792
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 31169,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 539,
+    "cache_read_input_tokens": 40663,
+    "cache_creation_input_tokens": 768,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 768
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 16,
+ "total_cost_usd": 0.23642009999999997,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes. All 380 tests pass (376 existing plus 4 new). I closed #38 in clarity, but nothing is committed, because the repo has no commits yet.\n\n- **Original accounts:** Each `InvoiceLine` now records the revenue account its meter mapped to when the invoice was built. Credit-note lines copy it from the invoice line. So a credit note posts to the account the original invoice used, even if accounting has since remapped the meters.\n- **Credit-note postings:** A credit note posts the mirror image of its invoice. Each line debits its revenue account for the net amount and debits `2200-<country>` for any tax. One credit to `1200` covers the gross total. Credit notes are dated by issue date and picked up by issue month, which matches the CSV export.\n- **Serialization and CLI:** The new field round-trips through invoice and credit-note JSON. The `invoice` command fills it in from `data/accounts.json` when that file exists.\n- **Legacy invoices:** Invoices built before this change have no recorded account. For those, credit notes use the current account map. That is the only option, since the original mapping can't be recovered. If meters have been remapped since, those credit notes will post to the wrong account. I did no migration.\n- **Your call:** If you'd rather these lines raise an error than fall back silently, or if you want a one-off backfill of recorded accounts, say so and I'll add it.\n\nThe main changes are in `meterbill/exports/ledger.py`, `meterbill/invoices/builder.py` and `meterbill/credits/issue.py`. The new tests are in `tests/test_ledger.py`.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/038_2026-11-11__ledger-postings-for-credit/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

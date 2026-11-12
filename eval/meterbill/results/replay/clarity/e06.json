@@ -1,0 +1,46 @@
+{
+ "arm": "clarity",
+ "epoch": 6,
+ "returncode": 0,
+ "wall_s": 15.2,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 10,
+  "cache_creation_input_tokens": 8600,
+  "cache_read_input_tokens": 81356,
+  "output_tokens": 1495,
+  "output_tokens_details": {
+   "thinking_tokens": 92
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 8600,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 473,
+    "cache_read_input_tokens": 18369,
+    "cache_creation_input_tokens": 493,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 493
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 5,
+ "total_cost_usd": 0.0575056,
+ "result": "I've recorded the credit-notes session in the project's clarity memory. I didn't touch any code.\n\n- **Epoch #9, \"Credit notes\":** There was no active epoch for this work, so I opened one and closed it right away. The close outcome says what was built and that 167 tests pass. It also points to the double-credit gap as #10.\n- **Decision on #9:** Credit note lines copy `tax_rate` from the original invoice line and never look tax up again. A refund after a rate change, such as FR's, then reverses exactly what was charged. Credit notes also have their own gapless CN sequence, and the number is taken only after all checks pass.\n- **Design note on #9:** This note covers four points:\n  - `lines` are 1-based positions on the invoice.\n  - Only finalized invoices can be credited.\n  - The invoice JSON round trip uses decimals as strings and money as minor units, and the loader rejects totals that don't match the lines.\n  - I added `--json` to the `invoice` command, which wasn't requested, so `credit` has a file to read.\n- **New idea #10, \"Prevent double credit of same invoice or line\":** Crediting the same invoice or line twice isn't blocked, because credit notes are stored nowhere except the sequence counter. The note says a ledger of credited lines is needed.\n- **New idea #11, \"Credit note JSON serialization and file output\":** Credit notes can't be serialized, and the CLI only prints them.",
+ "is_error": false,
+ "prompt": "A work session on this project just ended. Its record is below: the user's request, the\nagent's final report, and the files it changed. The code is already committed; do not change\nany code under workspace/. Bring the project's memory up to date the way this project's\ninstructions say to \u2014 as the agent that did the work would have before ending the session.\n\n<session>\n## User's request\nAdd credit notes: meterbill/credits/. issue_credit_note(invoice, lines=None, reason) refunds\na whole invoice or selected lines. A credit note line reverses the original line's amount and\nits tax using the tax_rate stored on the original InvoiceLine \u2014 never look the rate up again.\nGermany's rate changes don't matter here, but last January FR's did, and a refund issued\nafter the change must reverse exactly what was charged, or the VAT return won't balance.\nCredit notes are numbered CN-<TENANTID>-<YYYY>-<seq>, gapless like invoices, own sequence.\nAdd `python -m meterbill credit --invoice <file.json> [--line N ...] --reason ...`.\nInvoices need to serialize to JSON and back for this; add that.\n## Agent's final report\nCredit notes are in, and the full suite passes (167 tests, including the new `tests/test_credits.py`).\n\n**Changes**\n- `meterbill/credits/` (new):\n  - `models.py` has `CreditNote` and `CreditNoteLine`, with negative amounts.\n  - `issue.py` has `issue_credit_note(invoice, lines=None, *, reason, store, issue_date=None)`. Each credited line copies the original line's `tax_rate` and negates its `amount` and `tax_amount`. No tax lookup happens, so a refund after a rate change reverses exactly what was charged.\n  - `lines` are 1-based positions on the invoice. Only finalized invoices can be credited, and a reason is required.\n  - The sequence number is taken only after all checks pass, so a failed call leaves no gap.\n  - `__init__.py` holds the `CN` prefix and the `credit_sequences.json` filename.\n- `meterbill/invoices/sequences.py`: `SequenceStore` now takes a `prefix` (default `INV`), so credit notes get their own gapless sequence, `CN-<TENANT>-<YYYY>-<seq:05d>`. I added `format_number`, and `format_invoice_number` behaves as before.\n- `meterbill/invoices/serialization.py` (new, exported from `meterbill.invoices`): `invoice_to_dict`, `invoice_from_dict`, `invoice_to_json` and `invoice_from_json`. Decimals are written as strings and money as minor units, so a round trip is exact. Loading rejects malformed documents and totals that don't match the lines.\n- `meterbill/cli.py`: new `credit` command, `python -m meterbill credit --invoice F --line N ... --reason ... [--data-dir] [--issue-date]`. With no `--line` it credits the whole invoice. I also added `--json` to the `invoice` command, which you didn't ask for. Without it there was no way to produce the invoice file `credit` reads.\n\n**Not done**\n- Nothing stops you crediting the same invoice or line twice. Credit notes aren't stored anywhere except the sequence counter, so a second credit gets another number and refunds the same amount again. Fixing it needs a ledger of credited lines. I can add one if you want.\n- A credit note has no JSON serialization or file output. The CLI only prints it.\n## Files changed\n meterbill/cli.py                    |  52 +++++++++++++++++-\n meterbill/credits/__init__.py       |  10 ++++\n meterbill/credits/issue.py          |  69 ++++++++++++++++++++++++\n meterbill/credits/models.py         |  45 ++++++++++++++++\n meterbill/invoices/__init__.py      |   4 ++\n meterbill/invoices/sequences.py     |  18 +++++--\n meterbill/invoices/serialization.py | 103 ++++++++++++++++++++++++++++++++++++\n tests/test_credits.py               |  97 +++++++++++++++++++++++++++++++++\n 8 files changed, 392 insertions(+), 6 deletions(-)\n</session>\n"
+}

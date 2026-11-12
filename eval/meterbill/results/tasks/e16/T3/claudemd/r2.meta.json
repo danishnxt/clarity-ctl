@@ -1,0 +1,72 @@
+{
+ "at": "e16",
+ "task": "T3",
+ "arm": "claudemd",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 29.6,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 12,
+  "cache_creation_input_tokens": 21562,
+  "cache_read_input_tokens": 144170,
+  "output_tokens": 3640,
+  "output_tokens_details": {
+   "thinking_tokens": 211
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 21562,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 473,
+    "cache_read_input_tokens": 31089,
+    "cache_creation_input_tokens": 735,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 735
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 6,
+ "total_cost_usd": 0.13708900000000002,
+ "is_error": false,
+ "result": "`ingest` and `ingest --check` now accept `*.envelope.json` files in the drop directory, next to `.jsonl` and `.csv`. All 383 tests pass, including 7 new ones for envelopes. The change is in `meterbill/ingest/importer.py`.\n\n- **Event handling:** Each entry in `events` is validated and deduped like a JSONL row, on (tenant, idempotency_key). Envelope files also dedupe against events already stored from the other formats.\n- **Reject line numbers:** A rejected event's `line` is its 1-based position in the `events` array.\n- **Bad envelopes:** An envelope that isn't valid JSON, isn't an object, or has no `events` list gets one reject at line 0. Nothing from it is stored.\n- **Dry run:** `--check` reports envelopes without writing or moving anything.\n- **File handling:** Processed envelopes move to `processed/` like the other formats. Other `.json` files in the drop are left alone.\n\nI made one assumption you should confirm. `batch_id`, `sent_at` and `device_id` are not copied into events and not used as an idempotency key. Each event still needs its own `idempotency_key`, or it is rejected as `missing idempotency_key`. If the mobile uploader doesn't send a key per event, tell me and we can decide what to do instead.\n\nI also updated `CLAUDE.md` with the envelope format, this assumption and the new test count.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "The mobile team's new uploader doesn't write JSONL. It drops batch envelope files named\n*.envelope.json: {\"batch_id\": \"...\", \"sent_at\": \"...\", \"device_id\": \"...\", \"events\": [...]}\nwith the usual event fields inside each event. Make `ingest` (and `ingest --check`) accept\nthem in the drop directory alongside the existing formats.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_envelope_is_ingested_into_the_store": true,
+   "test_target::test_envelope_next_to_a_jsonl_file": true,
+   "test_target::test_check_counts_an_envelope_and_writes_nothing": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_resent_envelope_with_new_batch_and_event_ids_adds_nothing": true,
+   "test_keep::test_event_without_idempotency_key_is_rejected_and_the_rest_accepted": true,
+   "test_keep::test_duplicate_inside_one_envelope_is_counted_once": true
+  },
+  "hidden_collected": 6
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

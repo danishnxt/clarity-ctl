@@ -1,0 +1,130 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..dfd8507 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -30,6 +30,7 @@ from meterbill.invoices import (
+     invoice_to_json,
+ )
+ from meterbill.money import Money
++from meterbill.purge import purge, purge_candidates
+ from meterbill.outbox import OUTBOX_DIR, Outbox, OutboxError, load_contact
+ from meterbill.payments import (
+     PAYMENTS_FILE, InvoiceBalance, Payment, PaymentError, PaymentStore, balance_for,
+@@ -159,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory with plans, tenants and sequences; invoices live in "
+                             "its invoices/ subdirectory")
++    pg = sub.add_parser("purge", help="delete stored data past its keep time")
++    pg.add_argument("--date", required=True, help="date YYYY-MM-DD the keep times are measured at")
++    pg.add_argument("--dry-run", action="store_true", help="only print what would be deleted")
++    pg.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory holding events/, rejects/, invoices/ and documents/")
+     ob = sub.add_parser("outbox", help="inspect queued mail (a separate mailer sends it)")
+     ob_sub = ob.add_subparsers(dest="outbox_command", required=True)
+     ob_sub.add_parser("list", help="list queued messages")
+@@ -496,6 +502,23 @@ def _run_invoices(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_purge(args: argparse.Namespace) -> int:
++    try:
++        data_dir = Path(args.data_dir)
++        store = InvoiceStore(data_dir / "invoices")
++        invoices = [i for t in sorted(load_catalog(data_dir).tenants) for i in store.list(t)]
++        doomed = purge_candidates(data_dir, date.fromisoformat(args.date), invoices,
++                                  _credit_notes(data_dir))
++        if not args.dry_run:
++            purge(doomed)
++    except (ValueError, OSError, CatalogError, InvoiceStoreError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    for path in doomed:
++        print(path)
++    return 0
++
++
+ def _run_outbox(args: argparse.Namespace) -> int:
+     try:
+         outbox = Outbox(Path(args.data_dir) / OUTBOX_DIR)
+@@ -683,6 +706,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_invoices(args)
+     if args.command == "outbox":
+         return _run_outbox(args)
++    if args.command == "purge":
++        return _run_purge(args)
+     if args.command == "payments":
+         return _run_payments(args)
+     if args.command == "wallet":
+diff --git a/meterbill/purge.py b/meterbill/purge.py
+new file mode 100644
+index 0000000..3af1d3c
+--- /dev/null
++++ b/meterbill/purge.py
+@@ -0,0 +1,67 @@
++"""Deleting stored data past its keep time: old event month files and old reject files."""
++
++from __future__ import annotations
++
++import calendar
++import re
++from datetime import date, timedelta
++from pathlib import Path
++
++from meterbill.credits import CreditNote
++from meterbill.invoices import Invoice, InvoiceStatus
++from meterbill.period import Period
++
++EVENT_KEEP_MONTHS = 25        # raw events are kept this long after the end of their period
++REJECT_KEEP_DAYS = 30
++CREDIT_NOTE_HOLD_MONTHS = 12  # a period with a credit note issued this recently is kept whatever its age
++
++_MONTH_FILE = re.compile(r"^(\d{4})-(\d{2})\.jsonl$")
++_DAY_FILE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\.jsonl$")
++
++
++def add_months(day: date, months: int) -> date:
++    index = day.year * 12 + day.month - 1 + months
++    year, month = divmod(index, 12)
++    month += 1
++    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
++
++
++def _period_end(period: Period) -> date:
++    return date(period.year, period.month, calendar.monthrange(period.year, period.month)[1])
++
++
++def purge_candidates(
++    data_dir: str | Path, today: date, invoices: list[Invoice], credit_notes: list[CreditNote]
++) -> list[Path]:
++    """Data files no longer kept on ``today``, sorted; index files are not listed."""
++    data_dir = Path(data_dir)
++    finalized = {(i.tenant_id, i.period) for i in invoices if i.status is InvoiceStatus.FINALIZED}
++    recent_hold = add_months(today, -CREDIT_NOTE_HOLD_MONTHS)
++    by_number = {i.number: i for i in invoices if i.number}
++    held = {(by_number[n.invoice_number].tenant_id, by_number[n.invoice_number].period)
++            for n in credit_notes
++            if n.invoice_number in by_number and n.issue_date > recent_hold}
++    doomed: list[Path] = []
++    events = data_dir / "events"
++    for path in sorted(events.glob("*/*.jsonl")) if events.is_dir() else []:
++        match = _MONTH_FILE.match(path.name)
++        if not match:
++            continue
++        key = (path.parent.name, Period(int(match[1]), int(match[2])))
++        if key not in finalized or key in held:
++            continue
++        if today > add_months(_period_end(key[1]), EVENT_KEEP_MONTHS):
++            doomed.append(path)
++    rejects = data_dir / "rejects"
++    for path in sorted(rejects.glob("*.jsonl")) if rejects.is_dir() else []:
++        match = _DAY_FILE.match(path.name)
++        if match and today - date(*map(int, match.groups())) > timedelta(days=REJECT_KEEP_DAYS):
++            doomed.append(path)
++    return sorted(doomed)
++
++
++def purge(paths: list[Path]) -> None:
++    """Delete the files and, for an event month file, its idempotency index."""
++    for path in paths:
++        path.unlink()
++        path.with_suffix(".idem").unlink(missing_ok=True)

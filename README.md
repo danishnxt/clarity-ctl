@@ -103,6 +103,27 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
   inside it, worktrees out of the way, and code in its own repo so pushing code never
   pushes notes.
 
+## Does it work?
+
+**When the answer lives only in the project's history, an agent with no memory got it wrong
+every time; with clarity-ctl it passed every run (12/12), and overall used 13–28% fewer tokens than
+with a carefully hand-kept CLAUDE.md (11/12)** — cheaper on 4 of the 6 tasks, dearer on 2. When the answer is in the code, memory doesn't matter:
+every arm passes, and keeping memory costs roughly 15–20k tokens a task.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="eval/meterbill/eval-dark.png">
+  <img alt="Left: share of runs passing hidden tests per task group for clarity-ctl, a hand-kept CLAUDE.md and no memory. All arms pass controls and tasks whose answer is in the code; on the history-only handoff task no memory passes 0 of 3 while both memory arms pass 3 of 3; on five history-only tasks at epoch 24 clarity-ctl passes 9 of 9 and CLAUDE.md 8 of 9. Right: mean tokens per run on the history-only tasks; clarity-ctl is lower on four of six." src="eval/meterbill/eval-light.png">
+</picture>
+
+How it was measured: a synthetic billing library built over 24 scripted sessions by fresh
+Claude Code (Sonnet) sessions. Decisions, reversals and handoffs were said in those sessions and
+never written into the code. Each memory arm was kept up to date by the same agent after every
+session, without seeing the tasks. Tasks were frozen before any memory existed and graded by
+hidden tests, including tests that fail the fix you'd write without knowing the history. The
+samples are small (2–3 runs per cell), so read the token gaps as direction, not precision.
+Everything is in [`eval/meterbill/`](eval/meterbill/README.md), with transcripts, hidden tests and
+the commands to rerun it.
+
 ## Commands
 
     read      status · show · search · help

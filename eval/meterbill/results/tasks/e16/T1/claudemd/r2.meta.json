@@ -1,0 +1,74 @@
+{
+ "at": "e16",
+ "task": "T1",
+ "arm": "claudemd",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 564.5,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 24,
+  "cache_creation_input_tokens": 23953,
+  "cache_read_input_tokens": 315955,
+  "output_tokens": 4128,
+  "output_tokens_details": {
+   "thinking_tokens": 564
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 23953,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 468,
+    "cache_read_input_tokens": 33318,
+    "cache_creation_input_tokens": 897,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 897
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.16873549999999998,
+ "is_error": false,
+ "result": "`build_invoice` now looks up each tax rate once per country instead of once per line. I haven't timed it, because I don't have Northwind's October data. Most of the 50 seconds was spent re-reading the tax JSON files for every line, so this should cut it a lot.\n\nAll test files pass when run individually. A full `pytest` run hung once in my environment and I didn't get a clean full-suite result. I never found out why it hung.\n\n**What changed**\n- The rate lookup in `workspace/meterbill/meterbill/invoices/builder.py` now uses a dict local to the call, keyed by country. Within one invoice the tenant and issue date never change, so the country is the only thing that affects the rate.\n- The dict is discarded when `build_invoice` returns. Nothing is shared between invoice runs, and the tax resolver and store are untouched, so they still read the files on every lookup.\n- A tenant's override file edit or a revoked exemption is picked up on the next invoice, which keeps the rule from the stale-exemption incident. Rates, rounding and errors are unchanged.\n- A new test in `tests/test_invoices.py` checks two things: each country is looked up once per build, and nothing is remembered between builds.\n\nI also updated `CLAUDE.md`. I moved the tax-cache item from \"Next\" into the decision, bumped the test count to 378, and added a note. If runs are still slow, profile rating and event reading before widening the cache.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Northwind's monthly invoice run is slow again \u2014 about 50 seconds for October. Most of the\ntime is in tax lookups. Make invoicing fast. Behaviour must stay the same.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_large_multi_country_invoice_reads_each_tax_file_per_country_at_most_once": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_override_edited_between_invoices_is_used[new_resolver_each_time]": true,
+   "test_keep::test_override_edited_between_invoices_is_used[same_resolver_object]": true,
+   "test_keep::test_rates_edited_between_invoices_is_used": true,
+   "test_keep::test_each_line_tax_is_rounded_on_its_own_and_summed": true,
+   "test_keep::test_line_tax_rounds_half_even": true,
+   "test_keep::test_credit_note_after_rate_change_reverses_original_tax": true,
+   "test_keep::test_large_multi_country_invoice_taxes_every_line": true
+  },
+  "hidden_collected": 8
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

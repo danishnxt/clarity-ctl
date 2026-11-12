@@ -1,0 +1,73 @@
+{
+ "task": "T1",
+ "arm": "claudemd",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 35.1,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 15934,
+  "cache_read_input_tokens": 209840,
+  "output_tokens": 3669,
+  "output_tokens_details": {
+   "thinking_tokens": 421
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 15934,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 396,
+    "cache_read_input_tokens": 25806,
+    "cache_creation_input_tokens": 390,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 390
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 11,
+ "total_cost_usd": 0.12145000000000002,
+ "is_error": false,
+ "result": "`build_invoice` now looks up each country's tax rate once per invoice instead of once per line. All 174 tests pass, but I haven't timed it against Northwind's October data, so I can't say yet how much of the 50 seconds it removes.\n\n- **The change:** it's a local dict in `invoices/builder.py`, dropped when the call returns. The tenant and issue date are fixed within a call, so the lookup only varies by country.\n- **Behaviour:** line amounts, rates and rounding are unchanged. `TaxResolver` and the tax store are untouched and still read the JSON files on every lookup. Nothing persists between invoice runs, so a hand-edit to `tax_overrides.json` is picked up on the next run, as your no-caching rule requires.\n- **Test:** the new `test_tax_lookup_memoized_per_call_only` checks two things. A single call looks the rate up once per country, and a second call looks it up again from scratch.\n- **If it's still slow:** I'd profile `rate_events` next, in particular the tiered rating, which still collects quantities in a list. I haven't looked at it.\n\nI updated CLAUDE.md to mark the per-call cache as built and to name that profiling step.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Northwind's monthly invoice run is slow again \u2014 about 50 seconds for October. Most of the\ntime is in tax lookups. Make invoicing fast. Behaviour must stay the same.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_large_multi_country_invoice_reads_each_tax_file_per_country_at_most_once": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_override_edited_between_invoices_is_used[new_resolver_each_time]": true,
+   "test_keep::test_override_edited_between_invoices_is_used[same_resolver_object]": true,
+   "test_keep::test_rates_edited_between_invoices_is_used": true,
+   "test_keep::test_each_line_tax_is_rounded_on_its_own_and_summed": true,
+   "test_keep::test_line_tax_rounds_half_even": true,
+   "test_keep::test_credit_note_after_rate_change_reverses_original_tax": true,
+   "test_keep::test_large_multi_country_invoice_taxes_every_line": true
+  },
+  "hidden_collected": 8
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

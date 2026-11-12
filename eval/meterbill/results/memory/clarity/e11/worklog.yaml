@@ -1,0 +1,406 @@
+version: 2
+objectives:
+  overall: 'Usage-billing library: metered events to invoices'
+state_repo: true
+items:
+- id: 1
+  name: 'meterbill library and CLI: events to invoices'
+  type: feature
+  status: done
+  outcome: Built meterbill package (money, period, events, plans, rating, invoices, cli), seed data (3
+    plans, 4 tenants incl. NWD/DE/EUR) and per-module tests; 132 pass, stdlib only.
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 1
+  notes:
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: Zero third-party dependencies (stdlib only; deployment boxes have no internet).'
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: No float anywhere in money math. Money is integer minor units + ISO code; floats
+      raise TypeError. Multiplication rounds half-up; from_major rejects excess precision unless a rounding
+      mode is given.'
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: Invoice numbers INV-<TENANT>-<YYYY>-<5 digits> are gapless per tenant per year (auditor
+      checks). build_invoice returns a draft with no number and never touches data/sequences.json; only
+      finalize_invoice advances it (file lock, atomic write).'
+  - at: '2026-11-11 21:12:00'
+    text: 'Choices to confirm with user: invoice-number year comes from issue date, not billing period
+      (Dec period issued in Jan gets new year); plan unit prices may have more decimals than the currency,
+      only line amount rounded; flat components always yield a line, per-unit with zero usage yields none;
+      events for unpriced meters raise an error (events outside period ignored first). Added meterbill/period.py
+      (YYYY-MM Period, start-inclusive/end-exclusive UTC) beyond the requested modules. 132 tests pass.'
+- id: 2
+  name: Persist finalized invoices atomically with sequence
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:12:00'
+    text: 'Why: --finalize prints the numbered invoice but doesn''t save it. If the process dies after
+      the number is consumed, there''s a gap, which breaks the auditor''s gapless requirement. Persist
+      invoice and sequence together.'
+- id: 3
+  name: Tax calculation per tenant country
+  type: feature
+  status: done
+  outcome: Added meterbill/tax (store, resolver, TaxError), seeded data/tax_rates.json and tax_overrides.json
+    (DE .19, FR .20, GB .20, US 0, JP .10, ACM exempt in DE). Rating splits by (meter, country); build_invoice
+    taxes each line with per-line ROUND_HALF_EVEN and sums to tax_total; InvoiceLine stores country, tax_rate,
+    tax_amount. CLI shows tax columns. 160 tests pass.
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 3
+  notes:
+  - at: '2026-11-11 21:12:00'
+    text: Tenants have a country but no tax is computed yet.
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: Tax is computed per invoice line: line amount * rate, rounded to the currency minor
+      unit with ROUND_HALF_EVEN; invoice tax_total is the sum of the rounded line taxes. Never compute
+      tax on the subtotal and round once: finance reconciles each line against the ledger, and invoice-level
+      rounding was a cent off at the Q3 close.'
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: Tax follows where usage happened: event properties[''country''], falling back to
+      the tenant''s country. Rating splits lines by (meter, country); each line''s rate comes from TaxResolver.rate_for(tenant,
+      country, date) (tenant override first, else latest valid_from <= date). meterbill/tax/store.py read_rates()/read_overrides()
+      are the only file access for tax data.'
+  - at: '2026-11-11 21:12:00'
+    text: 'Choices made unasked, worth confirming: Invoice.total now includes tax (pre-tax is Invoice.subtotal).
+      Rate date is the invoice issue date, not period end (one line in builder.py). Tiered pricing restarts
+      per (meter, country), so multi-country tenants lose some volume discount versus tiering combined
+      quantity. Flat fees are taxed in the tenant''s country.'
+- id: 4
+  name: Windows support for sequence lock (fcntl)
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:12:00'
+    text: 'SequenceStore lock uses fcntl: macOS/Linux only.'
+- id: 5
+  name: Tiered (graduated) pricing model
+  type: feature
+  status: done
+  outcome: Added 'tiered' graduated pricing (Tier type, catalog parsing/validation, per-tier rated lines,
+    growth seed plan); tests at every boundary, 152 pass.
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 2
+  notes:
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: Tiered pricing is graduated with inclusive upper bounds: unit 1000 bills at tier
+      1''s price, unit 1001 at tier 2''s (matches contract wording ''the first 1,000 units at...''; sales
+      was burned by a quote read the other way). Do not change to exclusive bounds.'
+  - at: '2026-11-11 21:12:00'
+    text: 'Tier up_to must be a positive whole number, ascending; only last tier may (and must) be null.
+      Each tier line is rounded half-up on its own. Tier lines are labelled ''api_calls (1-1000)'' / ''(10001+)''
+      and the label is stored in RatedLine.meter. Fractional usage still works (1000.5 puts 0.5 in tier
+      2). Seed plan ''growth'' added, no tenant uses it. Gap: no CLI test for tier-line table output.'
+- id: 6
+  name: Cache tax rate file reads per process
+  type: feature
+  status: done
+  outcome: Added lru_cache to read_rates()/read_overrides() in meterbill/tax/store.py so each tax file
+    is read once per data dir per process; rate_for was re-reading both JSON files for every invoice line,
+    ~70% of Northwind's ~40s run. Updated TaxResolver docstring, added a read-once test. Speed-up not
+    timed.
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 4
+  notes:
+  - at: '2026-11-11 21:12:00'
+    text: 'DECISION: tax_rates.json and tax_overrides.json are read once per data_dir per process (functools.lru_cache
+      on store.read_rates/read_overrides). Edits to them need a process restart, or store.read_rates.cache_clear()
+      and store.read_overrides.cache_clear(). Cached dicts are shared, so callers must never mutate them.
+      Why: Northwind''s monthly run took ~40s, ~70% of it re-reading these files per line in rate_for.
+      Speed-up not measured after the change.'
+  - at: '2026-11-11 21:12:00'
+    text: 'Caveat: cache key is data_dir as passed, so str and Path for the same dir cache separately
+      (one extra read, harmless). Test: tests/test_tax.py::test_files_read_once_across_lookups. Suite
+      passes (161).'
+  - at: '2026-11-11 21:13:00'
+    text: 'SUPERSEDED by #7: the lru_cache was removed (stale tax overrides in a long-running worker).
+      Ignore the read-once decision above; no cache_clear exists anymore.'
+- id: 7
+  name: Remove tax file cache
+  type: feature
+  status: done
+  brief: Remove lru_cache from tax store reads; no tax data cached across invoice runs.
+  outcome: Removed the process-wide tax file cache (lru_cache on read_rates/read_overrides) and its test;
+    every lookup reads the files again. A long-running worker kept using a revoked 0% exemption for six
+    hours because the cache never re-read tax_overrides.json.
+  folder: EPOCHS/007_2026-11-11__remove-tax-file-cache
+  repos: []
+  created: '2026-11-11'
+  started: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 5
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'DECISION: No tax data (tax_rates.json, tax_overrides.json) is cached across invoice runs, ever;
+      every lookup reads the files from disk. This REVERSES #6''s lru_cache decision. Why: the billing
+      worker is long-running and ops hand-edit tax_overrides.json; ACM''s DE exemption was revoked in
+      the file but the worker kept invoicing at 0% for six hours. Do not use file mtime for invalidation:
+      files are rsynced from the config repo with times preserved, so edited files can carry old mtimes.
+      If lookups need to be fast, cache only within a single build_invoice call and discard it at the
+      end (not built yet; do it when Northwind''s slow runs come up again).'
+  - at: '2026-11-11 21:13:00'
+    text: Removed lru_cache from store.read_rates/read_overrides, updated docstrings in store.py and resolver.py,
+      deleted tests/test_tax.py::test_files_read_once_across_lookups. Suite passes (160). Per-build_invoice
+      cache NOT built; Northwind's ~40s run will slow again.
+- id: 8
+  name: Per-build_invoice tax lookup cache
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'Why: Removing the process cache (#7) brings back per-line file reads in rate_for, ~70% of Northwind''s
+      ~40s monthly run. Rule (#7): cache only within a single build_invoice call and discard it at the
+      end; never across runs, never mtime-based (rsync preserves mtimes). Start when Northwind complains.'
+- id: 9
+  name: Credit notes
+  type: feature
+  status: done
+  brief: 'meterbill/credits: issue_credit_note reversing stored line tax_rate, own CN sequence, credit
+    CLI, invoice JSON serialization'
+  outcome: 'Added meterbill/credits (issue_credit_note, CreditNote models), prefix-aware SequenceStore
+    for a separate gapless CN sequence, invoice JSON serialization, and the ''credit'' CLI command. Tax
+    is reversed from the stored line tax_rate, never re-looked-up. 167 tests pass. Known gap: double credits
+    not prevented (#10).'
+  folder: EPOCHS/009_2026-11-11__credit-notes
+  repos: []
+  created: '2026-11-11'
+  started: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 6
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'DECISION: Credit note lines never look up tax. They copy tax_rate from the original InvoiceLine
+      and negate amount and tax_amount, so a refund after a rate change (e.g. FR last January) reverses
+      exactly what was charged and the VAT return balances. Credit notes use their own gapless sequence
+      (CN-<TENANT>-<YYYY>-<5 digits>, credit_sequences.json) via SequenceStore(prefix=...); the number
+      is taken only after all validation passes.'
+  - at: '2026-11-11 21:13:00'
+    text: 'Design: lines arg = 1-based positions on the invoice; only finalized invoices can be credited;
+      reason required. Invoice JSON round trip (meterbill/invoices/serialization.py): decimals as strings,
+      money as minor units, loader rejects totals that don''t match lines. Added --json to the invoice
+      command (unrequested) so credit has a file to read.'
+- id: 10
+  name: Prevent double credit of same invoice or line
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'Nothing stops crediting the same invoice or line twice: credit notes are not stored anywhere
+      except the sequence counter, so a second credit gets a new number and refunds the same amount again.
+      Needs a ledger of credited lines, checked and written together with the sequence.'
+- id: 11
+  name: Credit note JSON serialization and file output
+  type: feature
+  status: done
+  outcome: 'Built as part of the CSV export work: meterbill/credits/serialization.py gives lossless credit
+    note JSON round-trip with totals check; CLI ''credit --json'' emits it. CreditNoteLine gained quantity
+    (negated invoice line qty).'
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 7
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: CreditNote has no to_dict/JSON and the CLI credit command only prints it. Mirror invoices/serialization.py.
+- id: 12
+  name: CSV export of invoices and credit notes for finance ERP
+  type: feature
+  status: done
+  outcome: Added CSV export command and exports package, with tests (172 pass). Finance's per-line format
+    and per-currency exponent rules are in the notes; open questions on period filter, BOM and document
+    storage remain there.
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 8
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'DECISION: CSV export (meterbill/exports/csv_export.py, ''python -m meterbill export --period
+      YYYY-MM --out f.csv [--documents-dir data/documents]'') uses '';'' delimiter (German Excel) and
+      amounts as major-unit decimal strings with exactly the currency''s exponent (JPY ''1500'', EUR ''12.30'',
+      KWD ''1.250''); the ERP rejects the whole file on e.g. ''1500.00'' for JPY. Credit note amounts
+      are negative; gross = net + tax; drafts skipped; rows sorted by issue date then number. Output is
+      UTF-8 without BOM.'
+  - at: '2026-11-11 21:13:00'
+    text: 'Export reads saved JSON documents from a directory because nothing stores finalized invoices
+      (see #2) and credit notes had no JSON form. Someone must save the --json output of ''invoice --finalize''
+      and ''credit'' into the documents dir; nothing automates that yet.'
+  - at: '2026-11-11 21:13:00'
+    text: 'Open questions for finance: period filter differs by type (invoices match billing period, so
+      Nov-issued 2026-10 invoices show under 2026-10; credit notes have no period so match issue month).
+      A single rule needs period stored on credit notes. Date column = issue date; tenant column = tenant
+      id not name. No BOM: German Excel may garble non-ASCII (columns are ASCII now). ''.'' decimal separator
+      may be read as text/date by German Excel when opened directly; ERP import unaffected.'
+- id: 13
+  name: 'Stream rating: running totals for flat and per_unit'
+  type: feature
+  status: done
+  outcome: 'Rating streams events for flat and per_unit meters with running totals instead of loading
+    the whole period into a list; tiered unchanged (see #14). Added iter_unique_events and stream_events,
+    CLI uses them. 173 tests pass.'
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 9
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'Done: rate_events (rating/engine.py) consumes events one at a time; flat/per_unit keep a running
+      Decimal per (meter, country). Added lazy iter_unique_events (dedupe_events still returns a list
+      on top of it) and stream_events(path) in events/reader.py (read_events unchanged); CLI invoice uses
+      stream_events. Caveats: malformed JSONL lines now raise during rating, not at load (CLI catches
+      both); no dedicated test for stream_events or a malformed line mid-file; dedupe key set still grows
+      with event count.'
+- id: 14
+  name: Stream tiered rating (still collects quantities)
+  type: feature
+  status: dropped
+  outcome: User decided tiered stays list-based for good (needs ordered per-event attribution); built
+    attribution instead.
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 11
+  notes:
+  - at: '2026-11-11 21:13:00'
+    text: 'Deliberately left list-based at the user''s request: they want to examine how tiers interact
+      with the per-tier lines before touching it. Tiered meters in rate_events still collect each quantity
+      in a list and sum afterwards; the old list-based path stays working for them. Don''t change until
+      the user has reviewed per-tier lines. Other remaining memory cost: dedupe keeps a set of (tenant,
+      idempotency key) for the period (iter_unique_events in events/models.py).'
+  - at: '2026-11-11 21:38:00'
+    text: 'DECISION: Tiered rating stays list-based permanently; we will not stream it. Why: support must
+      answer ''which of my events were billed at which tier price'' on a challenged tiered charge, which
+      needs events walked through the tiers in (timestamp, event_id) order; running totals cannot attribute
+      units to events. Tiered rating sorts with events.chronological_key, shared with meterbill/attribution.py,
+      so invoices and attribution agree (test on 400 random events).'
+- id: 15
+  name: Per-tenant billing currency with FX conversion
+  type: feature
+  status: done
+  outcome: Added optional Tenant.billing_currency, meterbill/fx (FxConverter, 7-day staleness limit, EUR
+    cross rates), per-line conversion before tax in build_invoice with fx_rate/original_amount on lines,
+    FX serialization, 'fx convert'/'fx rates' CLI, seeded placeholder rates, and 52 new tests (222 total).
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 10
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'DECISION: FX rates (data/fx_rates.json, EUR base, ECB-style) are never guessed. FxConverter
+      uses the most recent rate on or before the date, per currency; cross rates go through EUR; a rate
+      more than 7 days old (MAX_RATE_AGE_DAYS) raises FxError, with no fallback, because treasury signs
+      off on every rate used and a failed invoice run beats a guessed rate. Exactly 7 days old is accepted.'
+  - at: '2026-11-11 21:38:00'
+    text: 'DECISION: build_invoice converts each rated line (not the invoice total) into the tenant''s
+      billing_currency at the issue date, rounding HALF_EVEN, BEFORE tax; tax is then computed on the
+      converted line amount. Each InvoiceLine stores fx_rate and original_amount (original currency =
+      that amount''s currency; set together). The rate is rounded to 12 significant digits and convert()
+      uses exactly that rate, so the stored rate reproduces the line amount. Tenant.billing_currency is
+      optional; default is the plan''s currency.'
+  - at: '2026-11-11 21:38:00'
+    text: data/fx_rates.json seed rates (weekdays 2026-09-01..2026-11-30) are GENERATED placeholders (seeded
+      random walk around the 2026-10-01 anchor), not real ECB data. Treasury must replace them before
+      any real invoice run. TKY (JPY plan) bills in USD; issue dates after ~2026-12-07 fail for TKY until
+      rates are loaded (7-day rule working as intended).
+  - at: '2026-11-11 21:38:00'
+    text: 'Not done: CSV export and credit notes carry no FX fields (they work in the billing currency);
+      original amount and rate are not exported. Credit notes copy tax_rate from the original line per
+      #9, so they stay consistent.'
+- id: 16
+  name: Export FX fields (original amount, rate) in CSV and credit notes
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'Why: CSV export (#12) and credit notes only carry billing-currency amounts; finance may want
+      original amount, original currency and fx_rate per line. Check #12''s CSV format decision before
+      changing columns.'
+- id: 17
+  name: Load real treasury-approved FX rates into data/fx_rates.json
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'Why: seeded rates are generated placeholders needing treasury sign-off; stale after ~2026-12-07
+      for TKY (7-day rule).'
+- id: 18
+  name: Tiered event attribution
+  type: feature
+  status: done
+  brief: attribute(component, events) rows per (event, tier); CLI attribution command; tiered rating sorted
+    like attribution
+  outcome: Tiered attribution CLI/library added; tiered rating now sorts by (timestamp, event_id) so invoices
+    and attribution agree, verified by a 400-random-event test.
+  folder: EPOCHS/018_2026-11-11__tiered-event-attribution
+  repos: []
+  created: '2026-11-11'
+  started: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 12
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'Built meterbill/attribution.py (attribute, tier_totals; tiers restart per country since invoice
+      tier lines are per (meter,country)), events.chronological_key shared sort key, rating.engine.tier_span,
+      and ''python -m meterbill attribution --tenant --period --meter --events [--data-dir]'' (exit 1
+      if meter not tiered on tenant''s plan; dedupes idempotency keys like rating). Rows show units and
+      unit price but no per-row amount: invoices round per tier total, so row amounts would not sum to
+      the invoice line. Sorting changes no invoice amount (sums are order independent). Seed data has
+      no tenant on tiered ''growth'' plan; CLI test adds one. 230 tests pass.'
+- id: 19
+  name: File-drop event ingest into per-tenant monthly event store
+  type: feature
+  status: done
+  outcome: Added meterbill/ingest/ (EventStore, RejectLog, ingest_drop), 'python -m meterbill ingest --drop
+    DIR', and invoice falling back to the store when --events is omitted; 17 new tests, suite passes (246).
+  created: '2026-11-11'
+  ended: '2026-11-11'
+  closed_seq: 13
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'DECISION: Event store layout is data/events/<tenant>/<YYYY-MM>.jsonl (UTC month of event timestamp)
+      with a <YYYY-MM>.seen index (one event_id per line) beside it; rejects go to data/rejects/<YYYY-MM-DD>.jsonl
+      (row, file, line, reason). Ingest dedupes on event_id per tenant per month (same id in two months
+      is stored twice; build_invoice still dedupes on idempotency_key). Duplicates are counted, not written
+      to rejects. Ingest reuses parse_event validation; tenant ids unsafe as directory names are rejected.
+      Events are written BEFORE ids go to the index on purpose: a crash can duplicate on rerun, the reverse
+      order would lose events.'
+  - at: '2026-11-11 21:38:00'
+    text: CSV drop files need the six event columns in the header; optional 'properties' column is JSON;
+      extra columns ignored. Missing required columns = one reject at line 1, nothing stored. Rejected
+      rows with no usable tenant count under (unknown). Processed files move to DIR/processed/ (numeric
+      suffix on name clash). invoice reads the store when --events is omitted.
+- id: 20
+  name: Repair/rebuild the ingest .seen index from event files
+  type: feature
+  status: idea
+  created: '2026-11-11'
+- id: 21
+  name: Lock ingest runs so concurrent ingests cannot interleave
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'No locking today; sequence lock in finalize_invoice uses fcntl (see #4 for Windows).'
+- id: 22
+  name: 'Ingest: handle invalid UTF-8 mid-file without partial accept'
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: Currently rows read before the bad bytes are kept, one reject logged for the file, file moved
+      to processed/.
+- id: 23
+  name: 'Ingest: crash between event write and seen-index write can double-store on rerun'
+  type: feature
+  status: idea
+  created: '2026-11-11'
+  notes:
+  - at: '2026-11-11 21:38:00'
+    text: 'Fix likely pairs with #20 (rebuild index from event files) or a write-ahead approach; the reverse
+      order would lose events, so don''t just swap the writes.'

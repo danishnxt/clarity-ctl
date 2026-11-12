@@ -1,0 +1,55 @@
+{
+ "n": 3,
+ "title": "tax resolution",
+ "commit_msg": "tax: resolver, rates, overrides",
+ "prompt": "Invoices need tax. Add meterbill/tax/:\n- meterbill/tax/store.py: read_rates() reads data/tax_rates.json (country -> list of\n  {rate: \"0.19\", valid_from: \"2024-01-01\"}), read_overrides() reads data/tax_overrides.json\n  (tenant_id -> {country -> {\"rate\": \"0\", \"reason\": \"reverse-charge\"}}). Each call reads the\n  file; keep those two functions as the only file access.\n- meterbill/tax/resolver.py: TaxResolver().rate_for(tenant_id, country, on_date) -> Decimal,\n  tenant override first, else the rate valid on that date.\n- build_invoice computes tax for each line: line tax = line amount * rate, rounded to the\n  currency's minor unit with ROUND_HALF_EVEN, per line. Invoice tax total is the sum of the\n  line taxes. Do NOT compute tax on the subtotal and round once \u2014 finance reconciles every\n  invoice line against the ledger, and an invoice-level rounding put us a cent off on the\n  Q3 close; Priya won't sign off on that again. Store the rate used on each InvoiceLine\n  (tax_rate) and its tax (tax_amount).\nSeed DE 0.19, FR 0.20, GB 0.20, US 0, JP 0.10 and one override (tenant ACM exempt in DE).\n",
+ "report": "I added `meterbill/tax/` and wired tax into `build_invoice`. The full suite passes (159 tests).\n\n**Changes, file by file**\n- `meterbill/tax/store.py` (new): `read_rates()` and `read_overrides()` are the only code that reads the tax JSON files. Each call re-reads its file and validates it, raising `TaxError` (a `ValueError`) on bad data.\n- `meterbill/tax/resolver.py` (new): `TaxResolver(data_dir=None).rate_for(tenant_id, country, on_date)` returns the tenant's override for that country if there is one. Otherwise it returns the latest rate whose `valid_from` is on or before the date. It raises `TaxError` for an unknown country or a date before the first rate.\n- `meterbill/tax/__init__.py` (new): exports the tax package's public names.\n- `meterbill/invoices/models.py`: `InvoiceLine` now has `tax_rate` and `tax_amount`. `Invoice` gains `subtotal` and `tax_total` (the sum of the line taxes), and `total` is now subtotal plus tax.\n- `meterbill/invoices/builder.py`: `build_invoice(..., tax_resolver=None)` computes each line's tax as `amount * rate`, rounded to the currency's minor unit with `ROUND_HALF_EVEN`. It never rounds on the subtotal.\n- `meterbill/cli.py`: the invoice output adds Tax rate and Tax columns plus Subtotal and Tax lines. `--data-dir` now also supplies the tax files.\n- `data/tax_rates.json` and `data/tax_overrides.json` (new): the seed data you listed (DE 0.19, FR 0.20, GB 0.20, US 0, JP 0.10) and the ACM exempt-in-DE override.\n- Tests:\n  - `tests/test_tax.py` is new. It covers the seed data, the rate valid on a date, overrides, malformed files, per-line half-even rounding, and JPY.\n  - `tests/conftest.py` now copies the tax files into the temporary data directory.\n  - `tests/test_invoices.py` and `tests/test_cli.py` have updated totals. For example, NWD's `Total` is now 464 minor units because DE tax is included.\n\n**Decisions to check**\n- The rate is looked up on the invoice's `issue_date` and the tenant's `country` from `tenants.json`. If you want the period end instead, it's a one-line change in `builder.py`.\n- ACM's tenant country is US, so the DE override never applies to it today. I seeded it as you specified.\n\nI did not touch git. Nothing is left undone.",
+ "diffstat": " data/tax_overrides.json       |  3 ++\n data/tax_rates.json           |  7 ++++\n meterbill/cli.py              | 19 ++++++----\n meterbill/invoices/builder.py | 24 +++++++++++--\n meterbill/invoices/models.py  | 14 ++++++--\n meterbill/tax/__init__.py     |  4 +++\n meterbill/tax/resolver.py     | 28 +++++++++++++++\n meterbill/tax/store.py        | 68 +++++++++++++++++++++++++++++++++++\n tests/conftest.py             |  2 +-\n tests/test_cli.py             |  5 +--\n tests/test_invoices.py        |  8 +++--\n tests/test_tax.py             | 83 +++++++++++++++++++++++++++++++++++++++++++\n 12 files changed, 248 insertions(+), 17 deletions(-)\n",
+ "shortstat": "12 files changed, 248 insertions(+), 17 deletions(-)",
+ "usage": {
+  "input_tokens": 16,
+  "cache_creation_input_tokens": 25194,
+  "cache_read_input_tokens": 191329,
+  "output_tokens": 9861,
+  "output_tokens_details": {
+   "thinking_tokens": 1914
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 25194,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 895,
+    "cache_read_input_tokens": 33242,
+    "cache_creation_input_tokens": 3161,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 3161
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 8,
+ "total_cost_usd": 0.2185509,
+ "duration_ms": 64859,
+ "wall_s": 65.2,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 45%]\n........................................................................ [ 90%]\n...............                                                          [100%]\n159 passed in 0.14s",
+ "tree_dirty_after_pytest": ""
+}

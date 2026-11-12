@@ -1,0 +1,75 @@
+{
+ "at": "e24",
+ "task": "X1",
+ "arm": "claudemd",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 107.7,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 26,
+  "cache_creation_input_tokens": 50323,
+  "cache_read_input_tokens": 573709,
+  "output_tokens": 13567,
+  "output_tokens_details": {
+   "thinking_tokens": 3921
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 50323,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 878,
+    "cache_read_input_tokens": 59389,
+    "cache_creation_input_tokens": 1196,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1196
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.3943848999999999,
+ "is_error": false,
+ "result": "`python -m meterbill purge --date YYYY-MM-DD [--dry-run]` now exists. It prints the sorted path of every data file it deletes, or would delete with `--dry-run`. The full suite passes (494 tests, 28 of them new in `tests/test_purge.py`). I only ran it against test data, not the real `data/` directory.\n\n**What it deletes**\n- **Event month files** (`events/<tenant>/<YYYY-MM>.jsonl`): deleted once they are past 25 months after the end of their billing period.\n- **Reject files** (`rejects/<YYYY-MM-DD>.jsonl`): deleted once they are more than 30 days old.\n- **Hard rule:** a period with no finalized invoice, or with a credit note issued in the last 12 months, is never deleted, whatever its age.\n\n**Index files**\n- The event store's `.idem` index (and any legacy `.seen`) is deleted together with its month file, but never printed.\n- The index goes first. A crash can only leave an index that gets rebuilt from the events, never an index for events that are gone.\n- A re-sent old event is accepted again after its month is purged.\n\n**Safety**\n- It works out everything it will delete before touching any file.\n- If an invoice or document fails to load, it exits 1 and deletes nothing.\n- An invalid `--date` also exits 1.\n- `--dry-run` prints exactly what a real run would delete.\n\n**Unconfirmed choices**\n- **Boundaries:** deletion happens only strictly after the period's end plus 25 months (rejects: age over 30 days). A credit note issued exactly 12 months ago still protects its period.\n- **Time zones:** month files are UTC months but billing periods are the tenant's local month. A file is deleted only when every local period its events can fall in is finalized, uncredited and past retention. For NWD (Berlin), the 2024-09 file therefore waits for October's retention.\n- **Void invoices:** they don't count as finalized, so their events are kept.\n- **Unmatched credit notes:** if a recent credit note's invoice can't be found, all of that tenant's events are kept.\n- **Sources:** invoices come from the invoice store and `documents/`, and credit notes only from `documents/`. Nothing but event and reject files is ever deleted.\n\nPurge takes no lock, like ingest and compact, so run it when neither is running. I updated CLAUDE.md with the module, these decisions and that caveat.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Storage costs are biting. Add `python -m meterbill purge --date YYYY-MM-DD [--dry-run]` that\ndeletes the stored data we no longer keep as of that date and prints the path of every file it\ndeletes (or would delete), sorted \u2014 data files only, not index files. Keep the event store's\nindexes consistent.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_old_files_are_deleted_and_recent_ones_kept": true,
+   "test_target::test_printed_paths_are_sorted_and_name_data_files_only": true,
+   "test_target::test_dry_run_prints_the_same_and_deletes_nothing": true,
+   "test_target::test_index_of_a_deleted_month_goes_with_it_and_other_indexes_stay": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_event_month_files_are_kept_for_25_months_after_the_period_ends": true,
+   "test_keep::test_reject_files_are_kept_for_30_days": true,
+   "test_keep::test_a_period_without_a_finalized_invoice_is_kept": true,
+   "test_keep::test_a_period_with_a_recent_credit_note_is_kept_and_an_old_one_does_not_protect": true,
+   "test_keep::test_invoices_and_credit_notes_are_never_deleted": true
+  },
+  "hidden_collected": 9
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

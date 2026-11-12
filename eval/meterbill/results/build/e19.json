@@ -1,0 +1,55 @@
+{
+ "n": 19,
+ "title": "event store compaction",
+ "commit_msg": "event store compaction and index",
+ "prompt": "The event store has thousands of small appends per month file. Add `events compact --tenant T\n--period P` that rewrites a month file sorted by timestamp with the idempotency index rebuilt,\natomically (write temp, fsync, rename), and `events stats` showing per tenant/month: events,\nbytes, oldest and newest timestamp. Compaction must not change any invoice: test that an\ninvoice built before and after compaction is identical.\nHeads-up for later, don't build it: once storage costs bite we'll purge old data. Raw events\nare kept 25 months after the end of their billing period; files in data/rejects are kept 90\ndays.\n",
+ "report": "I added `events compact --tenant T --period P` and `events stats`. The full suite passes (437 tests).\n\n**Changes**\n- `meterbill/ingest/compact.py` (new):\n  - `compact_month` keeps the first copy of each idempotency key and sorts the rest by timestamp, then event_id. Rating deduplicates the same way, so invoices don't change. Event lines are kept byte for byte.\n  - It rewrites the month file and the `.idem` index, each as a temp file in the same directory that is fsynced, renamed over the original, and followed by a directory fsync.\n  - If any line is invalid, or a write fails, the original file is untouched and no temp file is left behind.\n  - `collect_stats` returns events, file bytes, and oldest and newest timestamp for each tenant/month file.\n- `meterbill/ingest/__init__.py`: exports the new functions.\n- `meterbill/cli.py`: adds the `events compact` and `events stats` subcommands.\n  - `stats` takes an optional `--tenant` filter.\n  - Both take `--data-dir`, like the other commands.\n- `tests/test_compact.py` (new) covers:\n  - sorting, deduping and index rebuild;\n  - ingest still skipping duplicate events after compaction;\n  - running compaction twice (idempotence);\n  - failure cases leaving the original file untouched;\n  - the CLI commands and stats.\n- The invoice test builds an invoice from an out-of-order file with a duplicate, compacts, and builds again. The two are identical except `draft_id`, which is random on every build, so I left it out of the comparison.\n\n**Not done**\n- The purge for old data you mentioned is not built, as you asked.\n- `compact` doesn't take a lock, so run it while no ingest is running on the same month.",
+ "diffstat": " meterbill/cli.py             |  40 +++++++++++++-\n meterbill/ingest/__init__.py |   4 +-\n meterbill/ingest/compact.py  |  97 +++++++++++++++++++++++++++++++++\n tests/test_compact.py        | 126 +++++++++++++++++++++++++++++++++++++++++++\n 4 files changed, 265 insertions(+), 2 deletions(-)\n",
+ "shortstat": "4 files changed, 265 insertions(+), 2 deletions(-)",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 25780,
+  "cache_read_input_tokens": 239100,
+  "output_tokens": 8111,
+  "output_tokens_details": {
+   "thinking_tokens": 924
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 25780,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 592,
+    "cache_read_input_tokens": 35948,
+    "cache_creation_input_tokens": 376,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 376
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.20818000000000003,
+ "duration_ms": 57613,
+ "wall_s": 57.9,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 16%]\n........................................................................ [ 32%]\n........................................................................ [ 49%]\n........................................................................ [ 65%]\n........................................................................ [ 82%]\n........................................................................ [ 98%]\n.....                                                                    [100%]\n437 passed in 0.64s",
+ "tree_dirty_after_pytest": ""
+}

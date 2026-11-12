@@ -1,0 +1,55 @@
+{
+ "n": 8,
+ "title": "streaming aggregation (half done)",
+ "commit_msg": "streaming aggregation for flat and per-unit",
+ "prompt": "Big tenants are pushing memory: rating loads every event of the period into a list.\nChange rating to aggregate as it streams the JSONL \u2014 running totals per meter, never the full\nlist. Do flat and per_unit today. Leave tiered exactly as it is for now (it still collects\nquantities); I want to look at how tiers interact with the per-tier lines before we touch it.\nKeep the old list-based path working for tiered.\n",
+ "report": "Rating now streams, and the full suite passes (173 tests). I'm about to write the final report.\n\n**What changed**\n- `meterbill/rating/engine.py`: `rate_events` reads events one at a time.\n  - Flat and per_unit meters keep only a running `Decimal` total per (meter, country).\n  - Tiered meters still collect each quantity in a list and sum it afterwards, so tiered output is the same as before.\n- `meterbill/events/models.py`: I added `iter_unique_events`, a lazy dedupe that keeps only the idempotency keys it has seen. `dedupe_events` still returns a list, now built on top of it.\n- `meterbill/events/reader.py`, `meterbill/events/__init__.py`: I added `stream_events(path)`, which yields events from the JSONL file lazily. `read_events` is unchanged.\n- `meterbill/cli.py`: the invoice command now calls `stream_events` instead of `read_events`. Without that change the CLI would still have loaded the whole file into a list before rating.\n- `tests/test_rating.py`: I added a test that rates a one-shot generator of events.\n\n**Left undone**\n- Dedupe still holds a set of (tenant, idempotency key) pairs for the period. That is much smaller than holding the events, but it still grows with event count.\n- The new streaming path has no test of its own. The existing CLI tests exercise `stream_events` indirectly, and I didn't add a test for a malformed JSONL line partway through the file.\n- Validation errors for malformed lines now surface during rating rather than at load time. The CLI catches them either way, but the error comes later.\n- Tiered rating is untouched, as you asked.",
+ "diffstat": " meterbill/cli.py             |  4 ++--\n meterbill/events/__init__.py |  6 +++---\n meterbill/events/models.py   | 18 ++++++++++++------\n meterbill/events/reader.py   | 10 ++++++++++\n meterbill/rating/engine.py   | 19 +++++++++++++++----\n tests/test_rating.py         |  7 +++++++\n 6 files changed, 49 insertions(+), 15 deletions(-)\n",
+ "shortstat": "6 files changed, 49 insertions(+), 15 deletions(-)",
+ "usage": {
+  "input_tokens": 12,
+  "cache_creation_input_tokens": 13001,
+  "cache_read_input_tokens": 96570,
+  "output_tokens": 3584,
+  "output_tokens_details": {
+   "thinking_tokens": 576
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 13001,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 556,
+    "cache_read_input_tokens": 21039,
+    "cache_creation_input_tokens": 2451,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 2451
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 6,
+ "total_cost_usd": 0.097525,
+ "duration_ms": 25934,
+ "wall_s": 26.2,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 41%]\n........................................................................ [ 83%]\n.............................                                            [100%]\n173 passed in 0.17s",
+ "tree_dirty_after_pytest": ""
+}

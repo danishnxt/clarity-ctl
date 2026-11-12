@@ -1,0 +1,72 @@
+{
+ "at": "e24",
+ "task": "H1",
+ "arm": "clarity",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 49.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 22,
+  "cache_creation_input_tokens": 29991,
+  "cache_read_input_tokens": 305550,
+  "output_tokens": 6572,
+  "output_tokens_details": {
+   "thinking_tokens": 819
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 29991,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 462,
+    "cache_read_input_tokens": 39523,
+    "cache_creation_input_tokens": 730,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 730
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 11,
+ "total_cost_usd": 0.216283,
+ "is_error": false,
+ "result": "The ledger export now posts credit notes, and the full test suite passes (485 tests). The changes are not committed.\n\nEach credit note posts as a reversing entry. It debits the revenue account and `2200-<country>` tax payable, and credits `1200` for the gross. Credit notes fall in the month they were issued, the same as in the CSV export.\n\nRevenue goes to the account the original invoice line used, as your plan in #38 said, so a year-end remap of meters doesn't move it. To do that, invoice lines and credit-note lines now carry an optional `revenue_account`. It's set when the invoice is built and copied onto the credit-note lines.\n\nTwo choices of mine, both recorded as a `DECISION:` note on #38:\n- **Old invoices:** invoices built before this change have no recorded account. Their credit notes use the current meter mapping, with no migration.\n- **Missing `accounts.json`:** if it's absent when an invoice is built, the lines record no account and invoice creation still works. A malformed file still errors.\n\nThe main changes are in `meterbill/exports/ledger.py`, plus `meterbill/invoices/builder.py` and `meterbill/cli.py`. I added one test in `tests/test_ledger.py` covering the recorded-account case.\n\n`clarity-ctl start` wouldn't run because no repos are registered, so I closed #38 directly with an outcome rather than opening an epoch.",
+ "memory_changed": [
+  "AGENTS.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

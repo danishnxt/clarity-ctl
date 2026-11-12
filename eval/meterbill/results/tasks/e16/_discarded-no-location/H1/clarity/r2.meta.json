@@ -1,0 +1,73 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "clarity",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 62.7,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 34,
+  "cache_creation_input_tokens": 32583,
+  "cache_read_input_tokens": 529073,
+  "output_tokens": 7882,
+  "output_tokens_details": {
+   "thinking_tokens": 1046
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 32583,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 512,
+    "cache_read_input_tokens": 42430,
+    "cache_creation_input_tokens": 415,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 415
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 18,
+ "total_cost_usd": 0.2621273,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes, and the full suite passes (381 tests). I started and closed this as #38.\n\n- **What a credit note posts:** a credit of 1200 for the gross, plus a debit of the original revenue account and a debit of `2200-<country>` for each line. Zero-tax lines get no tax posting.\n- **Date and period:** the posting date is the credit note's issue date. The note falls in the period matching its issue month, the same rule the CSV export uses.\n- **Original revenue account:** `InvoiceLine` now has a `revenue_account` field. `build_invoice` fills it from the meter mapping, and the `invoice` command loads that mapping from `data/accounts.json` when the file exists. The field is saved in the invoice JSON and copied onto credit note lines when the note is issued, the way `tax_rate` already is. A year-end remap therefore doesn't change a reversal.\n- **Older invoices:** invoices built before this change have no recorded account. Their invoice postings still use the current mapping. A credit note against one makes the export fail with an error naming the line, instead of guessing an account.\n- **Open follow-up:** I didn't backfill existing invoice files, so credit notes on those will fail the export until someone does. That's now #40, and it needs accounting to say which mapping applied when each invoice was issued.\n\nI recorded the design as a `DECISION:` note on #38. Most of the change is in `meterbill/exports/ledger.py`, plus new tests in `tests/test_ledger.py` and `tests/test_cli.py`.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/038_2026-11-11__ledger-postings-for-credit/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

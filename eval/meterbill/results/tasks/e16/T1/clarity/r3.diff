@@ -1,0 +1,52 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..1f02c7c 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,14 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    # Local to this call and dropped on return (decision #7: no tax data is cached across runs).
++    tax_rates: dict[str, Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if country not in tax_rates:
++            tax_rates[country] = resolver.rate_for(tenant.id, country, issued)
++        rate = tax_rates[country]
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:
+diff --git a/tests/test_tax.py b/tests/test_tax.py
+index 1ce1a63..f54099b 100644
+--- a/tests/test_tax.py
++++ b/tests/test_tax.py
+@@ -43,3 +43,27 @@ def test_seed_data():
+     ]
+     assert r.rate_for("ACM", "DE", on) == 0
+ 
++
++
++def test_build_invoice_looks_up_each_country_once_per_call_and_never_across_calls(data_dir, catalog):
++    from conftest import event_record
++    from meterbill.events import parse_event
++    from meterbill.invoices import build_invoice
++    from meterbill.period import Period
++
++    calls = []
++
++    class Counting(TaxResolver):
++        def rate_for(self, tenant_id, country, on_date):
++            calls.append(country)
++            return super().rate_for(tenant_id, country, on_date)
++
++    events = [parse_event(event_record(tenant_id="NWD", quantity="1", idempotency_key=f"k{i}"))
++              for i in range(5)]
++    resolver = Counting(data_dir)
++    period, issued = Period.parse("2026-10"), date(2026, 10, 15)
++    first = build_invoice("NWD", period, events, catalog, issued, resolver)
++    assert len(first.lines) >= 1 and len(calls) == len({l.country for l in first.lines})
++    n = len(calls)
++    build_invoice("NWD", period, events, catalog, issued, resolver)
++    assert len(calls) == 2 * n  # nothing carried over to the next call

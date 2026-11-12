@@ -1,0 +1,72 @@
+{
+ "at": "e16",
+ "task": "T1",
+ "arm": "nothing",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 20.7,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 14,
+  "cache_creation_input_tokens": 12484,
+  "cache_read_input_tokens": 123277,
+  "output_tokens": 2151,
+  "output_tokens_details": {
+   "thinking_tokens": 361
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 12484,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 496,
+    "cache_read_input_tokens": 22768,
+    "cache_creation_input_tokens": 500,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 500
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 7,
+ "total_cost_usd": 0.0838017,
+ "is_error": false,
+ "result": "Invoicing should now be much faster, but I didn't time it. I don't have October's event data here, so I couldn't reproduce the 50 seconds. The existing 376 tests pass.\n\n**Cause:** `build_invoice` called `TaxResolver.rate_for` once for every invoice line. Each call re-read and re-parsed `tax_rates.json` and `tax_overrides.json` from disk, so a tenant with thousands of lines did thousands of file reads.\n\n**Fix:** in `meterbill/invoices/builder.py`, `build_invoice` now keeps a small cache of tax rates by country for the duration of one invoice. The tenant and issue date don't change within an invoice, so country is the only thing that varies. Each country is now looked up once per invoice instead of once per line.\n\n**Behaviour is unchanged:**\n- **Rates:** the resolver logic is untouched, so the same rates come out.\n- **Errors:** a missing or invalid rate still raises `TaxError` on the same line as before, because only successful lookups are cached.\n- **Edited tax files:** `TaxResolver` still re-reads the files on every lookup, as its docstring says. A tax file edited between invoices is still picked up. Only a change during a single `build_invoice` call would be missed.\n\n**Not changed:** `quote.py` also does a lookup, but only one per quote, so it isn't a hotspot.\n\nIf the run is still slow after this, the next place to look is rating and event reading. Send me a profile of the October run and I can check.",
+ "memory_changed": [],
+ "prompt": "Northwind's monthly invoice run is slow again \u2014 about 50 seconds for October. Most of the\ntime is in tax lookups. Make invoicing fast. Behaviour must stay the same.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_large_multi_country_invoice_reads_each_tax_file_per_country_at_most_once": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_override_edited_between_invoices_is_used[new_resolver_each_time]": true,
+   "test_keep::test_override_edited_between_invoices_is_used[same_resolver_object]": true,
+   "test_keep::test_rates_edited_between_invoices_is_used": true,
+   "test_keep::test_each_line_tax_is_rounded_on_its_own_and_summed": true,
+   "test_keep::test_line_tax_rounds_half_even": true,
+   "test_keep::test_credit_note_after_rate_change_reverses_original_tax": true,
+   "test_keep::test_large_multi_country_invoice_taxes_every_line": true
+  },
+  "hidden_collected": 8
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

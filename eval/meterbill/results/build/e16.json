@@ -1,0 +1,55 @@
+{
+ "n": 16,
+ "title": "ledger export (invoices only)",
+ "commit_msg": "ledger export for invoices",
+ "prompt": "Accounting wants double-entry postings for every document. Add meterbill/exports/ledger.py and\n`python -m meterbill ledger --period 2026-10 --out postings.jsonl`. For each invoice:\n- debit accounts receivable (account 1200) with the gross total;\n- per line, credit the revenue account for that line's meter from data/accounts.json\n  ({\"meters\": {\"api_calls\": \"4010\", ...}, \"default\": \"4000\"}) with the line's net;\n- per line, credit tax payable \"2200-<country>\" with the line's tax.\nOne posting per line, never netted across lines; each posting carries document number, date,\naccount, debit, credit, currency. Postings for a document must balance; test it.\nOnly invoices today. Credit notes come next, and they need care: accounting remaps meters to\nnew revenue accounts at year end, and a credit note has to post to the accounts the original\ninvoice posted to, not to today's mapping. My plan for that is to record the revenue account\non each InvoiceLine when the invoice is built. Don't build any of that yet \u2014 just invoices,\nwith the current mapping.\n",
+ "report": "`python -m meterbill ledger --period 2026-10 --out postings.jsonl` now writes the invoice postings. The full suite passes (376 tests).\n\n**What I changed**\n- `meterbill/exports/ledger.py` (new) builds the postings and writes the JSONL file.\n  - Each finalized invoice in the period gets one debit to 1200 for the gross total. Each line gets a revenue credit for its net, and a credit to `2200-<country>` for its tax. Nothing is netted across lines.\n  - Each posting carries `document_number`, `date`, `account`, `debit`, `credit` and `currency`. Amounts are decimal strings with the currency's exponent, and the unused side is `\"0.00\"`.\n  - `date` is the invoice's issue date. Draft invoices and credit notes are skipped.\n- `data/accounts.json` (new) holds the meter-to-account map. The meters are `api_calls`, `platform_fee` and `storage_gb`. I made up the account numbers 4010, 4020 and 4030 (default 4000), so please replace them with accounting's real ones.\n- `meterbill/exports/__init__.py` exports the new names.\n- `meterbill/cli.py` has the new `ledger` subcommand. `--documents-dir` defaults the same way as for `export`, and `--data-dir` is where `accounts.json` is read from.\n- `tests/test_ledger.py` (new) checks that each document balances, including in JPY and KWD. It also covers the per-line postings, field formats, draft and period filtering, account-file validation, and the CLI.\n\n**Decisions you may want to change**\n- A line with zero tax gets no tax posting, because it would carry no amount. Say so if accounting wants explicit zero postings.\n- A line with non-zero tax and no country is an error, since there's no tax account to post to.\n\n**Not done**\n- Credit notes, as you asked. `InvoiceLine` has no revenue-account field yet, so nothing is stored for that.",
+ "diffstat": " data/accounts.json            |   8 +++\n meterbill/cli.py              |  24 ++++++++-\n meterbill/exports/__init__.py |   8 ++-\n meterbill/exports/ledger.py   | 114 ++++++++++++++++++++++++++++++++++++++++++\n tests/test_ledger.py          |  95 +++++++++++++++++++++++++++++++++++\n 5 files changed, 247 insertions(+), 2 deletions(-)\n",
+ "shortstat": "5 files changed, 247 insertions(+), 2 deletions(-)",
+ "usage": {
+  "input_tokens": 10,
+  "cache_creation_input_tokens": 22764,
+  "cache_read_input_tokens": 95637,
+  "output_tokens": 6122,
+  "output_tokens_details": {
+   "thinking_tokens": 440
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 22764,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 658,
+    "cache_read_input_tokens": 28555,
+    "cache_creation_input_tokens": 4698,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 4698
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 5,
+ "total_cost_usd": 0.1618597,
+ "duration_ms": 38293,
+ "wall_s": 38.6,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 19%]\n........................................................................ [ 38%]\n........................................................................ [ 57%]\n........................................................................ [ 76%]\n........................................................................ [ 95%]\n................                                                         [100%]\n376 passed in 0.40s",
+ "tree_dirty_after_pytest": ""
+}

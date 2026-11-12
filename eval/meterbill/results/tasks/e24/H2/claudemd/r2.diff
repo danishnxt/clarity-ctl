@@ -1,0 +1,218 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..de97af6 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -24,6 +24,7 @@ from meterbill.invoices import (
+     InvoiceStoreError,
+     SequenceError,
+     SequenceStore,
++    migrate_sequence_file,
+     build_invoice,
+     finalize_invoice,
+     invoice_from_json,
+@@ -585,7 +586,9 @@ def _run_credit(args: argparse.Namespace) -> int:
+     try:
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()
+         invoice = invoice_from_json(Path(args.invoice).read_text(encoding="utf-8"))
+-        store = SequenceStore(Path(args.data_dir) / CREDIT_SEQUENCE_FILE, CREDIT_PREFIX)
++        seq_path = Path(args.data_dir) / CREDIT_SEQUENCE_FILE
++        migrate_sequence_file(seq_path, "MBDE")  # old per-tenant layout -> MBDE
++        store = SequenceStore(seq_path, CREDIT_PREFIX)
+         note = issue_credit_note(
+             invoice, args.line, reason=args.reason, store=store, issue_date=issue_date
+         )
+diff --git a/meterbill/credits/issue.py b/meterbill/credits/issue.py
+index 0cd0077..acefa9b 100644
+--- a/meterbill/credits/issue.py
++++ b/meterbill/credits/issue.py
+@@ -26,7 +26,8 @@ def issue_credit_note(
+     ``lines`` holds 1-based positions on the invoice. Each credited line takes
+     its amount, tax rate and tax amount from the invoice line itself and
+     negates them; no rate is looked up. ``store`` is the credit note sequence;
+-    it advances only after every check has passed.
++    it advances only after every check has passed. The note takes the
++    entity of the invoice it credits (not the tenant's current entity).
+     """
+     if invoice.status is not InvoiceStatus.FINALIZED or not invoice.number:
+         raise CreditError("only a finalized invoice can be credited")
+@@ -57,9 +58,10 @@ def issue_credit_note(
+         )
+         for n in selected
+     )
+-    number = store.next_number(invoice.tenant_id, issued.year)
++    number = store.next_number(invoice.tenant_id, issued.year, invoice.entity)
+     return CreditNote(
+         number=number,
++        entity=invoice.entity,
+         invoice_number=invoice.number,
+         tenant_id=invoice.tenant_id,
+         tenant_name=invoice.tenant_name,
+diff --git a/meterbill/credits/models.py b/meterbill/credits/models.py
+index ea02abb..ce52c9e 100644
+--- a/meterbill/credits/models.py
++++ b/meterbill/credits/models.py
+@@ -31,6 +31,7 @@ class CreditNote:
+     reason: str
+     issue_date: date
+     lines: tuple[CreditNoteLine, ...]
++    entity: str = "MBDE"  # entity of the credited invoice; part of the number
+     subtotal: Money = field(init=False)
+     tax_total: Money = field(init=False)
+     total: Money = field(init=False)
+diff --git a/meterbill/credits/serialization.py b/meterbill/credits/serialization.py
+index 2cc9fb1..4583a60 100644
+--- a/meterbill/credits/serialization.py
++++ b/meterbill/credits/serialization.py
+@@ -19,6 +19,7 @@ def credit_note_to_dict(note: CreditNote) -> dict[str, Any]:
+     return {
+         "type": "credit_note",
+         "number": note.number,
++        "entity": note.entity,
+         "invoice_number": note.invoice_number,
+         "tenant_id": note.tenant_id,
+         "tenant_name": note.tenant_name,
+@@ -80,6 +81,7 @@ def credit_note_from_dict(data: Any) -> CreditNote:
+             reason=data["reason"],
+             issue_date=date.fromisoformat(data["issue_date"]),
+             lines=lines,
++            entity=data.get("entity", "MBDE"),
+         )
+         expected = (data["subtotal"], data["tax_total"], data["total"])
+     except (KeyError, TypeError, AttributeError) as exc:
+diff --git a/meterbill/invoices/__init__.py b/meterbill/invoices/__init__.py
+index aa706e0..526735c 100644
+--- a/meterbill/invoices/__init__.py
++++ b/meterbill/invoices/__init__.py
+@@ -4,10 +4,10 @@ from meterbill.invoices.serialization import (
+     invoice_from_dict, invoice_from_json, invoice_to_dict, invoice_to_json,
+ )
+ from meterbill.invoices.store import InvoiceStore, InvoiceStoreError
+-from meterbill.invoices.sequences import SequenceError, SequenceStore, format_invoice_number
++from meterbill.invoices.sequences import SequenceError, SequenceStore, format_invoice_number, migrate_sequence_file
+ 
+ __all__ = [
+     "Invoice", "InvoiceLine", "InvoiceStatus", "build_invoice", "finalize_invoice", "void_invoice", "InvoiceStore", "InvoiceStoreError",
+-    "SequenceError", "SequenceStore", "format_invoice_number",
++    "SequenceError", "SequenceStore", "migrate_sequence_file", "format_invoice_number",
+     "invoice_from_dict", "invoice_from_json", "invoice_to_dict", "invoice_to_json",
+ ]
+diff --git a/meterbill/invoices/sequences.py b/meterbill/invoices/sequences.py
+index 6a2a3ae..67aefcf 100644
+--- a/meterbill/invoices/sequences.py
++++ b/meterbill/invoices/sequences.py
+@@ -123,3 +123,40 @@ class SequenceStore:
+                     os.unlink(tmp)
+                 raise
+             return number
++
++
++def migrate_sequence_file(path: str | Path, entity: str) -> bool:
++    """Rewrite an old-layout counter file under ``entity``; True if it changed.
++
++    Takes the same lock as ``next_number`` and replaces the file atomically.
++    Missing, empty or already migrated files are left alone.
++    """
++    path = Path(path)
++    if not path.exists():
++        return False
++    lock_path = path.with_name(path.name + ".lock")
++    with open(lock_path, "w") as lock:
++        fcntl.flock(lock, fcntl.LOCK_EX)
++        try:
++            text = path.read_text(encoding="utf-8")
++            data = json.loads(text) if text.strip() else {}
++        except json.JSONDecodeError as exc:
++            raise SequenceError(f"{path} is not valid JSON: {exc.msg}") from None
++        if not isinstance(data, dict):
++            raise SequenceError(f"{path} has an invalid structure")
++        migrated = migrate_to_entity_sequences(data, entity)
++        if migrated is data:
++            return False
++        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
++        try:
++            with os.fdopen(fd, "w", encoding="utf-8") as handle:
++                json.dump(migrated, handle, indent=2, sort_keys=True)
++                handle.write("\n")
++                handle.flush()
++                os.fsync(handle.fileno())
++            os.replace(tmp, path)
++        except BaseException:
++            if os.path.exists(tmp):
++                os.unlink(tmp)
++            raise
++        return True
+diff --git a/tests/test_credits.py b/tests/test_credits.py
+index 709391c..1251b78 100644
+--- a/tests/test_credits.py
++++ b/tests/test_credits.py
+@@ -43,7 +43,7 @@ def test_bad_json_rejected(invoice):
+ def test_whole_invoice_reverses_exactly(invoice, tmp_path):
+     store = SequenceStore(tmp_path / "cn.json", "CN")
+     note = issue_credit_note(invoice, reason="dispute", store=store, issue_date=date(2027, 1, 5))
+-    assert note.number == "CN-NWD-2027-00001"
++    assert note.number == "CN-MBDE-NWD-2027-00001"
+     assert note.subtotal == -invoice.subtotal and note.tax_total == -invoice.tax_total
+     assert note.total == -invoice.total
+ 
+@@ -70,7 +70,7 @@ def test_selected_lines_and_gapless_sequence(invoice, tmp_path):
+     with pytest.raises(CreditError):
+         issue_credit_note(invoice, reason=" ", store=store)
+     again = issue_credit_note(invoice, [1], reason="r", store=store, issue_date=date(2026, 12, 2))
+-    assert again.number == "CN-NWD-2026-00002"
++    assert again.number == "CN-MBDE-NWD-2026-00002"
+ 
+ 
+ def test_draft_invoice_rejected(invoice, tmp_path):
+@@ -91,7 +91,51 @@ def test_cli_end_to_end(data_dir, write_events, tmp_path, capsys):
+     args = ["credit", "--invoice", str(path), "--reason", "oops", "--data-dir", str(data_dir),
+             "--issue-date", "2026-11-03"]
+     assert main(args + ["--line", "1"]) == 0
+-    assert "CN-NWD-2026-00001" in capsys.readouterr().out
++    assert "CN-MBDE-NWD-2026-00001" in capsys.readouterr().out
+     assert json.loads((data_dir / "sequences.json").read_text()) == {"MBDE": {"NWD": {"2026": 1}}}
+     assert main(args + ["--line", "9"]) == 1
+     assert "error:" in capsys.readouterr().err
++    assert json.loads((data_dir / "credit_sequences.json").read_text()) == {
++        "MBDE": {"NWD": {"2026": 1}}}
++
++
++def test_note_takes_entity_of_invoice_not_tenant(invoice, tmp_path):
++    from dataclasses import replace
++
++    us = replace(invoice, entity="MBUS")  # tenant has since moved to MBDE; invoice stays MBUS
++    store = SequenceStore(tmp_path / "cn.json", "CN")
++    a = issue_credit_note(us, [1], reason="r", store=store, issue_date=date(2026, 12, 1))
++    b = issue_credit_note(invoice, [1], reason="r", store=store, issue_date=date(2026, 12, 1))
++    c = issue_credit_note(us, [1], reason="r", store=store, issue_date=date(2026, 12, 1))
++    assert (a.number, b.number, c.number) == (
++        "CN-MBUS-NWD-2026-00001", "CN-MBDE-NWD-2026-00001", "CN-MBUS-NWD-2026-00002")
++    assert a.entity == "MBUS"
++    assert json.loads((tmp_path / "cn.json").read_text()) == {
++        "MBUS": {"NWD": {"2026": 2}}, "MBDE": {"NWD": {"2026": 1}}}
++
++
++def test_entity_round_trips_and_old_docs_load_as_mbde(invoice, tmp_path):
++    from dataclasses import replace
++    from meterbill.credits import credit_note_from_dict, credit_note_to_dict
++
++    store = SequenceStore(tmp_path / "cn.json", "CN")
++    note = issue_credit_note(replace(invoice, entity="MBUS"), [1], reason="r", store=store)
++    assert credit_note_from_dict(credit_note_to_dict(note)) == note
++    old = credit_note_to_dict(note)
++    del old["entity"]
++    assert credit_note_from_dict(old).entity == "MBDE"
++
++
++def test_cli_migrates_old_credit_sequence_file(data_dir, write_events, tmp_path, capsys):
++    events = write_events(event_record())
++    assert main(["invoice", "--tenant", "NWD", "--period", "2026-10", "--events", str(events),
++                 "--data-dir", str(data_dir), "--finalize", "--issue-date", "2026-11-02",
++                 "--json"]) == 0
++    path = tmp_path / "inv.json"
++    path.write_text(capsys.readouterr().out)
++    (data_dir / "credit_sequences.json").write_text('{"NWD": {"2026": 6}}')
++    assert main(["credit", "--invoice", str(path), "--reason", "x", "--data-dir", str(data_dir),
++                 "--issue-date", "2026-11-03"]) == 0
++    assert "CN-MBDE-NWD-2026-00007" in capsys.readouterr().out
++    assert json.loads((data_dir / "credit_sequences.json").read_text()) == {
++        "MBDE": {"NWD": {"2026": 7}}}

@@ -1,0 +1,68 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..453b394 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -168,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
+         p.add_argument("--date", help="rate date YYYY-MM-DD (default: today)")
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory with fx_rates.json")
++    pl = sub.add_parser("plans", help="inspect the plan catalog")
++    pl_sub = pl.add_subparsers(dest="plans_command", required=True)
++    pl_list = pl_sub.add_parser("list", help="list the plans in plans.json")
++    pl_list.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                         help="directory with plans.json")
+     qt = sub.add_parser("quote", help="price a plan or one meter from quantities, without events")
+     qt.add_argument("--plan", required=True, help="plan id, e.g. growth")
+     qt.add_argument("--meter", help="quote a single meter of the plan (with --quantity)")
+@@ -202,6 +207,25 @@ def _run_quote(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_plans(args: argparse.Namespace) -> int:
++    try:
++        catalog = load_catalog(args.data_dir)
++    except (ValueError, OSError, CatalogError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    rows = []
++    for plan_id in sorted(catalog.plans):
++        plan = catalog.plans[plan_id]
++        models = {c.model.value for c in plan.components}
++        model = models.pop() if len(models) == 1 else ("mixed" if models else "-")
++        rows.append((plan.id, plan.name, model, plan.currency))
++    header = ("ID", "NAME", "MODEL", "CURRENCY")
++    widths = [max(len(r[i]) for r in [header, *rows]) for i in range(4)]
++    for row in [header, *rows]:
++        print("  ".join(f"{c:<{w}}" for c, w in zip(row, widths)))
++    return 0
++
++
+ def _run_fx(args: argparse.Namespace) -> int:
+     try:
+         on_date = date.fromisoformat(args.date) if args.date else date.today()
+@@ -355,6 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_export(args)
+     if args.command == "ledger":
+         return _run_ledger(args)
++    if args.command == "plans":
++        return _run_plans(args)
+     if args.command == "fx":
+         return _run_fx(args)
+     if args.command == "quote":
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 005321c..1a387cd 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -83,3 +83,12 @@ def test_missing_required_args_exits_2():
+     proc = subprocess.run([sys.executable, "-m", "meterbill", "invoice"], cwd=ROOT,
+                           capture_output=True, text=True)
+     assert proc.returncode == 2
++
++
++def test_plans_list(data_dir, capsys):
++    assert main(["plans", "list", "--data-dir", str(data_dir)]) == 0
++    lines = capsys.readouterr().out.splitlines()
++    assert lines[0].split() == ["ID", "NAME", "MODEL", "CURRENCY"]
++    ids = [line.split("  ")[0].strip() for line in lines[1:]]
++    assert ids and ids == sorted(ids)
++    assert len({len(line) for line in lines}) == 1  # padded to the widest value

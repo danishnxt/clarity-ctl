@@ -1,0 +1,55 @@
+{
+ "n": 24,
+ "title": "legal entities (invoices only)",
+ "commit_msg": "legal entities: per-entity invoice numbering",
+ "prompt": "We now bill from two companies: data/entities.json with MBDE (Germany, EUR) and MBUS (US,\nUSD); each tenant gets an entity field (default MBDE). Invoice numbers become\nINV-<ENTITY>-<TENANT>-<YYYY>-<seq>, gapless per entity, tenant and year; existing numbers\nstay as they are. Do invoices today, with tests, and migrate data/sequences.json.\nCredit notes are not done yet. When they are: a credit note takes the entity of the invoice it\ncredits, even if the tenant has since moved to another entity, and its numbers are\nCN-<ENTITY>-<TENANT>-<YYYY>-<seq> with their own gapless sequence per entity, tenant and year,\nseparate from the invoice sequence. Don't build that\npart yet.\nAlso for the payment allocation later: a payment in a different currency from the invoice is\nconverted at the payment date's rate, and if what's left open after it is under 0.50 in the\ninvoice currency, write it off to account 6900 instead of leaving it open.\n",
+ "report": "Invoices now carry the issuing entity, and invoice numbers are `INV-<ENTITY>-<TENANT>-<YYYY>-<seq>`, gapless per entity, tenant and year. The full suite passes (484 tests).\n\n**Changes**\n- **`data/entities.json`** (new): MBDE (DE, EUR) and MBUS (US, USD).\n- **`meterbill/plans/catalog.py`, `plans/__init__.py`**:\n  - There is a new `Entity` type and `Catalog.entities`.\n  - `Tenant.entity` defaults to `MBDE`.\n  - `load_catalog` now requires `entities.json`. It rejects a tenant that names an unknown entity, and rejects invalid or duplicate entity records.\n- **`meterbill/invoices/models.py`, `serialization.py`, `builder.py`**:\n  - `Invoice.entity` is set from the tenant when the draft is built, and `finalize_invoice` numbers with the invoice's own entity. A draft therefore keeps its entity even if the tenant moves before finalizing.\n  - Stored invoices without an `entity` field load as `MBDE`.\n- **`meterbill/invoices/sequences.py`**:\n  - Counters are stored as `{ENTITY: {TENANT: {YEAR: n}}}` when an entity is passed.\n  - The `format_invoice_number` signature changed to `(entity, tenant_id, year, seq)`.\n  - `migrate_to_entity_sequences` moves old-layout counters under an entity.\n  - Calls without an entity keep the old format, so the existing credit-note code is untouched.\n- **`meterbill/invoices/store.py`**: the invoice-number pattern accepts both the old and new formats, so existing numbers still load, show and void.\n- **`data/sequences.json`**: it was `{}`, which is already valid in the new layout, so it needed no change. The tests check this.\n- **Tests**:\n  - The new `tests/test_entities.py` covers entity loading and validation, MBUS numbering, independent sequences per entity, a tenant moving entity, drafts keeping their entity, and the migration.\n  - I updated existing tests for the new number format and sequence layout, and added `entities.json` to the test fixtures.\n\n**Left undone, as asked**\n- **Credit-note rules:** the entity inherited from the invoice, `CN-<ENTITY>-\u2026` numbers, and the entity-scoped credit sequence.\n- **Payment allocation:** the conversion at the payment date's rate, and the write-off of anything under 0.50 to account 6900.\n\n**Credit notes already exist**\nYou said credit notes aren't done, but the repo already has a `credits` module and a `credit` CLI command. They still produce `CN-<TENANT>-<YYYY>-<seq>` with no entity. I left that code as it was.\n\n**Existing counters**\nBecause `sequences.json` is empty, no counters carried over. If it had held counters, the migration would put them under `MBDE` and the new numbers would continue from them. If you'd rather restart the sequence at 1 under the entity format, that is a small change.",
+ "diffstat": " data/entities.json                  |   6 ++\n meterbill/invoices/builder.py       |   5 +-\n meterbill/invoices/models.py        |   1 +\n meterbill/invoices/sequences.py     |  79 ++++++++++++++------\n meterbill/invoices/serialization.py |   2 +\n meterbill/invoices/store.py         |   2 +-\n meterbill/plans/__init__.py         |   4 +-\n meterbill/plans/catalog.py          |  56 ++++++++++++++-\n tests/conftest.py                   |   2 +-\n tests/test_cli.py                   |   4 +-\n tests/test_credits.py               |   2 +-\n tests/test_entities.py              | 139 ++++++++++++++++++++++++++++++++++++\n tests/test_export.py                |  10 +--\n tests/test_invoice_lifecycle.py     |  48 ++++++-------\n tests/test_invoices.py              |  34 ++++-----\n tests/test_ledger.py                |   4 +-\n tests/test_outbox.py                |   6 +-\n tests/test_payments.py              |   4 +-\n tests/test_plans.py                 |   2 +\n tests/test_wallets.py               |   8 +--\n 20 files changed, 329 insertions(+), 89 deletions(-)\n",
+ "shortstat": "20 files changed, 329 insertions(+), 89 deletions(-)",
+ "usage": {
+  "input_tokens": 28,
+  "cache_creation_input_tokens": 63269,
+  "cache_read_input_tokens": 656143,
+  "output_tokens": 15941,
+  "output_tokens_details": {
+   "thinking_tokens": 3596
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 63269,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 1165,
+    "cache_read_input_tokens": 70880,
+    "cache_creation_input_tokens": 2933,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 2933
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 15,
+ "total_cost_usd": 0.47815630000000003,
+ "duration_ms": 122022,
+ "wall_s": 122.4,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 14%]\n........................................................................ [ 29%]\n........................................................................ [ 44%]\n........................................................................ [ 59%]\n........................................................................ [ 74%]\n........................................................................ [ 89%]\n....................................................                     [100%]\n484 passed in 0.91s",
+ "tree_dirty_after_pytest": ""
+}

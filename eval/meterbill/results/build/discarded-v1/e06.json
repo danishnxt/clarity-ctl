@@ -1,0 +1,55 @@
+{
+ "n": 6,
+ "title": "credit notes and refunds",
+ "commit_msg": "credit notes",
+ "prompt": "Add credit notes: meterbill/credits/. issue_credit_note(invoice, lines=None, reason) refunds\na whole invoice or selected lines. A credit note line reverses the original line's amount and\nits tax using the tax_rate stored on the original InvoiceLine \u2014 never look the rate up again.\nGermany's rate changes don't matter here, but last January FR's did, and a refund issued\nafter the change must reverse exactly what was charged, or the VAT return won't balance.\nCredit notes are numbered CN-<TENANTID>-<YYYY>-<seq>, gapless like invoices, own sequence.\nAdd `python -m meterbill credit --invoice <file.json> [--line N ...] --reason ...`.\nInvoices need to serialize to JSON and back for this; add that.\n",
+ "report": "Credit notes, the `credit` command and invoice JSON round-tripping are in. The full suite passes (166 tests, including the new ones in `tests/test_credits.py`).\n\n**What changed**\n- **`meterbill/credits/models.py`** (new): `CreditNote` and `CreditNoteLine`. Credit amounts are negative, and the subtotal, tax and total are computed from the lines.\n- **`meterbill/credits/issue.py`** (new): `issue_credit_note(invoice, lines=None, *, reason, store, issue_date=None)`.\n  - Each credit line is the exact negation of the original line's `amount` and `tax_amount`, and carries the original line's `tax_rate`. There is no tax lookup, so a refund after a rate change reverses exactly what was charged.\n  - `lines` are 1-based positions, and `None` credits every line.\n  - Draft invoices, an empty reason, and bad, duplicate or empty line selections all raise `CreditNoteError`. This happens before a number is taken, so the sequence stays gapless.\n  - `credit_note_store(path)` returns a separate `CN` sequence store.\n- **`meterbill/credits/__init__.py`** (new): exports the above.\n- **`meterbill/invoices/sequences.py`**: `SequenceStore` takes an optional `prefix` (default `INV`), and a new `format_number` does the formatting. Invoice numbering is unchanged. Credit numbers look like `CN-NWD-2026-00001`, and the year comes from the credit note's issue date.\n- **`meterbill/invoices/serialization.py`** (new) and **`meterbill/invoices/__init__.py`**: `invoice_to_json`, `invoice_from_json` and the dict variants. Money is stored as minor units, and decimals as strings, so nothing is lost in the round trip. Malformed input raises `ValueError`.\n- **`meterbill/cli.py`**:\n  - New `credit --invoice FILE [--line N ...] --reason ... [--data-dir] [--issue-date]`. It keeps its own sequence in `credit_sequences.json` in the data directory.\n  - I added `--json-out FILE` to `invoice`, because otherwise nothing could produce the invoice file that `credit` reads.\n\n**Not done**\n- Nothing records which lines have already been credited, so the same invoice or line can be credited twice. Preventing that needs a persisted credit-note ledger, which I did not add.\n- Credit notes themselves are only printed, not saved or serialized to JSON.\n- Credit lines are whole-line only, with no partial quantities or amounts.",
+ "diffstat": " meterbill/cli.py                    |  51 ++++++++++++++++++\n meterbill/credits/__init__.py       |   6 +++\n meterbill/credits/issue.py          |  74 ++++++++++++++++++++++++++\n meterbill/credits/models.py         |  45 ++++++++++++++++\n meterbill/invoices/__init__.py      |  16 +++++-\n meterbill/invoices/sequences.py     |  14 +++--\n meterbill/invoices/serialization.py | 100 ++++++++++++++++++++++++++++++++++\n tests/test_credits.py               | 103 ++++++++++++++++++++++++++++++++++++\n 8 files changed, 403 insertions(+), 6 deletions(-)\n",
+ "shortstat": "8 files changed, 403 insertions(+), 6 deletions(-)",
+ "usage": {
+  "input_tokens": 14,
+  "cache_creation_input_tokens": 24808,
+  "cache_read_input_tokens": 159169,
+  "output_tokens": 10420,
+  "output_tokens_details": {
+   "thinking_tokens": 940
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 24808,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 876,
+    "cache_read_input_tokens": 33229,
+    "cache_creation_input_tokens": 2788,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 2788
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 8,
+ "total_cost_usd": 0.21937689999999999,
+ "duration_ms": 63047,
+ "wall_s": 63.4,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 43%]\n........................................................................ [ 86%]\n......................                                                   [100%]\n166 passed in 0.16s",
+ "tree_dirty_after_pytest": ""
+}

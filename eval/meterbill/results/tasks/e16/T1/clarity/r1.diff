@@ -1,0 +1,54 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..ed3bb26 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,14 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    # Per-call memo only (decision #7): local, discarded on return, never shared.
++    tax_rates: dict[str, Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if country not in tax_rates:
++            tax_rates[country] = resolver.rate_for(tenant.id, country, issued)
++        rate = tax_rates[country]
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:
+diff --git a/tests/test_credits.py b/tests/test_credits.py
+index a9b95c6..7d9612f 100644
+--- a/tests/test_credits.py
++++ b/tests/test_credits.py
+@@ -95,3 +95,29 @@ def test_cli_end_to_end(data_dir, write_events, tmp_path, capsys):
+     assert json.loads((data_dir / "sequences.json").read_text()) == {"NWD": {"2026": 1}}
+     assert main(args + ["--line", "9"]) == 1
+     assert "error:" in capsys.readouterr().err
++
++
++def test_build_invoice_tax_lookup_memoized_per_call_only(catalog, data_dir, write_events):
++    from meterbill.events import read_events
++    from meterbill.tax import TaxResolver
++
++    calls = []
++
++    class Counting(TaxResolver):
++        def rate_for(self, tenant_id, country, on_date):
++            calls.append(country)
++            return super().rate_for(tenant_id, country, on_date)
++
++    def run():
++        events = read_events(write_events(
++            event_record(quantity="1"),
++            event_record(meter="storage_gb", quantity="1", idempotency_key="k2"),
++        ))
++        build_invoice("NWD", Period(2026, 10), events, catalog, date(2026, 11, 2),
++                      Counting(data_dir))
++
++    run()
++    first = len(calls)
++    assert first == len(set(calls))  # one lookup per country within a call
++    run()
++    assert len(calls) == 2 * first  # nothing carried over between calls

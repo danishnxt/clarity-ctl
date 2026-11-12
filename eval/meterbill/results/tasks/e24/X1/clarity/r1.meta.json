@@ -1,0 +1,77 @@
+{
+ "at": "e24",
+ "task": "X1",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 104.6,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 24,
+  "cache_creation_input_tokens": 44096,
+  "cache_read_input_tokens": 438877,
+  "output_tokens": 11525,
+  "output_tokens_details": {
+   "thinking_tokens": 2877
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 44096,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 657,
+    "cache_read_input_tokens": 53566,
+    "cache_creation_input_tokens": 792,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 792
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 13,
+ "total_cost_usd": 0.3355697,
+ "is_error": false,
+ "result": "`python -m meterbill purge --date YYYY-MM-DD [--dry-run] [--data-dir DIR]` is in place. All 492 tests pass, including 8 new ones in `tests/test_purge.py`. I haven't run it against real data, only the tests.\n\nI closed clarity #53 before the last test passed, because my first `sed` fix failed. The test is fixed now and the suite is green, so the close outcome is accurate. I didn't commit anything.\n\n**What it deletes**, following the retention decisions in #47 and #52:\n- **Rejects:** `rejects/<date>.jsonl` files dated more than 30 days before `--date`. Files with non-date names are ignored.\n- **Events:** a month file is deleted once `--date` is after the period end plus 25 months. The period end is the first day of the next month, so 2024-10 is kept through 2026-12-01 and deleted from 2026-12-02.\n\n**When events are never deleted:**\n- **Finalized invoice:** the period must have one. A void invoice doesn't count. Invoices are read from `data/invoices` and `data/documents`.\n- **Credit notes:** a credit note issued in the last 12 months protects the period of the invoice it credits. If that invoice can't be found, I keep all of that tenant's events.\n- **Non-UTC tenants:** month files are by UTC month, but a tenant with a timezone like Berlin also reads the neighbouring months. So the file is kept unless the periods before and after it also pass these checks.\n\n**Output:** stdout is only the data file paths, sorted, whether it deleted them or `--dry-run` only listed them. The `.idem` index (and any legacy `.seen`) beside each deleted month file is removed too, but not printed. It's removed before the data file, so a crash leaves a month file whose index just rebuilds.\n\nPurge takes no lock, so don't run it while an ingest or compaction is active on the same month (see #21).\n\nThe rules are recorded as a `DECISION:` note on #53.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/053_2026-11-11__build-retention-purge-rejects/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Storage costs are biting. Add `python -m meterbill purge --date YYYY-MM-DD [--dry-run]` that\ndeletes the stored data we no longer keep as of that date and prints the path of every file it\ndeletes (or would delete), sorted \u2014 data files only, not index files. Keep the event store's\nindexes consistent.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_old_files_are_deleted_and_recent_ones_kept": true,
+   "test_target::test_printed_paths_are_sorted_and_name_data_files_only": true,
+   "test_target::test_dry_run_prints_the_same_and_deletes_nothing": true,
+   "test_target::test_index_of_a_deleted_month_goes_with_it_and_other_indexes_stay": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_event_month_files_are_kept_for_25_months_after_the_period_ends": true,
+   "test_keep::test_reject_files_are_kept_for_30_days": true,
+   "test_keep::test_a_period_without_a_finalized_invoice_is_kept": true,
+   "test_keep::test_a_period_with_a_recent_credit_note_is_kept_and_an_old_one_does_not_protect": true,
+   "test_keep::test_invoices_and_credit_notes_are_never_deleted": true
+  },
+  "hidden_collected": 9
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

@@ -1,0 +1,55 @@
+{
+ "n": 8,
+ "title": "streaming aggregation (half done)",
+ "commit_msg": "streaming aggregation for flat and per-unit",
+ "prompt": "Big tenants are pushing memory: rating loads every event of the period into a list.\nChange rating to aggregate as it streams the JSONL \u2014 running totals per meter, never the full\nlist. Do flat and per_unit today. Leave tiered exactly as it is for now (it still collects\nquantities); I want to look at how tiers interact with the per-tier lines before we touch it.\nKeep the old list-based path working for tiered.\n",
+ "report": "Flat and per_unit rating now keeps only a running total per meter and reads the JSONL as a stream. Tiered is unchanged. The full suite passes (170 tests). I didn't add a test that checks the streaming behaviour itself.\n\n- **`meterbill/rating/engine.py`**: `rate_events` reads the events in one pass.\n  - Flat and per_unit meters add to a running `Decimal` total as each event arrives.\n  - Tiered meters still collect their quantities in a list and sum them afterwards. `_rate_tiers` and the tier labels are untouched, and the list-based path still works for tiered.\n- **`meterbill/events/models.py`**: new lazy `iter_unique_events`, which remembers only the `(tenant_id, idempotency_key)` pairs it has seen. `dedupe_events` is kept and now wraps it.\n- **`meterbill/events/__init__.py`**: exports `iter_unique_events` and `iter_events`.\n- **`meterbill/cli.py`**: the `invoice` command opens the file and passes `iter_events(handle)` to `build_invoice`. Before, it called `read_events`, which built the full list up front.\n\n**Memory:** each tenant's set of idempotency keys still grows with the number of events. It is far smaller than the events themselves, but it is not constant. Dropping it would mean changing how duplicates are detected, so I left it.\n\n**Error order:** a malformed JSONL line now raises while rating runs, not before. An unknown tenant or plan is therefore reported before a bad event line. The error messages are the same.\n\n**Not done:** tiered meters, as you asked. Since graduated tiers only need each meter's total quantity, the same running-total approach would probably work there, but I haven't looked at how it interacts with the per-tier lines.",
+ "diffstat": " meterbill/cli.py             |  8 ++++----\n meterbill/events/__init__.py |  6 +++---\n meterbill/events/models.py   | 18 ++++++++++++------\n meterbill/rating/engine.py   | 21 ++++++++++++++++-----\n 4 files changed, 35 insertions(+), 18 deletions(-)\n",
+ "shortstat": "4 files changed, 35 insertions(+), 18 deletions(-)",
+ "usage": {
+  "input_tokens": 16,
+  "cache_creation_input_tokens": 12885,
+  "cache_read_input_tokens": 148572,
+  "output_tokens": 3831,
+  "output_tokens_details": {
+   "thinking_tokens": 560
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 12885,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 594,
+    "cache_read_input_tokens": 23856,
+    "cache_creation_input_tokens": 238,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 238
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 9,
+ "total_cost_usd": 0.10473920000000002,
+ "duration_ms": 28351,
+ "wall_s": 28.7,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 42%]\n........................................................................ [ 84%]\n..........................                                               [100%]\n170 passed in 0.17s",
+ "tree_dirty_after_pytest": ""
+}

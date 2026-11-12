@@ -1,0 +1,66 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..e9e713f 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -177,9 +177,32 @@ def build_parser() -> argparse.ArgumentParser:
+     qt.add_argument("--date", help="tax rate date YYYY-MM-DD (default: today)")
+     qt.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory with plans and tax JSON files")
++    pl = sub.add_parser("plans", help="inspect the plan catalog")
++    pl_sub = pl.add_subparsers(dest="plans_command", required=True)
++    pl_list = pl_sub.add_parser("list", help="list the plans in plans.json")
++    pl_list.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                         help="directory with plans and tenants JSON files")
+     return parser
+ 
+ 
++def _run_plans(args: argparse.Namespace) -> int:
++    try:
++        catalog = load_catalog(args.data_dir)
++    except (ValueError, OSError) as exc:  # CatalogError is a ValueError
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    rows = [("ID", "NAME", "MODEL", "CURRENCY")]
++    for plan_id in sorted(catalog.plans):
++        plan = catalog.plans[plan_id]
++        models = {c.model.value for c in plan.components}
++        model = models.pop() if len(models) == 1 else "mixed"
++        rows.append((plan.id, plan.name, model, plan.currency))
++    widths = [max(len(r[i]) for r in rows) for i in range(4)]
++    for row in rows:
++        print("  ".join(f"{c:<{w}}" for c, w in zip(row, widths)).rstrip())
++    return 0
++
++
+ def _run_quote(args: argparse.Namespace) -> int:
+     try:
+         single = args.meter is not None or args.quantity is not None
+@@ -357,6 +380,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_ledger(args)
+     if args.command == "fx":
+         return _run_fx(args)
++    if args.command == "plans":
++        return _run_plans(args)
+     if args.command == "quote":
+         return _run_quote(args)
+     try:
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 005321c..9864ca4 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -83,3 +83,15 @@ def test_missing_required_args_exits_2():
+     proc = subprocess.run([sys.executable, "-m", "meterbill", "invoice"], cwd=ROOT,
+                           capture_output=True, text=True)
+     assert proc.returncode == 2
++
++
++def test_plans_list_sorted_aligned_table(capsys):
++    from meterbill.plans import load_catalog
++
++    assert main(["plans", "list"]) == 0
++    lines = capsys.readouterr().out.splitlines()
++    plans = load_catalog(ROOT / "data").plans
++    assert lines[0].split("  ")[0] == "ID" and lines[0].split() == ["ID", "NAME", "MODEL", "CURRENCY"]
++    assert [l.split("  ")[0].rstrip() for l in lines[1:]] == sorted(plans)
++    assert len(lines) == len(plans) + 1
++    assert all(l.index("  ") <= len("enterprise-jpy") for l in lines)

@@ -1,0 +1,71 @@
+{
+ "at": "e24",
+ "task": "H1",
+ "arm": "claudemd",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 81.0,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 26,
+  "cache_creation_input_tokens": 41745,
+  "cache_read_input_tokens": 512072,
+  "output_tokens": 9484,
+  "output_tokens_details": {
+   "thinking_tokens": 1144
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 41745,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 537,
+    "cache_read_input_tokens": 50910,
+    "cache_creation_input_tokens": 1097,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1097
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 13,
+ "total_cost_usd": 0.31307919999999995,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes. All 491 tests pass.\n\n**How credit notes post**\n- Each credit note produces a mirror of an invoice's postings. It credits 1200 (receivable) for the gross total. For each line it debits the revenue account and debits `2200-<country>` for the tax. Each note balances, including in JPY and KWD.\n- Credit notes are picked up by issue month, the same rule as the CSV export. They are dated on the issue date and sorted together with invoices.\n\n**Revenue accounts**\n- A credit note has to reverse the account the original invoice used, not today's mapping. So each invoice line now stores its `revenue_account`, set when the invoice is built.\n- `build_invoice` takes an optional `accounts` argument. The CLI passes it whenever `data/accounts.json` exists.\n- The stored account is saved in the invoice and credit note JSON. Credit notes copy it from the invoice line.\n- A test remaps the accounts after the invoice is built and checks that the credit note still posts to the original account.\n\n**Decision for you:** a credit note line against an invoice built before this change has no stored account. The ledger export stops with an error for it instead of guessing. The alternative is to backfill the account on those saved JSON files, using the mapping that applied when each invoice was issued. Say if you want a backfill step. Invoices without a stored account still post with the current mapping, as before.\n\nI updated `CLAUDE.md` to match (decisions, the open question above, and the test count). I didn't change the made-up account numbers 4010, 4020 and 4030 in `data/accounts.json`. Accounting still has to replace those.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

@@ -1,0 +1,55 @@
+{
+ "n": 22,
+ "title": "privacy scrub at ingest",
+ "commit_msg": "ingest: scrub personal data from event properties",
+ "prompt": "Privacy review findings. At ingest, drop these keys from event properties before storing:\nemail, ip, phone, user_agent, and any key starting with \"pii_\"; count drops per tenant in the\ningest summary. Add `events scrub --tenant T --period P` to apply the same to already-stored\nmonth files (atomic rewrite, like compaction). Tests.\nThe review also changed the retention plan for later: rejects are kept 30 days, not 90 \u2014 they\nhold raw rows we never accepted. Raw events stay at 25 months. And one hard rule: never delete\nevents of a period that has no finalized invoice yet, or that has a credit note issued in the\nlast 12 months, whatever their age.\n",
+ "report": "Ingest now drops the privacy keys from event properties, and `events scrub --tenant T --period P` removes them from stored month files. The full suite passes (457 tests).\n\n**What I changed**\n- **`meterbill/ingest/scrub.py` (new):**\n  - It has the key rule (`email`, `ip`, `phone`, `user_agent`, and any key starting with `pii_`) and `scrub_month`.\n  - `scrub_month` only rewrites lines that contain those keys. Other lines stay byte for byte, and event order doesn't change.\n  - The rewrite is atomic, using the same helper as compaction.\n  - The file isn't touched at all if nothing changed.\n  - It fails without changing anything on an invalid line, a missing file or a bad tenant id.\n  - The `.idem` index doesn't change, because the idempotency keys are the same.\n- **`meterbill/ingest/importer.py`:** Events are scrubbed before they are stored. `TenantCounts` has a new `scrubbed` field. It counts keys dropped from accepted events only, because duplicates aren't stored. `--check` reports it too.\n- **`meterbill/ingest/__init__.py`:** Exports `scrub_month` and `ScrubResult`.\n- **`meterbill/cli.py`:**\n  - The new `events scrub` subcommand prints how many keys were dropped and from how many events.\n  - The ingest summary table has a new `Scrubbed` column.\n- **Tests:**\n  - `tests/test_scrub.py` is new and covers ingest, dry run, the CLI table, and `scrub_month` including its failure cases.\n  - I changed two existing assertions in `tests/test_ingest.py` for the extra table column.\n\n**Left undone**\n- **Retention:** I didn't build anything for it. That covers the 30-day reject and 25-month raw-event periods, and the rule about periods with no finalized invoice or a recent credit note. You said that work comes later.\n- **Key matching:** It's exact and case-sensitive on top-level property keys. `Email` and nested keys are not dropped.\n- **Rejects log:** It still holds raw rows as submitted, so PII in rejected rows is kept. The review's change to the reject retention period is what covers that.",
+ "diffstat": " meterbill/cli.py             |  16 +++++--\n meterbill/ingest/__init__.py |   5 ++-\n meterbill/ingest/importer.py |  19 ++++++--\n meterbill/ingest/scrub.py    |  70 ++++++++++++++++++++++++++++++\n tests/test_ingest.py         |   4 +-\n tests/test_scrub.py          | 100 +++++++++++++++++++++++++++++++++++++++++++\n 6 files changed, 204 insertions(+), 10 deletions(-)\n",
+ "shortstat": "6 files changed, 204 insertions(+), 10 deletions(-)",
+ "usage": {
+  "input_tokens": 24,
+  "cache_creation_input_tokens": 29331,
+  "cache_read_input_tokens": 327801,
+  "output_tokens": 7402,
+  "output_tokens_details": {
+   "thinking_tokens": 822
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 29331,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 747,
+    "cache_read_input_tokens": 39671,
+    "cache_creation_input_tokens": 204,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 204
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 13,
+ "total_cost_usd": 0.22417209999999993,
+ "duration_ms": 57507,
+ "wall_s": 57.8,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 15%]\n........................................................................ [ 31%]\n........................................................................ [ 47%]\n........................................................................ [ 63%]\n........................................................................ [ 78%]\n........................................................................ [ 94%]\n.........................                                                [100%]\n457 passed in 0.79s",
+ "tree_dirty_after_pytest": ""
+}

@@ -1,0 +1,282 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9d6d4da..287623d 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -13,6 +13,7 @@ from meterbill.credits import (
+     issue_credit_note,
+ )
+ from meterbill.attribution import attribute, tier_totals
++from meterbill.dunning import due_reminders, format_reminder, level_for, reminder_mail
+ from meterbill.events import EventValidationError, iter_unique_events, stream_events
+ from meterbill.ingest import EventStore, collect_stats, compact_month, ingest_drop, scrub_month
+ from meterbill.fx import MAX_RATE_AGE_DAYS, FxConverter, FxError
+@@ -168,6 +169,11 @@ def build_parser() -> argparse.ArgumentParser:
+         p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                        help="directory with contacts.json; mail is queued in its outbox/ "
+                             "subdirectory")
++    dn = sub.add_parser("dunning", help="list (and optionally queue) payment reminders due on a date")
++    dn.add_argument("--date", required=True, help="YYYY-MM-DD")
++    dn.add_argument("--queue", action="store_true", help="also queue each reminder in the outbox")
++    dn.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
++                    help="directory holding invoices/, payments.jsonl, contacts.json, documents/")
+     pay = sub.add_parser("payments", help="record and list incoming payments")
+     pay_sub = pay.add_subparsers(dest="payments_command", required=True)
+     pr = pay_sub.add_parser("record", help="record a payment, matched by invoice reference")
+@@ -496,6 +502,33 @@ def _run_invoices(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _run_dunning(args: argparse.Namespace) -> int:
++    try:
++        data_dir = Path(args.data_dir)
++        on_date = date.fromisoformat(args.date)
++        store = InvoiceStore(data_dir / "invoices")
++        catalog = load_catalog(data_dir)
++        invoices = [i for t in sorted(catalog.tenants)
++                    for i in store.list(t, InvoiceStatus.FINALIZED)]
++        # Only tenants with an invoice reaching a reminder day need a contact.
++        contacts = {i.tenant_id: load_contact(data_dir, i.tenant_id)
++                    for i in invoices if level_for(i, on_date) is not None}
++        reminders = due_reminders(
++            invoices, PaymentStore(data_dir / PAYMENTS_FILE).load(), _credit_notes(data_dir),
++            contacts, FxConverter(data_dir), on_date)
++        for r in reminders:
++            print(format_reminder(r))
++        if args.queue:
++            outbox = Outbox(data_dir / OUTBOX_DIR)
++            for r in reminders:
++                subject, body = reminder_mail(r)
++                outbox.queue_mail(r.to, r.cc, subject, body, "reminder", r.invoice.number)
++    except (ValueError, OSError, CatalogError, FxError, InvoiceStoreError, PaymentError) as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return 1
++    return 0
++
++
+ def _run_outbox(args: argparse.Namespace) -> int:
+     try:
+         outbox = Outbox(Path(args.data_dir) / OUTBOX_DIR)
+@@ -681,6 +714,8 @@ def main(argv: Sequence[str] | None = None) -> int:
+     args = build_parser().parse_args(argv)
+     if args.command == "invoices":
+         return _run_invoices(args)
++    if args.command == "dunning":
++        return _run_dunning(args)
+     if args.command == "outbox":
+         return _run_outbox(args)
+     if args.command == "payments":
+diff --git a/meterbill/dunning.py b/meterbill/dunning.py
+new file mode 100644
+index 0000000..5394448
+--- /dev/null
++++ b/meterbill/dunning.py
+@@ -0,0 +1,100 @@
++"""Payment reminders: which finalized, unpaid invoices get a reminder on a given date."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import date, timedelta
++from decimal import Decimal
++from pathlib import Path
++
++from meterbill.credits import CreditNote
++from meterbill.fx import FxConverter
++from meterbill.invoices import Invoice, InvoiceStatus
++from meterbill.money import Money
++from meterbill.outbox import Contact
++from meterbill.payments import Payment, balance_for
++
++# Days after the due date, per level.
++LEVEL_DAYS = {1: 7, 2: 28, 3: 35}
++FINAL_NOTICE_CC = "finance@meterbill.example"
++MIN_OPEN_EUR = Money.from_major("5.00", "EUR")
++CREDIT_NOTE_QUIET_DAYS = 30
++
++
++@dataclass(frozen=True, slots=True)
++class Reminder:
++    invoice: Invoice
++    level: int
++    open_amount: Money
++    to: str
++    cc: tuple[str, ...]
++
++
++def level_for(invoice: Invoice, on_date: date) -> int | None:
++    """Level whose day is exactly ``on_date``, or None."""
++    if invoice.due_date is None:
++        return None
++    for level, days in LEVEL_DAYS.items():
++        if invoice.due_date + timedelta(days=days) == on_date:
++            return level
++    return None
++
++
++def _recent_credit_note(invoice: Invoice, notes: list[CreditNote], on_date: date) -> bool:
++    oldest = on_date - timedelta(days=CREDIT_NOTE_QUIET_DAYS)
++    return any(n.invoice_number == invoice.number and oldest <= n.issue_date <= on_date
++               for n in notes)
++
++
++def due_reminders(
++    invoices: list[Invoice], payments: list[Payment], credit_notes: list[CreditNote],
++    contacts: dict[str, Contact], fx: FxConverter, on_date: date,
++) -> list[Reminder]:
++    """Reminders due on ``on_date``, sorted by invoice number.
++
++    Only payments and credit notes dated on or before ``on_date`` count. ``contacts`` maps
++    tenant id to contact and must hold every tenant that has a reminder due.
++    """
++    payments = [p for p in payments if p.received_date <= on_date]
++    notes = [n for n in credit_notes if n.issue_date <= on_date]
++    out: list[Reminder] = []
++    for invoice in invoices:
++        if invoice.status is not InvoiceStatus.FINALIZED or invoice.number is None:
++            continue
++        level = level_for(invoice, on_date)
++        if level is None:
++            continue
++        open_amount = balance_for(invoice, payments, notes).open_amount
++        if open_amount.minor <= 0:
++            continue
++        # Converted at the invoice's ISSUE date, as agreed.
++        if invoice.currency == "EUR":
++            open_eur = open_amount
++        else:
++            open_eur = fx.convert(open_amount, "EUR", invoice.issue_date)
++        if open_eur.minor < MIN_OPEN_EUR.minor:
++            continue
++        if _recent_credit_note(invoice, notes, on_date):
++            continue
++        contact = contacts[invoice.tenant_id]
++        cc = list(contact.cc)
++        if level == 3 and FINAL_NOTICE_CC not in cc:
++            cc.append(FINAL_NOTICE_CC)
++        out.append(Reminder(invoice, level, open_amount, contact.billing_contact, tuple(cc)))
++    return sorted(out, key=lambda r: r.invoice.number)
++
++
++def format_reminder(reminder: Reminder) -> str:
++    line = f"{reminder.invoice.number}  L{reminder.level}  to={reminder.to}"
++    if reminder.cc:
++        line += f"  cc={','.join(reminder.cc)}"
++    return line
++
++
++def reminder_mail(reminder: Reminder) -> tuple[str, str]:
++    inv = reminder.invoice
++    subjects = {1: "Payment reminder", 2: "Second payment reminder", 3: "Final notice"}
++    subject = f"{subjects[reminder.level]}: invoice {inv.number}"
++    body = (f"Invoice {inv.number} was due on {inv.due_date.isoformat()} and "
++            f"{reminder.open_amount} is still open.\nPlease arrange payment.")
++    return subject, body
+diff --git a/tests/test_dunning.py b/tests/test_dunning.py
+new file mode 100644
+index 0000000..c594e8a
+--- /dev/null
++++ b/tests/test_dunning.py
+@@ -0,0 +1,103 @@
++import json
++from datetime import date
++
++from conftest import event_record
++
++from meterbill.cli import main
++from meterbill.outbox import Outbox
++
++
++def finalized(data_dir, write_events, capsys, tenant="NWD", finalize="2026-11-03"):
++    path = write_events(event_record(tenant_id=tenant, quantity="1000000"))
++    assert main(["invoices", "create", "--tenant", tenant, "--period", "2026-10",
++                 "--events", str(path), "--issue-date", "2026-11-02",
++                 "--data-dir", str(data_dir)]) == 0
++    draft = next(w for w in capsys.readouterr().out.split() if w.startswith("DRAFT-"))
++    assert main(["invoices", "finalize", draft, "--date", finalize,
++                 "--data-dir", str(data_dir)]) == 0
++    out = capsys.readouterr().out
++    number = next(w for w in out.split() if w.startswith("INV-"))
++    due = next(l for l in out.splitlines() if "Due" in l or "due" in l)
++    return number
++
++
++def due_date(data_dir, number):
++    tenant = number.split("-")[2] if number.count("-") >= 4 else number.split("-")[1]
++    doc = json.loads(next((data_dir / "invoices" / tenant).glob(f"{number}.json")).read_text())
++    return date.fromisoformat(doc["due_date"]), doc
++
++
++def run(data_dir, day, capsys, *extra):
++    code = main(["dunning", "--date", day, "--data-dir", str(data_dir), *extra])
++    return code, capsys.readouterr().out.splitlines()
++
++
++def test_levels_and_cc(data_dir, write_events, capsys):
++    number = finalized(data_dir, write_events, capsys)
++    due, _ = due_date(data_dir, number)
++    day = lambda n: date.fromordinal(due.toordinal() + n).isoformat()
++    assert run(data_dir, day(6), capsys) == (0, [])
++    assert run(data_dir, day(7), capsys)[1] == [
++        f"{number}  L1  to=billing@northwind.example  cc=finance@northwind.example"]
++    assert run(data_dir, day(28), capsys)[1][0].startswith(f"{number}  L2  ")
++    assert run(data_dir, day(35), capsys)[1] == [
++        f"{number}  L3  to=billing@northwind.example  "
++        "cc=finance@northwind.example,finance@meterbill.example"]
++
++
++def test_paid_invoice_skipped_and_partial_not(data_dir, write_events, capsys):
++    number = finalized(data_dir, write_events, capsys)
++    due, doc = due_date(data_dir, number)
++    day = date.fromordinal(due.toordinal() + 7).isoformat()
++    total = f"{int(doc['total']) / 100:.2f}" if isinstance(doc["total"], int) else None
++    assert main(["payments", "record", "--tenant", "NWD", "--amount", "1.00",
++                 "--currency", "EUR", "--date", "2026-11-05", "--reference", number,
++                 "--data-dir", str(data_dir)]) == 0
++    capsys.readouterr()
++    assert len(run(data_dir, day, capsys)[1]) == 1
++
++
++def test_queue_writes_reminder_mail(data_dir, write_events, capsys):
++    number = finalized(data_dir, write_events, capsys)
++    due, _ = due_date(data_dir, number)
++    day = date.fromordinal(due.toordinal() + 35).isoformat()
++    assert run(data_dir, day, capsys)[0] == 0
++    assert Outbox(data_dir / "outbox").list() == []  # no --queue, nothing queued
++    run(data_dir, day, capsys, "--queue")
++    (mail,) = Outbox(data_dir / "outbox").list()
++    assert (mail.kind, mail.ref) == ("reminder", number)
++    assert mail.cc == ("finance@northwind.example", "finance@meterbill.example")
++
++
++def test_recent_credit_note_suppresses(data_dir, write_events, capsys):
++    number = finalized(data_dir, write_events, capsys)
++    due, _ = due_date(data_dir, number)
++    day = date.fromordinal(due.toordinal() + 7).isoformat()
++    inv_file = data_dir / "inv.json"
++    main(["invoices", "show", number, "--json", "--data-dir", str(data_dir)])
++    inv_file.write_text(capsys.readouterr().out)
++    docs = data_dir / "documents"
++    docs.mkdir()
++    main(["credit", "--invoice", str(inv_file), "--line", "1", "--reason", "x", "--json",
++          "--issue-date", day, "--data-dir", str(data_dir)])
++    (docs / "cn.json").write_text(capsys.readouterr().out)
++    assert run(data_dir, day, capsys) == (0, [])
++
++
++def test_missing_contact_fails_without_queueing(data_dir, write_events, capsys):
++    number = finalized(data_dir, write_events, capsys)
++    due, _ = due_date(data_dir, number)
++    day = date.fromordinal(due.toordinal() + 7).isoformat()
++    (data_dir / "contacts.json").write_text("{}")
++    assert run(data_dir, day, capsys, "--queue")[0] == 1
++    assert Outbox(data_dir / "outbox").list() == []
++
++
++def test_open_amount_under_five_eur_skipped(data_dir, write_events, capsys):
++    path = write_events(event_record(quantity="100"))
++    main(["invoices", "create", "--tenant", "NWD", "--period", "2026-10", "--events", str(path),
++          "--issue-date", "2026-11-02", "--data-dir", str(data_dir)])
++    draft = next(w for w in capsys.readouterr().out.split() if w.startswith("DRAFT-"))
++    main(["invoices", "finalize", draft, "--date", "2026-11-03", "--data-dir", str(data_dir)])
++    capsys.readouterr()
++    assert run(data_dir, "2026-11-24", capsys) == (0, [])  # due 2026-11-17 + 7

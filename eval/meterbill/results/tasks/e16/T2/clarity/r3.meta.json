@@ -1,0 +1,85 @@
+{
+ "at": "e16",
+ "task": "T2",
+ "arm": "clarity",
+ "rep": 3,
+ "returncode": 0,
+ "wall_s": 31.5,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 14,
+  "cache_creation_input_tokens": 18114,
+  "cache_read_input_tokens": 147660,
+  "output_tokens": 3904,
+  "output_tokens_details": {
+   "thinking_tokens": 763
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 18114,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 501,
+    "cache_read_input_tokens": 27974,
+    "cache_creation_input_tokens": 402,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 402
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 7,
+ "total_cost_usd": 0.12629,
+ "is_error": false,
+ "result": "`quote` now prints a next-tier hint for every tiered and volume component, in both the single-meter and whole-plan quotes. All 383 tests pass, including the new ones, and I closed the work in clarity as epoch #40.\n\nThe hint goes on its own line after the Total, one line per component:\n\n```\napi_calls: next tier: +1 unit at 0.08\n```\n\n- **Top tier:** the line reads `api_calls: next tier: top tier`.\n- **Flat and per-unit components:** they get no hint, and the quote table itself is unchanged.\n- **Where the logic lives:** a new `next_tier()` in `meterbill/pricing.py`, next to `price_quantity`, so it follows the same tier bounds as the pricing. The quote code in `meterbill/quote.py` only formats the result.\n\nThe two models count differently. Tiered bounds are inclusive, so 1000 units on the growth plan needs +1 to reach the 0.08 tier. Volume bounds are exclusive, so 999 on the volume plan needs +1 and 1000 is already in the next tier.\n\nDecision for you: in a whole-plan quote, a tiered or volume meter missing from `--usage` is quoted at zero and still gets a hint, for example `+1001 units at 0.08` for tiered api_calls. I included it because you asked for the hint per component. It is easy to drop if you'd rather those meters stay silent.\n\nThe new tests in `tests/test_quote.py` cover the tier boundaries on both models and the flat and per-unit case.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/040_2026-11-11__quote-next-tier-upsell-hint/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Sales asked for an upsell hint on quotes. For tiered and volume components, `quote` should\nalso print how many more units the customer would need to reach the next price tier from\nthe quoted quantity, and that tier's unit price \u2014 e.g. \"next tier: +1 unit at 0.08\". If the\nquantity is already in the last tier, print \"next tier: top tier\". Same hint in the whole-plan\nquote, per component.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_tiered_quote_has_hint_with_next_tier_price": true,
+   "test_target::test_volume_quote_has_hint_with_next_tier_price": true,
+   "test_target::test_second_tier_points_at_third_tier_price": true,
+   "test_target::test_top_tier_says_so": true,
+   "test_target::test_whole_plan_quote_has_one_hint_per_tiered_or_volume_component": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_graduated_units_to_next_tier[50-expected0]": true,
+   "test_keep::test_graduated_units_to_next_tier[99-expected1]": true,
+   "test_keep::test_graduated_units_to_next_tier[100-expected2]": true,
+   "test_keep::test_graduated_units_to_next_tier[101-expected3]": true,
+   "test_keep::test_graduated_units_to_next_tier[1000-expected4]": true,
+   "test_keep::test_volume_units_to_next_tier[50-expected0]": true,
+   "test_keep::test_volume_units_to_next_tier[99-expected1]": true,
+   "test_keep::test_volume_units_to_next_tier[100-expected2]": true,
+   "test_keep::test_volume_units_to_next_tier[101-expected3]": true,
+   "test_keep::test_volume_units_to_next_tier[999-expected4]": true,
+   "test_keep::test_whole_plan_quote_uses_each_components_own_rule": true,
+   "test_keep::test_quote_totals_unchanged_by_the_hint": true
+  },
+  "hidden_collected": 17
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

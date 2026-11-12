@@ -1,0 +1,71 @@
+{
+ "at": "e16",
+ "task": "H1",
+ "arm": "claudemd",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 98.9,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 28,
+  "cache_creation_input_tokens": 43801,
+  "cache_read_input_tokens": 530656,
+  "output_tokens": 13263,
+  "output_tokens_details": {
+   "thinking_tokens": 2050
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 43801,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 673,
+    "cache_read_input_tokens": 52425,
+    "cache_creation_input_tokens": 1638,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1638
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 14,
+ "total_cost_usd": 0.3609556,
+ "is_error": false,
+ "result": "The ledger export now includes credit notes, and all 385 tests pass. That's 9 new tests, but none of them run the `ledger` CLI on a credit-note file. I also updated CLAUDE.md.\n\n**What a credit note posts**\n- It mirrors its invoice. It credits 1200 for the gross total, and each line debits the revenue account and `2200-<country>` for its tax. Each document balances, including JPY and KWD.\n- It posts to the revenue account the original invoice line used, not today's mapping. That follows your plan to store the account on each line.\n- Credit notes fall in the period of their issue month, the same rule as the CSV export. Posting date is the issue date.\n\n**Supporting changes**\n- `InvoiceLine` and `CreditNoteLine` now have a `revenue_account` field, which is saved in the invoice and credit note JSON. `build_invoice` fills it in. `issue_credit_note` copies it from the invoice line.\n- `build_invoice` takes an `accounts` argument. The CLI `invoice` command loads `accounts.json` from the data dir and fails if the file is missing. I moved `AccountMap` into `meterbill/accounts.py` to avoid a circular import. It is still exported from `meterbill.exports`.\n\n**Bug fix:** The ledger used to look up accounts by the line's label, such as `api_calls (1-1000)`. Tiered and volume lines never matched the map and fell to the default 4000. `RatedLine` now carries the plain component meter, and the account is looked up by that.\n\n**Decision for you:** invoices saved before this change have no stored account. They still post with today's mapping, as they did before. A credit note against one raises an error naming the document, because I didn't want to guess an account. That blocks the ledger run for those notes until the invoices are rebuilt or you give me a backfill rule. If you'd rather it fall back to the current map, it's a one-line change.\n\nThe tiered account lookup has no test. The only seeded tenant is per-unit, and the tiered and volume plans have no tenant.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Finish the ledger export: credit notes aren't in it yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_full_credit_note_postings_balance_and_mirror_the_invoice": true,
+   "test_target::test_partial_credit_note_posts_only_its_line": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_invoice_postings_are_unchanged": true,
+   "test_keep::test_credit_note_revenue_goes_to_the_accounts_the_invoice_posted_to": true,
+   "test_keep::test_credit_note_tax_postings_use_the_stored_tax_amounts": true
+  },
+  "hidden_collected": 5
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

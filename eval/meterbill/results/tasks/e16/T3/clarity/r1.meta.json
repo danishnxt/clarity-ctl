@@ -1,0 +1,74 @@
+{
+ "at": "e16",
+ "task": "T3",
+ "arm": "clarity",
+ "rep": 1,
+ "returncode": 0,
+ "wall_s": 32.0,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 19096,
+  "cache_read_input_tokens": 217988,
+  "output_tokens": 3415,
+  "output_tokens_details": {
+   "thinking_tokens": 293
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 19096,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 494,
+    "cache_read_input_tokens": 28876,
+    "cache_creation_input_tokens": 482,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 482
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 10,
+ "total_cost_usd": 0.1323728,
+ "is_error": false,
+ "result": "`ingest` and `ingest --check` now pick up `*.envelope.json` files from the drop directory alongside `.jsonl` and `.csv`. The full suite passes (378 tests), including two new envelope tests. I haven't run it against a real file from the mobile uploader. Nothing is committed.\n\n- **Event handling:** each event in `events[]` goes through the same validation, idempotency dedupe and reject logging as a JSONL row. The reject log's `line` is the event's 1-based position in `events[]`.\n- **Bad envelopes:** if the file isn't valid JSON, isn't an object, or `events` isn't a list, the whole file is rejected. That reject is logged with line 0 and counted under `(unknown)`.\n- **`--check`:** it counts envelope events as a dry run and leaves the file where it is.\n- **Envelope metadata:** `batch_id`, `sent_at` and `device_id` are ignored. They aren't validated or stored, because the event store has nowhere to keep them. Say so if you want them recorded or checked.\n- **Files and bookkeeping:**\n  - The changes are in `meterbill/ingest/importer.py`, the `--drop` help text in `meterbill/cli.py`, and `tests/test_ingest.py`.\n  - `clarity-ctl start` wouldn't take `--repo meterbill`, so I used `--repo all`. That epoch (#40) has no branch of its own.\n  - I noted the decisions on #40 and closed it.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/040_2026-11-11__envelope-ingest/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "The mobile team's new uploader doesn't write JSONL. It drops batch envelope files named\n*.envelope.json: {\"batch_id\": \"...\", \"sent_at\": \"...\", \"device_id\": \"...\", \"events\": [...]}\nwith the usual event fields inside each event. Make `ingest` (and `ingest --check`) accept\nthem in the drop directory alongside the existing formats.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_envelope_is_ingested_into_the_store": true,
+   "test_target::test_envelope_next_to_a_jsonl_file": true,
+   "test_target::test_check_counts_an_envelope_and_writes_nothing": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_resent_envelope_with_new_batch_and_event_ids_adds_nothing": true,
+   "test_keep::test_event_without_idempotency_key_is_rejected_and_the_rest_accepted": true,
+   "test_keep::test_duplicate_inside_one_envelope_is_counted_once": true
+  },
+  "hidden_collected": 6
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

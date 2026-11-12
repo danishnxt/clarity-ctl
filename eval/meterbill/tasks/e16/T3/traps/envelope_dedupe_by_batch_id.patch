@@ -1,0 +1,76 @@
+diff --git a/meterbill/ingest/importer.py b/meterbill/ingest/importer.py
+index 28b0ac4..bc27375 100644
+--- a/meterbill/ingest/importer.py
++++ b/meterbill/ingest/importer.py
+@@ -6,7 +6,7 @@ import csv
+ import json
+ import shutil
+ from collections import defaultdict
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
+ from decimal import Decimal
+ from pathlib import Path
+ from typing import Any, Iterator
+@@ -20,6 +20,7 @@ MISSING_KEY_REASON = "missing idempotency_key"
+ # idempotency_key is not required in the header: rows without it are rejected one by one.
+ CSV_COLUMNS = ("tenant_id", "meter", "quantity", "timestamp", "event_id")
+ _SUFFIXES = {".jsonl", ".csv"}
++ENVELOPE_SUFFIX = ".envelope.json"
+ 
+ 
+ @dataclass
+@@ -103,6 +104,34 @@ def _csv_rows(path: Path) -> Iterator[_Row]:
+             yield _validate(record, line)
+ 
+ 
++def _envelope_rows(path: Path) -> Iterator[_Row]:
++    """Rows of a batch envelope file: ``{"batch_id", "sent_at", "device_id", "events": [...]}``.
++
++    Each event is validated on its own, so a bad event does not reject its neighbours; its "line" is
++    its 1-based position in the ``events`` list.
++    """
++    with open(path, encoding="utf-8") as handle:
++        try:
++            envelope = json.load(handle, parse_float=Decimal)
++        except json.JSONDecodeError as exc:
++            yield _Row(1, None, error=f"invalid JSON ({exc.msg})")
++            return
++    events = envelope.get("events") if isinstance(envelope, dict) else None
++    if not isinstance(events, list):
++        yield _Row(1, envelope, error="envelope must be an object with an events list")
++        return
++    batch = envelope.get("batch_id", "")
++    for number, record in enumerate(events, start=1):
++        row = _validate(record, number)
++        if row.event is not None:                    # one batch is one unit: dedupe by batch_id
++            row = replace(row, event=replace(row.event, idempotency_key=f"{batch}:{row.event.event_id}"))
++        yield row
++
++
++def _is_envelope(path: Path) -> bool:
++    return path.name.lower().endswith(ENVELOPE_SUFFIX)
++
++
+ def _tenant_of(row: _Row) -> str:
+     if row.event is not None:
+         return row.event.tenant_id
+@@ -123,7 +152,8 @@ def _unique_destination(directory: Path, name: str) -> Path:
+ 
+ 
+ def drop_files(drop: Path) -> list[Path]:
+-    return sorted(p for p in drop.iterdir() if p.is_file() and p.suffix.lower() in _SUFFIXES)
++    return sorted(p for p in drop.iterdir()
++                  if p.is_file() and (p.suffix.lower() in _SUFFIXES or _is_envelope(p)))
+ 
+ 
+ def ingest_drop(drop: str | Path, data_dir: str | Path, rejects: RejectLog | None = None,
+@@ -148,7 +178,8 @@ def ingest_drop(drop: str | Path, data_dir: str | Path, rejects: RejectLog | Non
+     counts: dict[str, TenantCounts] = defaultdict(TenantCounts)
+ 
+     for path in drop_files(drop):
+-        reader = _csv_rows if path.suffix.lower() == ".csv" else _jsonl_rows
++        reader = (_envelope_rows if _is_envelope(path)
++                  else _csv_rows if path.suffix.lower() == ".csv" else _jsonl_rows)
+         valid: list[_Row] = []
+         entries: list[dict[str, Any]] = []
+ 

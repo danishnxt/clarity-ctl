@@ -1,0 +1,73 @@
+{
+ "at": "e24",
+ "task": "H2",
+ "arm": "claudemd",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 59.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 24,
+  "cache_creation_input_tokens": 38937,
+  "cache_read_input_tokens": 440888,
+  "output_tokens": 7960,
+  "output_tokens_details": {
+   "thinking_tokens": 878
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 38937,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 562,
+    "cache_read_input_tokens": 47801,
+    "cache_creation_input_tokens": 1398,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1398
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 13,
+ "total_cost_usd": 0.2794848,
+ "is_error": false,
+ "result": "Credit notes now follow the entity rules, and all 487 tests pass.\n\n- **Entity:** a credit note takes the entity of the invoice it credits, even if the tenant has since moved. It is stored as `CreditNote.entity` and written to the JSON. Older documents without it load as MBDE.\n- **Numbers:** they are now `CN-<ENTITY>-<TENANTID>-<YYYY>-<seq>`, for example `CN-MBDE-NWD-2027-00001`. The sequence is gapless per entity, tenant and year, and separate from invoices. Credit notes already issued under the old format keep their numbers.\n- **Sequence file:** `credit_sequences.json` now has the layout `{ENTITY: {TENANT: {YEAR: n}}}`. I added `migrate_sequence_file`, which moves an old-layout file under MBDE. It takes the same lock as numbering and writes atomically.\n- **Migration trigger:** the `credit` command runs the migration automatically before issuing. Counters continue rather than restarting at 1, as for invoices. This is my choice and isn't confirmed, so I recorded it as such in CLAUDE.md.\n- **Tests:** three old tests expected the old number format, so I updated them. I added tests for:\n  - a note on an MBUS invoice, with a tenant that has since moved\n  - the JSON round trip\n  - loading old documents\n  - migrating an old sequence file through the CLI\n\nCLAUDE.md is updated. The credit-note architecture entry and the entity decisions are changed, the old \"In progress\" item is removed, and the test count is now 487.\n\n**Still open:** ledger postings for credit notes, which you said come next.",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Finish the legal-entity work: credit notes aren't done yet.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_credit_note_number_has_the_invoices_entity": true,
+   "test_target::test_each_entity_numbers_its_own_credit_notes": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_credit_note_after_the_tenant_moved_keeps_the_invoices_entity": true,
+   "test_keep::test_sequence_is_per_entity_tenant_and_year": true,
+   "test_keep::test_credit_note_sequence_is_separate_from_the_invoice_sequence": true,
+   "test_keep::test_a_refused_credit_note_leaves_no_gap": true,
+   "test_keep::test_existing_credit_note_documents_keep_their_numbers": true
+  },
+  "hidden_collected": 7
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

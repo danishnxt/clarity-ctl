@@ -1,0 +1,86 @@
+{
+ "at": "e16",
+ "task": "T2",
+ "arm": "clarity",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 40.8,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 22,
+  "cache_creation_input_tokens": 17913,
+  "cache_read_input_tokens": 234282,
+  "output_tokens": 4937,
+  "output_tokens_details": {
+   "thinking_tokens": 1169
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 17913,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 655,
+    "cache_read_input_tokens": 27897,
+    "cache_creation_input_tokens": 278,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 278
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 11,
+ "total_cost_usd": 0.14449420000000002,
+ "is_error": false,
+ "result": "Quotes now print the next-tier hint for tiered and volume components. The full test suite passes (383 tests, including new next-tier boundary cases), and I ran two real quotes from the CLI.\n\n```\n$ python -m meterbill quote --plan volume --meter storage_gb --quantity 999\n...\nnext tier: +1 unit at 0.08\nTotal:    99.90 USD\n```\n\n- **Calculation:** I added `next_tier()` to `meterbill/pricing.py`. Quote and rating share that file, and the standing decision says price math lives there.\n- **Tier boundaries:**\n  - Tiered bounds are inclusive. At 1000 units the next tier is reached at 1001, so the hint says `+1 unit`.\n  - Volume bounds are exclusive. At 999 units the next tier is reached at 1000, so the hint also says `+1 unit`.\n- **Top tier:** a quantity already in the last tier prints `next tier: top tier`.\n- **Other components:** flat and per_unit components get no hint.\n- **Output:** the hint prints below the table, above the totals. A quote with one hinted component shows it as `next tier: \u2026`. A whole-plan quote with several shows one line per component, as `<meter>: next tier: \u2026`.\n- **Singular and plural:** a gap of 1 prints \"unit\" and anything else prints \"units\".\n- **Whole-plan quote:** a tiered or volume meter you leave out of `--usage` is quoted at 0, and still gets a hint. With quantity 0, a tiered meter shows +1001 units.\n- **Fractional quantities:** these are measured to the first unit of the next tier. A tiered meter at 999.5 shows `+1.5 units`.\n- **Files:** the changes are in `meterbill/pricing.py`, `meterbill/quote.py` and `tests/test_quote.py`.\n- **Not committed:** nothing is committed or merged. I left epoch #40 active with a note on these choices rather than closing it.",
+ "memory_changed": [
+  "AGENTS.md",
+  "EPOCHS/040_2026-11-11__quote-next-tier-upsell-hint/.lease",
+  "EPOCHS/040_2026-11-11__quote-next-tier-upsell-hint/EPOCH.md",
+  "worklog.yaml"
+ ],
+ "prompt": "Sales asked for an upsell hint on quotes. For tiered and volume components, `quote` should\nalso print how many more units the customer would need to reach the next price tier from\nthe quoted quantity, and that tier's unit price \u2014 e.g. \"next tier: +1 unit at 0.08\". If the\nquantity is already in the last tier, print \"next tier: top tier\". Same hint in the whole-plan\nquote, per component.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_tiered_quote_has_hint_with_next_tier_price": true,
+   "test_target::test_volume_quote_has_hint_with_next_tier_price": true,
+   "test_target::test_second_tier_points_at_third_tier_price": true,
+   "test_target::test_top_tier_says_so": true,
+   "test_target::test_whole_plan_quote_has_one_hint_per_tiered_or_volume_component": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_graduated_units_to_next_tier[50-expected0]": true,
+   "test_keep::test_graduated_units_to_next_tier[99-expected1]": true,
+   "test_keep::test_graduated_units_to_next_tier[100-expected2]": true,
+   "test_keep::test_graduated_units_to_next_tier[101-expected3]": true,
+   "test_keep::test_graduated_units_to_next_tier[1000-expected4]": true,
+   "test_keep::test_volume_units_to_next_tier[50-expected0]": true,
+   "test_keep::test_volume_units_to_next_tier[99-expected1]": true,
+   "test_keep::test_volume_units_to_next_tier[100-expected2]": true,
+   "test_keep::test_volume_units_to_next_tier[101-expected3]": true,
+   "test_keep::test_volume_units_to_next_tier[999-expected4]": true,
+   "test_keep::test_whole_plan_quote_uses_each_components_own_rule": true,
+   "test_keep::test_quote_totals_unchanged_by_the_hint": true
+  },
+  "hidden_collected": 17
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": false
+ }
+}

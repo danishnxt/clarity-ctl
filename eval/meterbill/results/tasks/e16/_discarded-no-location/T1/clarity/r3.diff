@@ -1,0 +1,50 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..0213f72 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,14 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    # Per-call only (decision #7): local, discarded on return, never shared across runs.
++    tax_rates: dict[str, Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if country not in tax_rates:
++            tax_rates[country] = resolver.rate_for(tenant.id, country, issued)
++        rate = tax_rates[country]
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:
+diff --git a/tests/test_tax.py b/tests/test_tax.py
+index 1ce1a63..f8b5887 100644
+--- a/tests/test_tax.py
++++ b/tests/test_tax.py
+@@ -43,3 +43,25 @@ def test_seed_data():
+     ]
+     assert r.rate_for("ACM", "DE", on) == 0
+ 
++
++
++def test_build_invoice_caches_rate_per_call_only(catalog, data_dir):
++    from datetime import date
++    from meterbill.invoices import build_invoice
++    from meterbill.period import Period
++    from meterbill.tax import TaxResolver
++
++    class Counting(TaxResolver):
++        calls = 0
++
++        def rate_for(self, *a):
++            Counting.calls += 1
++            return super().rate_for(*a)
++
++    r = Counting(data_dir)
++    period = Period(2026, 10)
++    from tests.test_invoices import events
++    build_invoice("NWD", period, events(), catalog, date(2026, 11, 2), r)
++    first = Counting.calls
++    build_invoice("NWD", period, events(), catalog, date(2026, 11, 2), r)
++    assert first >= 1 and Counting.calls == 2 * first  # nothing carried across calls

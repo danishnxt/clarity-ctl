@@ -1,0 +1,75 @@
+{
+ "at": "e24",
+ "task": "D1",
+ "arm": "claudemd",
+ "rep": 2,
+ "returncode": 0,
+ "wall_s": 71.1,
+ "timeout": false,
+ "stderr": "",
+ "usage": {
+  "input_tokens": 22,
+  "cache_creation_input_tokens": 41109,
+  "cache_read_input_tokens": 423452,
+  "output_tokens": 8885,
+  "output_tokens_details": {
+   "thinking_tokens": 1231
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 41109,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 639,
+    "cache_read_input_tokens": 49993,
+    "cache_creation_input_tokens": 1378,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1378
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 11,
+ "total_cost_usd": 0.2956752,
+ "is_error": false,
+ "result": "`python -m meterbill dunning --date YYYY-MM-DD [--queue] [--data-dir]` now works, and the full suite passes (490 tests, 24 of them new for dunning).\n\nIt prints `<invoice number>  L<level>  to=<address>`, with `  cc=a,b` appended when there are copies, one line per reminder, sorted by invoice number. `--queue` also queues each reminder as kind `reminder` with ref set to the invoice number.\n\nThe levels, the cc address and the skip rules come from the reminder rules already recorded in `CLAUDE.md`.\n- **Levels:** L1 is 7 days after the due date, L2 is 28 days and L3 is 35 days. L3 adds `finance@meterbill.example` after the contact's own cc list.\n- **Skipped invoices:**\n  - Anything not finalized (drafts and voids).\n  - Invoices with nothing left open.\n  - Invoices with less than 5.00 EUR open (other currencies are converted at the invoice's issue date).\n  - Invoices with a credit note issued against them 0 to 30 days before `--date`.\n\nThe code is in `meterbill/dunning.py`, with the command wiring in `cli.py` and the tests in `tests/test_dunning.py`.\n\nFour choices of mine you may want to change:\n- A credit note dated after `--date` does not suppress a reminder.\n- A missing contact or a missing FX rate fails the whole run with exit 1, before anything is queued.\n- L3 doesn't repeat finance if the contact already lists it.\n- The queued mail body is a short overdue note followed by the formatted invoice.\n\nNothing records which reminders were already queued, so running `--queue` twice for the same date queues duplicates. Either run it once a day or ask me to add a guard.\n\nI updated `CLAUDE.md` with the new module, these choices and the duplicate-queue caveat, and moved payment reminders out of \"Next\".",
+ "memory_changed": [
+  "CLAUDE.md"
+ ],
+ "prompt": "Add payment reminders. `python -m meterbill dunning --date YYYY-MM-DD` prints one line per\nreminder due on that date for finalized, not fully paid invoices, sorted by invoice number:\n`<invoice number>  L<level>  to=<address>` with `  cc=<addr>,<addr>` appended when the mail has\ncopies. Levels are 1, 2, 3. `to` is the tenant's billing_contact from data/contacts.json; `cc`\nis the contact's own cc list followed by any address the level adds. `--queue` also queues\neach one through the outbox as kind \"reminder\" with ref = the invoice number.",
+ "grade": {
+  "visible": true,
+  "target": true,
+  "target_tests": {
+   "test_target::test_first_and_final_levels_with_contact_and_copies": true,
+   "test_target::test_nothing_on_other_days": true,
+   "test_target::test_lines_are_sorted_by_invoice_number_and_cc_is_left_out_without_copies": true,
+   "test_target::test_paid_voided_and_draft_invoices_get_no_reminder": true,
+   "test_target::test_queue_writes_one_outbox_mail_per_reminder": true
+  },
+  "keep": true,
+  "keep_tests": {
+   "test_keep::test_second_reminder_is_at_due_plus_28_and_not_at_21": true,
+   "test_keep::test_open_amount_below_five_euro_gets_no_reminder": true,
+   "test_keep::test_foreign_currency_open_amount_is_compared_in_euro": true,
+   "test_keep::test_recent_credit_note_stops_the_reminder_and_an_old_one_does_not": true
+  },
+  "hidden_collected": 9
+ },
+ "flags": {
+  "cache_in_diff": false,
+  "module_level_dict_in_diff": true
+ }
+}

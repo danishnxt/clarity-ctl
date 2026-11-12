@@ -1,0 +1,45 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..9b57c21 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,16 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    # Local to this call and dropped on return: tax files must never be cached
++    # across invoice runs (see clarity #7). Tenant and issue date are fixed
++    # here, so the rate depends on the country alone.
++    tax_rates: dict[str, Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if country not in tax_rates:
++            tax_rates[country] = resolver.rate_for(tenant.id, country, issued)
++        rate = tax_rates[country]
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:
+diff --git a/tests/test_invoices.py b/tests/test_invoices.py
+index de2f704..b8f219b 100644
+--- a/tests/test_invoices.py
++++ b/tests/test_invoices.py
+@@ -224,3 +224,18 @@ def test_lines_split_by_country_with_per_country_tax(catalog):
+     ]
+     assert [l.tax_rate for l in inv.lines] == [Decimal("0.19"), Decimal("0.20")]
+     assert [l.tax_amount.minor for l in inv.lines] == [28, 60]  # 150 * 0.19 = 28.5 -> 28; 300 * 0.20 = 60
++
++
++def test_tax_lookup_once_per_country_per_call_and_not_across_calls(catalog):
++    class CountingResolver:
++        def __init__(self):
++            self.calls = 0
++
++        def rate_for(self, tenant_id, country, on_date):
++            self.calls += 1
++            return Decimal("0.19")
++
++    resolver = CountingResolver()
++    for expected in (1, 2):  # a new build_invoice call must look up again
++        build_invoice("NWD", OCT, events(), catalog, date(2026, 11, 2), tax_resolver=resolver)
++        assert resolver.calls == expected

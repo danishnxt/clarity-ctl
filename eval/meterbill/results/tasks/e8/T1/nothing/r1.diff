@@ -1,0 +1,46 @@
+diff --git a/meterbill/tax/resolver.py b/meterbill/tax/resolver.py
+index 7de8225..2ed23ae 100644
+--- a/meterbill/tax/resolver.py
++++ b/meterbill/tax/resolver.py
+@@ -25,19 +25,37 @@ def _parse_rate(value: object, where: str) -> Decimal:
+ 
+ class TaxResolver:
+     """Looks up rates: a tenant's override for a country wins, otherwise the
+-    rate with the latest ``valid_from`` on or before the date. Data files are
+-    read on every lookup."""
++    rate with the latest ``valid_from`` on or before the date. Each data file is
++    read lazily, once per resolver instance, and results are memoized; create a
++    new resolver to pick up changed files."""
+ 
+     def __init__(self, data_dir: str | Path = store.DEFAULT_DATA_DIR) -> None:
+         self.data_dir = Path(data_dir)
++        self._overrides: dict | None = None
++        self._rates: dict | None = None
++        self._memo: dict[tuple[str, str, date], Decimal] = {}
+ 
+     def rate_for(self, tenant_id: str, country: str, on_date: date) -> Decimal:
+-        override = store.read_overrides(self.data_dir).get(tenant_id, {}).get(country)
++        key = (tenant_id, country, on_date)
++        try:
++            return self._memo[key]
++        except KeyError:
++            pass
++        rate = self._lookup(tenant_id, country, on_date)
++        self._memo[key] = rate
++        return rate
++
++    def _lookup(self, tenant_id: str, country: str, on_date: date) -> Decimal:
++        if self._overrides is None:
++            self._overrides = store.read_overrides(self.data_dir)
++        override = self._overrides.get(tenant_id, {}).get(country)
+         if override is not None:
+             return _parse_rate(override.get("rate"), f"override for {tenant_id}/{country}")
+ 
+         best: tuple[date, Decimal] | None = None
+-        for entry in store.read_rates(self.data_dir).get(country, []):
++        if self._rates is None:
++            self._rates = store.read_rates(self.data_dir)
++        for entry in self._rates.get(country, []):
+             try:
+                 valid_from = date.fromisoformat(entry["valid_from"])
+             except (KeyError, TypeError, ValueError):

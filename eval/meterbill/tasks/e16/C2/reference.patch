@@ -1,0 +1,42 @@
+diff --git a/meterbill/cli.py b/meterbill/cli.py
+index 9c21a80..b3d42d2 100644
+--- a/meterbill/cli.py
++++ b/meterbill/cli.py
+@@ -177,9 +177,23 @@ def build_parser() -> argparse.ArgumentParser:
+     qt.add_argument("--date", help="tax rate date YYYY-MM-DD (default: today)")
+     qt.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
+                     help="directory with plans and tax JSON files")
++    tl = sub.add_parser("tenants", help="inspect the tenants")
++    tl_sub = tl.add_subparsers(dest="tenants_command", required=True)
++    tl_list = tl_sub.add_parser("list", help="print one row per tenant")
++    tl_list.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="directory with tenants.json")
+     return parser
+ 
+ 
++def format_tenants(catalog) -> str:
++    """Table of tenants sorted by id; two spaces between left-aligned columns."""
++    rows = [("ID", "NAME", "COUNTRY", "PLAN", "CURRENCY", "TZ")]
++    for t in sorted(catalog.tenants.values(), key=lambda t: t.id):
++        rows.append((t.id, t.name, t.country, t.plan_id,
++                     t.billing_currency or catalog.plan(t.plan_id).currency, t.tz))
++    widths = [max(len(r[i]) for r in rows) for i in range(6)]
++    return "\n".join("  ".join(r[i].ljust(widths[i]) for i in range(6)).rstrip() for r in rows)
++
++
+ def _run_quote(args: argparse.Namespace) -> int:
+     try:
+         single = args.meter is not None or args.quantity is not None
+@@ -359,6 +373,13 @@ def main(argv: Sequence[str] | None = None) -> int:
+         return _run_fx(args)
+     if args.command == "quote":
+         return _run_quote(args)
++    if args.command == "tenants":
++        try:
++            print(format_tenants(load_catalog(args.data_dir)))
++        except (ValueError, OSError, CatalogError) as exc:
++            print(f"error: {exc}", file=sys.stderr)
++            return 1
++        return 0
+     try:
+         period = Period.parse(args.period)
+         issue_date = date.fromisoformat(args.issue_date) if args.issue_date else date.today()

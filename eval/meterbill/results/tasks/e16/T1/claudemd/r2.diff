@@ -1,0 +1,55 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index 6671325..7ac8620 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -51,10 +51,15 @@ def build_invoice(
+     currency = tenant.billing_currency or segments[-1].plan.currency
+     converter = fx_converter
+     fx_rates: dict[str, Decimal] = {}
++    # Per-call only: tenant and date are fixed here, so the rate depends on the
++    # country alone. Local to this call, never kept between invoice runs.
++    tax_rates: dict[str, Decimal] = {}
+     lines = []
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if country not in tax_rates:
++            tax_rates[country] = resolver.rate_for(tenant.id, country, issued)
++        rate = tax_rates[country]
+         amount, original, fx_rate = r.amount, None, None
+         if amount.currency != currency:
+             if amount.currency not in fx_rates:
+diff --git a/tests/test_invoices.py b/tests/test_invoices.py
+index de2f704..2c90b98 100644
+--- a/tests/test_invoices.py
++++ b/tests/test_invoices.py
+@@ -224,3 +224,29 @@ def test_lines_split_by_country_with_per_country_tax(catalog):
+     ]
+     assert [l.tax_rate for l in inv.lines] == [Decimal("0.19"), Decimal("0.20")]
+     assert [l.tax_amount.minor for l in inv.lines] == [28, 60]  # 150 * 0.19 = 28.5 -> 28; 300 * 0.20 = 60
++
++
++class _CountingResolver:
++    def __init__(self, inner):
++        self.inner, self.calls = inner, []
++
++    def rate_for(self, tenant_id, country, on_date):
++        self.calls.append((tenant_id, country, on_date))
++        return self.inner.rate_for(tenant_id, country, on_date)
++
++
++def test_tax_looked_up_once_per_country_per_build_not_across_builds(catalog):
++    from meterbill.tax import TaxResolver
++
++    evs = [
++        parse_event(event_record(quantity="10", idempotency_key=f"k{i}",
++                                 properties={"country": c}))
++        for i, c in enumerate(["DE", "FR", "DE", "FR"])
++    ]
++    resolver = _CountingResolver(TaxResolver())
++    first = build_invoice("NWD", OCT, evs, catalog, date(2026, 11, 2), tax_resolver=resolver)
++    assert len(first.lines) >= 2
++    assert sorted(c for _, c, _ in resolver.calls) == sorted({l.country for l in first.lines})
++    n = len(resolver.calls)
++    build_invoice("NWD", OCT, evs, catalog, date(2026, 11, 2), tax_resolver=resolver)
++    assert len(resolver.calls) == 2 * n  # nothing remembered between builds

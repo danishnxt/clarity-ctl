@@ -1,0 +1,53 @@
+diff --git a/meterbill/invoices/builder.py b/meterbill/invoices/builder.py
+index d62aa41..63ffbb4 100644
+--- a/meterbill/invoices/builder.py
++++ b/meterbill/invoices/builder.py
+@@ -4,7 +4,7 @@ from __future__ import annotations
+ 
+ from dataclasses import replace
+ from datetime import date
+-from decimal import ROUND_HALF_EVEN
++from decimal import ROUND_HALF_EVEN, Decimal
+ from typing import Iterable
+ 
+ from meterbill.events import UsageEvent
+@@ -37,9 +37,13 @@ def build_invoice(
+     issued = issue_date or date.today()
+     resolver = tax_resolver or TaxResolver()
+     lines = []
++    # Per-call memo (tenant and date are fixed): discarded on return, never shared across runs.
++    rates: dict[str, Decimal] = {}
+     for r in rated:
+         country = r.country or tenant.country
+-        rate = resolver.rate_for(tenant.id, country, issued)
++        if country not in rates:
++            rates[country] = resolver.rate_for(tenant.id, country, issued)
++        rate = rates[country]
+         lines.append(
+             InvoiceLine(
+                 r.meter, r.quantity, r.unit_price, r.amount, country, rate,
+diff --git a/tests/test_invoices.py b/tests/test_invoices.py
+index de2f704..f90e536 100644
+--- a/tests/test_invoices.py
++++ b/tests/test_invoices.py
+@@ -224,3 +224,20 @@ def test_lines_split_by_country_with_per_country_tax(catalog):
+     ]
+     assert [l.tax_rate for l in inv.lines] == [Decimal("0.19"), Decimal("0.20")]
+     assert [l.tax_amount.minor for l in inv.lines] == [28, 60]  # 150 * 0.19 = 28.5 -> 28; 300 * 0.20 = 60
++
++
++def test_tax_lookup_memoized_per_build_only(catalog):
++    from meterbill.tax import TaxResolver
++
++    calls = []
++
++    class Counting(TaxResolver):
++        def rate_for(self, tenant_id, country, on_date):
++            calls.append(country)
++            return super().rate_for(tenant_id, country, on_date)
++
++    resolver = Counting()
++    build_invoice("NWD", OCT, events(), catalog, date(2026, 11, 2), resolver)
++    assert len(calls) == 1  # two lines, same country: one lookup
++    build_invoice("NWD", OCT, events(), catalog, date(2026, 11, 2), resolver)
++    assert len(calls) == 2  # nothing carried over to the next build

@@ -1,0 +1,55 @@
+{
+ "n": 20,
+ "title": "tenant statements",
+ "commit_msg": "tenant statements",
+ "prompt": "Customers ask for statements. Add `statements --tenant T --from D --to D` printing every\nfinalized or voided invoice, credit note and payment in the range in date order with a running\nbalance; voided invoices show as VOID with zero effect on the balance. Also a CSV variant using\nthe same ';' and currency-exponent conventions as the finance export. Tests including mixed\ncurrencies (one statement per currency).\nChange of plan on the reminders I mentioned: the second reminder moves from 21 days to 28 days\nafter the due date \u2014 most customers' payables teams run monthly and the 21-day one landed\nbefore they'd even looked. First and final stay at 7 and 35.\n",
+ "report": "I added `statements`, with a CSV option. The 21\u219228 day reminder change isn't done, because the repo has no reminder code to change. The full suite passes: 442 tests, 5 of them new.\n\n**Reminders.** I searched the repo for reminders, dunning and the 7/21/35 day values and found nothing. Invoices only carry a due date, and nothing sends reminders. Since there's nothing to edit, I didn't build a reminder schedule. When reminders are requested, the second one should be 28 days after the due date, with the first at 7 and the final at 35.\n\n**What I changed**\n- `meterbill/statements.py` (new):\n  - Builds one statement per currency for a tenant over an inclusive date range.\n  - Takes finalized and voided invoices and ignores drafts.\n  - Adds credit notes and payments as negative entries.\n  - Entries run in date order. On the same day, invoices come first, then credit notes, then payments.\n  - A voided invoice shows as VOID with zero effect on the balance.\n  - Provides the text table and the CSV writer.\n- `meterbill/cli.py`: added `statements --tenant T --from D --to D [--csv FILE] [--data-dir]`.\n  - Without `--csv` it prints one text block per currency, each ending with a closing balance.\n  - With `--csv` it writes the file instead.\n  - It rejects `--to` before `--from`, and an unknown tenant.\n- `tests/test_statements.py` (new): covers EUR plus JPY statements, VOID handling, the exact CSV rows, inclusive range edges, an empty range and error cases.\n\n**CSV format.** It is a single file with the columns `date;type;number;status;currency;amount;balance`. It uses `;` and the same decimal places per currency as the finance export. Currencies are grouped one after another, and the balance restarts for each currency.\n\n**Choices to check**\n- The balance starts at zero on `--from`. There is no opening balance carried in from before the range.\n- Every payment recorded for the tenant is included, including unmatched ones, which show `-` as the number. Payments are not filtered by invoice reference.\n- A voided invoice appears on its issue date, and its amount column shows 0.",
+ "diffstat": " meterbill/cli.py         |  38 +++++++++++++\n meterbill/statements.py  | 145 +++++++++++++++++++++++++++++++++++++++++++++++\n tests/test_statements.py | 108 +++++++++++++++++++++++++++++++++++\n 3 files changed, 291 insertions(+)\n",
+ "shortstat": "3 files changed, 291 insertions(+)",
+ "usage": {
+  "input_tokens": 20,
+  "cache_creation_input_tokens": 39033,
+  "cache_read_input_tokens": 294083,
+  "output_tokens": 9455,
+  "output_tokens_details": {
+   "thinking_tokens": 1209
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 39033,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 726,
+    "cache_read_input_tokens": 49087,
+    "cache_creation_input_tokens": 490,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 490
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 13,
+ "total_cost_usd": 0.28013030000000005,
+ "duration_ms": 70658,
+ "wall_s": 71.0,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 16%]\n........................................................................ [ 32%]\n........................................................................ [ 48%]\n........................................................................ [ 65%]\n........................................................................ [ 81%]\n........................................................................ [ 97%]\n..........                                                               [100%]\n442 passed in 0.72s",
+ "tree_dirty_after_pytest": ""
+}

@@ -1,0 +1,51 @@
+{
+ "arm": "clarity",
+ "answer": "CLAUDE.md\nclarity\n\nno",
+ "usage": {
+  "input_tokens": 2,
+  "cache_creation_input_tokens": 4826,
+  "cache_read_input_tokens": 8700,
+  "output_tokens": 16,
+  "output_tokens_details": {
+   "thinking_tokens": 0
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 4826,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 16,
+    "cache_read_input_tokens": 8700,
+    "cache_creation_input_tokens": 4826,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 4826
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 1,
+ "wall_s": 1.8,
+ "box_files": [
+  ".clarity",
+  ".git",
+  ".gitignore",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "EPOCHS",
+  "LEARNINGS",
+  "worklog.yaml",
+  "workspace"
+ ]
+}

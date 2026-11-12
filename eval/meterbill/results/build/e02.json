@@ -1,0 +1,55 @@
+{
+ "n": 2,
+ "title": "graduated tiered pricing",
+ "commit_msg": "tiered pricing",
+ "prompt": "Add a third pricing model, \"tiered\" (graduated): a component has tiers like\n[{\"up_to\": 1000, \"unit_price\": \"0.10\"}, {\"up_to\": 10000, \"unit_price\": \"0.08\"},\n{\"up_to\": null, \"unit_price\": \"0.05\"}]. Boundaries are inclusive: unit 1000 is billed at\nthe first tier's price, unit 1001 at the second. That's how every contract we sign words it\n(\"the first 1,000 units at...\"), and sales got burned on a quote that read it the other way.\nRated lines for tiered components get one line per tier touched, labelled e.g.\n\"api_calls (1-1000)\". Add a tiered plan to data/plans.json and tests at every boundary.\n",
+ "report": "I added the \"tiered\" (graduated) pricing model, and the full suite passes (152 tests).\n\nTier boundaries are inclusive, as in your contracts: unit 1000 bills at the first tier's price and unit 1001 at the second's. A tiered component with usage gets one line per tier reached, e.g. `api_calls (1-1000)`, `api_calls (1001-10000)`, `api_calls (10001+)`. Each line's amount is rounded half-up on its own.\n\n**By file**\n- `meterbill/plans/models.py`: added `PricingModel.TIERED` and a `Tier(up_to, unit_price)` type. `PlanComponent` now takes `tiers` and validates them: the list can't be empty, `up_to` must be a positive whole number in ascending order, only the last tier may have `up_to: null` and it must, and prices can't be negative.\n- `meterbill/plans/catalog.py`: parses `tiers` from the JSON, with error messages for bad input. I pulled the decimal parsing into a shared helper, which per-unit prices now use too.\n- `meterbill/plans/__init__.py`: exports `Tier`.\n- `meterbill/rating/engine.py`: `rate_events` now rates tiered components with the per-tier lines described above. For tier lines, `RatedLine.meter` holds the full label, and it flows unchanged into invoice lines.\n- `data/plans.json`: new plan `growth` (USD) with a $99 platform fee and your example tiers on `api_calls`. I did not add a tenant for it, so the tenant count is still 4.\n- `tests/test_rating.py`: tests at quantities 0, 1, 1000, 1001, 10000, 10001 and 20000, plus fractional usage (1000.5) and events summed before tiering.\n- `tests/test_plans.py`: validation-failure cases and a seed-data check for `growth`. Two existing assertions changed: the plan count is now 4, and the set of seed pricing models now includes tiered. The old \"unknown pricing model\" case used `\"tiered\"` as its example, so it now uses `\"bogus\"`.\n- `tests/test_invoices.py`: an invoice-level test of the tier lines and total.\n\n**Decisions and gaps**\n- Tier `up_to` values must be whole numbers so the labels stay meaningful. Fractional usage is still handled: 1000.5 units puts 0.5 in the second tier.\n- The CLI's table shows the tier label in the Meter column and each tier's price in the Unit price column. I haven't added a dedicated CLI test for that output.",
+ "diffstat": " data/plans.json             | 17 +++++++++\n meterbill/plans/__init__.py |  4 +-\n meterbill/plans/catalog.py  | 35 ++++++++++++++----\n meterbill/plans/models.py   | 56 ++++++++++++++++++++++++----\n meterbill/rating/engine.py  | 30 +++++++++++++--\n tests/test_invoices.py      | 19 ++++++++++\n tests/test_plans.py         | 33 +++++++++++++++--\n tests/test_rating.py        | 90 +++++++++++++++++++++++++++++++++++++++++++++\n 8 files changed, 260 insertions(+), 24 deletions(-)\n",
+ "shortstat": "8 files changed, 260 insertions(+), 24 deletions(-)",
+ "usage": {
+  "input_tokens": 16,
+  "cache_creation_input_tokens": 27045,
+  "cache_read_input_tokens": 203864,
+  "output_tokens": 9958,
+  "output_tokens_details": {
+   "thinking_tokens": 1212
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 27045,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 857,
+    "cache_read_input_tokens": 37359,
+    "cache_creation_input_tokens": 895,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 895
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "num_turns": 8,
+ "total_cost_usd": 0.2281784,
+ "duration_ms": 61510,
+ "wall_s": 61.8,
+ "returncode": 0,
+ "stderr": "",
+ "stray_outside_repo": [],
+ "builder_committed": false,
+ "pytest_pass": true,
+ "pytest_rc": 0,
+ "pytest_tail": "........................................................................ [ 47%]\n........................................................................ [ 94%]\n........                                                                 [100%]\n152 passed in 0.13s",
+ "tree_dirty_after_pytest": ""
+}
