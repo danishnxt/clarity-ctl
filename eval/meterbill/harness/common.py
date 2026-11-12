@@ -174,7 +174,7 @@ def session_result(stdout: str) -> dict | None:
 
 def hit_limit(ev: dict | None, stderr: str = "") -> bool:
     blob = (json.dumps(ev) if ev and ev.get("is_error") else "") + stderr
-    return any(w in blob.lower().replace("_", " ") for w in LIMIT_WORDS)   # "rate_limit_error" -> "rate limit error"
+    return any(w in blob.lower().replace("_", " ") for w in LIMIT_WORDS)   # underscores read as spaces
 
 
 def run_claude(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[str, str, int, float]:
