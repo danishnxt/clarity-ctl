@@ -126,7 +126,7 @@ session, without seeing the tasks. Each batch's task prompts and test specs were
 that batch's history was built or remembered; tasks are graded by hidden tests, including tests that fail the fix you'd
 write without knowing the history. The no-memory arm was run on the first of these tasks only; each cell
 has 1–3 runs.
-Everything is in [clarity-ctl-eval](https://github.com/danishnxt/clarity-ctl-eval#readme), with
+Everything is in [clarity-eval](https://github.com/danishnxt/clarity-eval#readme), with
 transcripts, hidden tests and the commands to rerun it. It is also a submodule here at `eval/meterbill`,
 pinned to the eval commit these numbers come from (`git submodule update --init` to fetch it).
 
