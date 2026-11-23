@@ -115,8 +115,8 @@ full every session; by the end of this eval it was already 170 lines of its 200-
 clarity's block stays short, and the rest of the history is a `search` away.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="eval/meterbill/eval-dark.png">
-  <img alt="Bar chart of mean tokens per run on six tasks, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="eval/meterbill/eval-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/eval-dark.png">
+  <img alt="Bar chart of mean tokens per run on six tasks, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="docs/eval-light.png">
 </picture>
 
 How it was measured: a synthetic billing library built over 24 scripted sessions by fresh
@@ -126,8 +126,9 @@ session, without seeing the tasks. Each batch's task prompts and test specs were
 that batch's history was built or remembered; tasks are graded by hidden tests, including tests that fail the fix you'd
 write without knowing the history. The no-memory arm was run on the first of these tasks only; each cell
 has 1–3 runs.
-Everything is in [`eval/meterbill/`](eval/meterbill/README.md), with transcripts, hidden tests and
-the commands to rerun it.
+Everything is in [clarity-ctl-eval](https://github.com/danishnxt/clarity-ctl-eval#readme), with
+transcripts, hidden tests and the commands to rerun it. It is also a submodule here at `eval/meterbill`,
+pinned to the eval commit these numbers come from (`git submodule update --init` to fetch it).
 
 ## Commands
 
