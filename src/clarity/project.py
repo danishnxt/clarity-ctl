@@ -8,7 +8,7 @@ import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import adopt, agents, gitops, lease, render
+from . import adopt, agents, gitops, lease, render, search
 from .model import (
     CLOSED,
     DEFAULT_CONFIG,
@@ -17,10 +17,16 @@ from .model import (
     NEEDS_FOLDER,
     STATUSES,
     TYPES,
+    Decision,
     Item,
     Note,
+    decision_end,
+    decision_key,
+    decision_prefix,
+    decision_tag,
     id_key,
     now as model_now,
+    parse_decision_id,
     parse_id,
     today,
 )
@@ -47,6 +53,11 @@ SUBEPOCH_IGNORES = ["EPOCHS/subepochs/*/*/wt/", "EPOCHS/subepochs/*/*/.lease"]
 LEARNINGS = "LEARNINGS"
 EPOCH_SUBDIRS = ("PLANS", "LOGS", "VIZ", "ANALYSIS")
 LOCK_FILE = "worklog.lock"
+# The least keyword score at which a standing decision is offered as one the new one
+# may replace: about two shared words of middling rarity, a rare word alone is not
+# enough. Scored as in search.search over the standing decisions.
+SIMILAR_MIN = 3.0
+SIMILAR_RATIO = 0.5  # and at least this share of the best hit's score
 
 GITIGNORE_LINES = [
     "# clarity",
@@ -272,9 +283,19 @@ class Project:
         Built from the same dicts that get saved, so it cannot disagree with what lands
         on disk — unlike a dirty flag every future mutation would have to remember to set.
         """
+        decisions = self.worklog.decision_map()
+        made: dict = {}
+        for d in self.worklog.decisions:
+            made.setdefault(d.epoch, []).append((d.id, d.text, d.standing,
+                                                 decision_end(decisions, d.id)))
         return {
             "objectives": self.worklog.objectives.to_dict(),
-            "items": {i.id: i.to_dict() for i in self.worklog.items},
+            # An epoch's page also shows its decisions and where the ones its notes
+            # link to stand now, which change with no write to the epoch itself.
+            "items": {i.id: (i.to_dict(), made.get(i.id),
+                             [decision_tag(decisions, d) for n in i.notes
+                              for d in n.decision or []])
+                      for i in self.worklog.items},
         }
 
     @contextmanager
@@ -352,7 +373,8 @@ class Project:
             if folder and folder.is_dir():
                 path = folder / "EPOCH.md"
                 existing = path.read_text(encoding="utf-8") if path.exists() else None
-                write_if_changed(path, render.epoch_md(item, existing))
+                write_if_changed(path, render.epoch_md(item, existing,
+                                                       self.worklog.decision_map()))
 
     def install_agents(self) -> list[tuple[Path, str]]:
         """Put the clarity block in this project's agent files."""
@@ -360,7 +382,8 @@ class Project:
 
     def state_digest(self) -> str:
         """Where things stand, for the agent block: worklog facts only, so never stale."""
-        return render.state_digest(self.worklog.objectives, self.worklog.all_items())
+        return render.state_digest(self.worklog.objectives, self.worklog.all_items(),
+                                   self.worklog.decisions)
 
     @staticmethod
     def _plans(folder: Path) -> list[str]:
@@ -1087,11 +1110,105 @@ class Project:
                 out[item.id] = marks
         return out
 
-    def note(self, item_id: int | None, text: str) -> Item:
+    def _decision_ids(self, ids: list[str]) -> list[str]:
+        """These decision ids as stored, each one checked to exist (retired is fine).
+        A repeated id counts once."""
+        out: list[str] = []
+        for raw in ids:
+            did = parse_decision_id(raw)
+            if did is None:
+                raise ClarityError(f"{raw!r} is not a decision id — they look like D7", code=2)
+            self.worklog.decision(did)  # refuses an unknown one
+            if did not in out:
+                out.append(did)
+        return out
+
+    def note(self, item_id: int | None, text: str, on: list[str] | None = None) -> Item:
+        """A note on an epoch or idea; `on` links it to decisions it is about."""
+        if decision_prefix(text):
+            raise ClarityError(
+                'a decision is a record of its own, not a note starting DECISION: — use: '
+                'clarity-ctl note <id> "..." --decision', code=2)
         with self._write():
             item = self.worklog.by_id(self.resolve_id(item_id))
-            item.notes.append(Note(at=model_now(), text=text))
+            links = self._decision_ids(on or [])
+            item.notes.append(Note(at=model_now(), text=text, decision=links or None))
         return item
+
+    def decide(self, item_id: int | None, text: str,
+               replaces: list[str] | None = None) -> tuple[Decision, list[Decision]]:
+        """Record a standing decision made in an epoch, retiring the ones it replaces.
+
+        The epoch is provenance only, so it may be in any status, archived included.
+        Every target must exist and still stand; one that was already replaced is
+        refused with the decision to replace instead. A decision can replace several
+        (a merge) and be replaced by one, so a chain never loops. Returns the new
+        decision and the ones it retired.
+        """
+        if decision_prefix(text):
+            raise ClarityError('the text is the decision itself — leave out the DECISION: '
+                               'prefix', code=2)
+        with self._write():
+            item, _ = self.worklog.lookup(self.resolve_id(item_id))
+            targets = [self.worklog.decision(d) for d in self._decision_ids(replaces or [])]
+            for target in targets:
+                if not target.standing:
+                    if target.replaced_by:
+                        raise ClarityError(
+                            f"{target.id} was replaced by {target.replaced_by}; "
+                            f"replace {decision_end(self.worklog.decision_map(), target.id)}",
+                            code=2)
+                    raise ClarityError(
+                        f"{target.id} is already retired ({target.retired['why']}) — "
+                        f"there is nothing to replace", code=2)
+            new = Decision(id=self.worklog.next_decision_id(), epoch=item.id, text=text,
+                           at=model_now(), replaces=[t.id for t in targets])
+            when = model_now()
+            for target in targets:
+                target.replaced_by = new.id
+                target.retired = {"at": when, "why": f"replaced by {new.id}"}
+            self.worklog.decisions.append(new)
+        return new, targets
+
+    def retire_decision(self, decision_id: str, why: str | None = None,
+                        by: str | None = None) -> Decision:
+        """A decision that is no longer true. With `by`, the one that replaces it,
+        recorded after the fact: that must stand, and then lists this one as replaced.
+        No lease, git or merge checks — a decision has no branch."""
+        with self._write():
+            target = self.worklog.decision(decision_id)
+            if not target.standing:
+                after = (f", replaced by {target.replaced_by}" if target.replaced_by
+                         else f" ({target.retired['why']})")
+                raise ClarityError(f"{target.id} is already retired{after}", code=4)
+            if by is not None:
+                if by == target.id:
+                    raise ClarityError(f"{target.id} cannot be replaced by itself", code=2)
+                successor = self.worklog.decision(by)
+                if not successor.standing:
+                    raise ClarityError(f"{by} is retired itself — name a decision that "
+                                       f"stands", code=2)
+                target.replaced_by = by
+                successor.replaces.append(target.id)
+                why = why or f"replaced by {by}"
+            elif not why:
+                raise ClarityError(f'say why {target.id} no longer holds: '
+                                   f'clarity-ctl close {target.id} "<why>"', code=2)
+            target.retired = {"at": model_now(), "why": why}
+        return target
+
+    def similar_decisions(self, decision: Decision, limit: int = 3) -> list[Decision]:
+        """The standing decisions closest to `decision`'s text by keyword — what it
+        might replace. Only those that clear SIMILAR_MIN, so an unrelated one is
+        never offered, and that score at least SIMILAR_RATIO of the best hit's, so a
+        weak echo does not trail a clear match."""
+        others = [d for d in self.worklog.decisions if d.standing and d.id != decision.id]
+        by_id = {d.id: d for d in others}
+        hits = search.search([], decision.text, limit, decisions=others)
+        if not hits:
+            return []
+        floor = max(SIMILAR_MIN, hits[0].score * SIMILAR_RATIO)
+        return [by_id[h.id] for h in hits if h.score >= floor]
 
     def rename(self, item_id: int | None, name: str) -> Item:
         """Change what an item is called. Its folder and branch keep their old slug.
@@ -1271,10 +1388,66 @@ class Project:
     }
     # No `leases` view: who holds what is for agents, and status --json and
     # show <id> --json already carry it.
-    SHOW_NAMES = [*VIEWS, "objective", "repos"]
+    SHOW_NAMES = [*VIEWS, "objective", "repos", "decisions"]
 
-    def query(self, name: str, arg: str | None = None) -> dict:
+    def _decision_data(self, d: Decision) -> dict:
+        return {**d.to_dict(), "status": "standing" if d.standing else "retired"}
+
+    def decision_notes(self, decision_id: str) -> list[dict]:
+        """Every note linked to this decision, from any item — live or archived —
+        oldest first, as {item, at, text}."""
+        found = [{"item": i.id, "at": n.at, "text": n.text}
+                 for i in self.worklog.all_items() for n in i.notes
+                 if decision_id in (n.decision or [])]
+        return sorted(found, key=lambda f: (f["at"], id_key(f["item"])))
+
+    # `show D<n>` stops this many levels back unless asked for all of them.
+    HISTORY_DEPTH = 3
+
+    def _decision_view(self, decision_id: str, full: bool = False) -> dict:
+        """One decision, its notes, and what it replaced: `replaces` walked backward,
+        each ancestor once, with the notes linked to it. Only HISTORY_DEPTH levels
+        unless `full`; `omitted` counts the older ones left out."""
+        decisions = self.worklog.decision_map()
+        d = self.worklog.decision(decision_id, code=4)
+        data = self._decision_data(d)
+        data["notes"] = self.decision_notes(d.id)
+        if not d.standing:
+            data["now"] = decision_end(decisions, d.id)
+        history, seen, omitted = [], {d.id}, 0
+
+        def walk(parent: Decision, depth: int) -> None:
+            nonlocal omitted
+            for did in parent.replaces:
+                if did in seen or did not in decisions:
+                    continue
+                seen.add(did)
+                old = decisions[did]
+                if full or depth <= self.HISTORY_DEPTH:
+                    history.append({**self._decision_data(old), "depth": depth,
+                                    "notes": self.decision_notes(did)})
+                else:
+                    omitted += 1
+                walk(old, depth + 1)
+
+        walk(d, 1)
+        data["history"] = history
+        data["omitted"] = omitted
+        return data
+
+    def decisions_view(self) -> dict:
+        """Every decision: those that stand, then the retired, newest number first."""
+        ordered = sorted(self.worklog.decisions, key=lambda d: decision_key(d.id),
+                         reverse=True)
+        return {"standing": [self._decision_data(d) for d in ordered if d.standing],
+                "retired": [self._decision_data(d) for d in ordered if not d.standing]}
+
+    def query(self, name: str, arg: str | None = None, full: bool = False) -> dict:
         views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
+        if name == "decision":
+            return self._decision_view(parse_decision_id(arg) or str(arg), full)
+        if name == "decisions":
+            return self.decisions_view()
         if name == "item":
             item, archive_file = self.worklog.lookup(self.resolve_id(arg))
             data = item.to_dict()
@@ -1283,6 +1456,9 @@ class Project:
             held = self.leases().get(item.id)
             if held:
                 data["lease"] = held
+            made = [d.id for d in self.worklog.decisions if d.epoch == item.id]
+            if made:
+                data["decisions"] = made
             kids = self.children_of(item.id)
             if kids:
                 # the roll-up: each child's status, outcome, handoff and lease

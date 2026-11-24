@@ -25,7 +25,7 @@ embeddings, no model calls. Simple.
 |---|---|---|
 | **Idea** | something to do later | `clarity-ctl idea "flaky test on macOS"` |
 | **Epoch** | an idea being worked on: its own id, folder, branch and worktree | `clarity-ctl start 12` · `clarity-ctl close 12 "..."` |
-| **Note** | a decision or a result, written the moment it happens | `clarity-ctl note 12 "DECISION: ..."` |
+| **Note** | a decision or a result, written the moment it happens | `clarity-ctl note 12 "..." --decision` |
 
 That's the whole model. An idea becomes an epoch with the same id; notes hang off either.
 Everything else is a view of those three.

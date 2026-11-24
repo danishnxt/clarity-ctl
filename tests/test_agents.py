@@ -118,7 +118,7 @@ def test_the_digest_puts_handoffs_decisions_and_the_closed_list_up_front(project
     """What a fresh session would otherwise spend turns on `show` to find: the id."""
     tried = project.add("split parser")
     project.start(tried.id)
-    project.note(tried.id, "DECISION: stdlib only — ops boxes have no pip")
+    project.decide(tried.id, "stdlib only — ops boxes have no pip")
     project.close(tried.id, "mis-parses agents with spaces", dropped=True)
     shipped = project.add("first cut")
     project.start(shipped.id)

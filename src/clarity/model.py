@@ -46,14 +46,99 @@ class Note:
 
     at: str
     text: str
+    # The decisions this note is about, as stored ("D7"). Set only by `note --on`; never
+    # read out of the text. The link never changes: what a retired decision resolves to
+    # is looked up when the note is shown.
+    decision: list[str] | None = None
 
 
 # The tag that makes a note a handoff. Plain text, so it survives in every view.
 HANDOFF = "HANDOFF:"
-# The tag that makes a note a standing decision: a rule, a constraint, something we
-# won't build and why. It outlives the epoch it was written on, so the agent block
-# lists every one, whichever epoch holds it.
+# What a decision used to be: a note starting with this. Decisions are records of their
+# own now (see Decision); the prefix survives only to refuse it and to migrate old notes.
 DECISION = "DECISION:"
+
+
+def decision_prefix(text: str) -> bool:
+    """Whether `text` starts the way a decision note used to: DECISION:, any case."""
+    return text.strip().upper().startswith(DECISION)
+
+
+def parse_decision_id(value) -> str | None:
+    """A decision id as given — D7 or d7 — in its one stored form, "D7", or None."""
+    text = str(value).strip()
+    if len(text) > 1 and text[0] in "Dd" and text[1:].isdigit() and int(text[1:]) > 0:
+        return f"D{int(text[1:])}"
+    return None
+
+
+def decision_key(decision_id: str) -> int:
+    """The number of a stored decision id, to sort D9 before D10."""
+    return int(decision_id[1:])
+
+
+@dataclass
+class Decision:
+    """A rule, a constraint, something we won't build and why — a record of its own,
+    not a note, so that a later one can retire it. Lives in worklog.yaml beside the
+    items, never inside one: an archived epoch is read-only and a decision made in it
+    can still be replaced.
+
+    `replaces` names the decisions this one retired when it was recorded; `replaced_by`
+    is the single decision that retired this one. Both directions are stored so either
+    can be walked, and a decision has one successor, so the chains never loop.
+    `retired` is {at, why} once it no longer stands, with or without a successor.
+    """
+
+    id: str  # "D7"
+    epoch: int | str  # the item it was made in — provenance only
+    text: str
+    at: str
+    replaces: list[str] = field(default_factory=list)
+    replaced_by: str | None = None
+    retired: dict | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "Decision":
+        epoch = parse_id(raw.get("epoch"))
+        return cls(id=str(raw.get("id")), epoch=raw.get("epoch") if epoch is None else epoch,
+                   text=str(raw.get("text") or ""), at=str(raw.get("at") or ""),
+                   replaces=list(raw.get("replaces") or []),
+                   replaced_by=raw.get("replaced_by"), retired=raw.get("retired") or None)
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "epoch": self.epoch, "text": self.text, "at": self.at,
+                "replaces": list(self.replaces), "replaced_by": self.replaced_by,
+                "retired": self.retired}
+
+    @property
+    def standing(self) -> bool:
+        return self.retired is None
+
+
+def decision_end(decisions: dict[str, Decision], decision_id: str) -> str:
+    """Where `decision_id` stands now: itself if it stands, else its successor, and
+    that one's successor — the last decision of the chain. A retired decision with no
+    successor is its own end."""
+    seen = {decision_id}
+    current = decision_id
+    while True:
+        nxt = decisions[current].replaced_by if current in decisions else None
+        if not nxt or nxt in seen or nxt not in decisions:
+            return current
+        seen.add(nxt)
+        current = nxt
+
+
+def decision_tag(decisions: dict[str, Decision], decision_id: str) -> str:
+    """How a note's link to a decision reads: `D7` while it stands, `D7 → D12` once
+    replaced, with `retired` after whichever one the chain ends on if that is closed
+    without a replacement."""
+    end = decision_end(decisions, decision_id)
+    stands = end in decisions and decisions[end].standing
+    mark = "" if stands else " retired"
+    return f"{decision_id}{mark}" if end == decision_id else f"{decision_id} → {end}{mark}"
+
 
 def parse_id(value) -> int | str | None:
     """An id as given — 7, or "7.1" for a subepoch — in its one stored form, or None.
@@ -143,7 +228,9 @@ class Item:
             if value is not None:
                 out[key] = value
         if self.notes:
-            out["notes"] = [{"at": n.at, "text": n.text} for n in self.notes]
+            out["notes"] = [{"at": n.at, "text": n.text,
+                             **({"decision": list(n.decision)} if n.decision else {})}
+                            for n in self.notes]
         out.update(self.extra)
         return out
 
@@ -162,11 +249,6 @@ class Item:
             if note.text.startswith(HANDOFF):
                 return note.text[len(HANDOFF):].strip()
         return None
-
-    @property
-    def decisions(self) -> list[Note]:
-        """Every note on this item written as a standing decision, oldest first."""
-        return [n for n in self.notes if n.text.startswith(DECISION)]
 
     @property
     def slug(self) -> str:

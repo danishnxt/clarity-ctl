@@ -23,7 +23,19 @@ import textwrap
 import unicodedata
 from datetime import datetime
 
-from .model import CLOSED, DECISION, FUTURE, HANDOFF, IN_FLIGHT, Item, Objectives, id_key
+from .model import (
+    CLOSED,
+    FUTURE,
+    HANDOFF,
+    IN_FLIGHT,
+    Decision,
+    Item,
+    Objectives,
+    decision_end,
+    decision_key,
+    decision_tag,
+    id_key,
+)
 
 # Wrapped here, not by the terminal, so zooming or resizing never re-flows the output.
 # Capped rather than fixed: a terminal narrower than the cap would wrap it again itself,
@@ -352,7 +364,88 @@ def note_points(text: str) -> list[str]:
     return [p.strip() for p in pieces if p.strip()]
 
 
-def item_text(data: dict, marks: dict | None = None) -> str:
+def _links(note: dict, decisions: dict | None) -> str:
+    """The suffix of a note that is about decisions: ` (D7)` while the one it names
+    stands, ` (D7 → D12)` once replaced, resolved now — the stored link never changes."""
+    ids = note.get("decision") or []
+    if not ids:
+        return ""
+    decisions = decisions or {}
+    return " (" + ", ".join(decision_tag(decisions, d) for d in ids) + ")"
+
+
+def _state(decisions: dict[str, Decision], decision_id: str) -> str:
+    """`standing`, `retired → D12` (the decision it resolves to now), or `retired`."""
+    d = decisions[decision_id]
+    if d.standing:
+        return "standing"
+    end = decision_end(decisions, decision_id)
+    return "retired" if end == decision_id else f"retired → {end}"
+
+
+def _made_here(data: dict, decisions: dict | None) -> list[tuple[str, str, str]]:
+    """(id, state, text) of each decision made in this item, for its page."""
+    decisions = decisions or {}
+    return [(d, _state(decisions, d), " ".join(decisions[d].text.split()))
+            for d in data.get("decisions") or [] if d in decisions]
+
+
+def _ref(item_id) -> str:
+    """How an id reads in a list: `#7` for an item, `D12` for a decision."""
+    return str(item_id) if str(item_id).startswith("D") else f"#{item_id}"
+
+
+def decision_text(data: dict) -> str:
+    """`show D12`: the decision, then everything it replaced, oldest ancestors last,
+    each with the notes linked to it from any item. Plain lines, as the other pages."""
+    def head(d: dict, now: str | None = None) -> str:
+        facts = [d["status"] if not now else
+                 (f"retired → {now}" if now != d["id"] else "retired, no replacement"),
+                 f"#{d['epoch']}", d["at"][:16]]
+        return f"{d['id']} " + " · ".join(facts)
+
+    def notes(d: dict, indent: str) -> list[str]:
+        return [f"{indent}#{n['item']} [{n['at'][:16]}] {n['text']}" for n in d["notes"]]
+
+    out = [head(data, data.get("now")), data["text"]]
+    if data["retired"]:
+        out.append(f"retired {data['retired']['at'][:16]}: {data['retired']['why']}")
+    if data["notes"]:
+        out += [f"Notes ({len(data['notes'])})", *notes(data, "  ")]
+    if data["history"]:
+        out.append(f"Replaced ({len(data['history'])})")
+        for old in data["history"]:
+            pad = "  " * old["depth"]
+            out.append(f"{pad}{head(old)}: {' '.join(old['text'].split())}")
+            out += notes(old, pad + "  ")
+    if data.get("omitted"):
+        n = data["omitted"]
+        out.append(f"… {n} older decision{'s' if n != 1 else ''}: "
+                   f"clarity-ctl show {data['id']} --all")
+    return "\n".join(out)
+
+
+def decisions_text(data: dict) -> str:
+    """`show decisions`: those that stand, newest first, then the retired, one line
+    each: `D7 → D12 text` replaced, or `D7 ✗ text (closed: why)` closed alone."""
+    standing, retired = data["standing"], data["retired"]
+    if not standing and not retired:
+        return "no decisions yet"
+    out = [f"Standing ({len(standing)})"]
+    out += [f"- {d['id']} (#{d['epoch']}) {' '.join(d['text'].split())}" for d in standing]
+    if not standing:
+        out.append("- none")
+    if retired:
+        out.append(f"Retired ({len(retired)})")
+        for d in retired:
+            text = " ".join(d["text"].split())
+            out.append(f"- {d['id']} → {d['replaced_by']} {text}" if d["replaced_by"]
+                       else f"- {d['id']} ✗ {text} (closed: {d['retired']['why']})")
+    return "\n".join(out)
+
+
+def item_text(data: dict, marks: dict | None = None,
+              decisions: dict | None = None) -> str:
     """`show <id>`: one item as a page, the way gh issue view and brew info read.
 
     A bold title, one dim line of status, the outcome as prose, then sections. No
@@ -449,13 +542,20 @@ def item_text(data: dict, marks: dict | None = None) -> str:
             elif kid.get("handoff"):
                 out += para(f"handoff: {kid['handoff']}", 4, "dim")
 
+    made = _made_here(data, decisions)
+    if made:
+        out += section(f"Decisions ({len(made)})")
+        for did, state, text in made:
+            out += [f"  {paint(did, 'bold')} {paint(state, 'dim')}"]
+            out += para(text, 4)
+
     notes = data.get("notes") or []
     if notes:
         out += section(f"Notes ({len(notes)})")
         for n, note in enumerate(notes, 1):
             out += ["", "  " + paint(f"{n}.", "bold") + " "
                     + paint(f"{_ago(note['at'])} · {note['at'][:16]}", "dim")]
-            for k, point in enumerate(note_points(note["text"])):
+            for k, point in enumerate(note_points(note["text"] + _links(note, decisions))):
                 if k:
                     out.append("")
                 if _POINT.match(point):
@@ -532,7 +632,7 @@ def search_text(hits, plain: bool = False) -> str:
     (for a pipe) is never painted."""
     lines = []
     for h in hits:
-        lines.append(f"#{h.id} {h.status} {_line(h.name, 80)}")
+        lines.append(f"{_ref(h.id)} {h.status} {_line(h.name, 80)}")
         if h.snippet:
             lines.append(paint(f"  {h.field}: {h.snippet}", None if plain else "dim"))
     return "\n".join(lines) or "no matches"
@@ -565,13 +665,15 @@ def _closed_index(closed: list[Item]) -> str | None:
     return f"{CLOSED_HEADING}\n" + " · ".join(entries)
 
 
-def state_digest(objectives: Objectives, items: list[Item]) -> str:
+def state_digest(objectives: Objectives, items: list[Item],
+                 decisions: list[Decision] | None = None) -> str:
     """Where things stand, as markdown for the agent block: the worklog's part of
     status, plus what status leaves to `show` — handoffs, standing decisions, and the
     newest closed items by id and name.
 
-    `items` should be live and archived together: a decision does not stop standing
-    because its epoch was archived.
+    `items` should be live and archived together. `decisions` are the project's
+    records; only those that still stand are listed, so a reversed one is gone from
+    the block and a command away in `show decisions`.
 
     The block is held within DIGEST_BUDGET characters. Nothing in it grows with the
     project except the standing decisions, which are capped at DIGEST_DECISIONS: the
@@ -590,7 +692,7 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
 
     active = sorted((i for i in items if i.status in IN_FLIGHT), key=lambda i: id_key(i.id))
     for i in active:
-        latest = next((n.text for n in reversed(i.notes) if not n.text.startswith(DECISION)), None)
+        latest = i.notes[-1].text if i.notes else None
         if i.handoff:
             what = f"handoff: {_line(i.handoff, DIGEST_HANDOFF)}"
         elif latest:
@@ -608,25 +710,23 @@ def state_digest(objectives: Objectives, items: list[Item]) -> str:
     more = f" · {len(ideas) - DIGEST_IDEAS} more: `clarity-ctl show next`" if len(ideas) > DIGEST_IDEAS else ""
     out += ["", f"**Up next:** {shown}{more}"]
 
-    decisions = sorted(((n, i) for i in items for n in i.decisions),
-                       key=lambda d: d[0].at, reverse=True)
+    standing = sorted((d for d in decisions or [] if d.standing),
+                      key=lambda d: decision_key(d.id), reverse=True)
     closed = sorted((i for i in items if i.status in CLOSED), key=finished_order, reverse=True)
 
     def block(count: int) -> str:
         """Everything but the closed list, with the `count` newest decisions."""
         lines = list(out)
-        if decisions:
+        if standing:
             lines += ["", "**Standing decisions**, newest first"]
-            lines += [f"- {_line(n.text[len(DECISION):].strip())} (#{i.id})"
-                      for n, i in decisions[:count]]
-            if len(decisions) > count:
-                lines.append(f"- {len(decisions) - count} older: "
-                             "`clarity-ctl search DECISION`")
+            lines += [f"- {_line(d.text)} ({d.id}, #{d.epoch})" for d in standing[:count]]
+            if len(standing) > count:
+                lines.append(f"- {len(standing) - count} older: `clarity-ctl show decisions`")
         return "\n".join(lines)
 
     section = _closed_index(closed)
     tail = f"\n\n{section}" if section else ""
-    for count in range(min(len(decisions), DIGEST_DECISIONS), -1, -1):
+    for count in range(min(len(standing), DIGEST_DECISIONS), -1, -1):
         text = block(count)
         if len(text + tail) <= DIGEST_BUDGET:
             return text + tail
@@ -737,7 +837,7 @@ def _landed_plain(marks: dict | None, bases: dict | None) -> str | None:
     return ", ".join(f"{repo}: {words[m]}" for repo, m in marks.items())
 
 
-def agent_item(data: dict, marks: dict | None = None) -> str:
+def agent_item(data: dict, marks: dict | None = None, decisions: dict | None = None) -> str:
     """`show <id>` where stdout is not a terminal: the page as plain lines. Every note in full, numbered, with
     its timestamp; nothing wrapped, cut or decorated."""
     status = data["status"]
@@ -797,14 +897,20 @@ def agent_item(data: dict, marks: dict | None = None) -> str:
             elif kid.get("handoff"):
                 line += f"; handoff: {kid['handoff']}"
             out.append(line)
+    made = _made_here(data, decisions)
+    if made:
+        out.append(f"Decisions ({len(made)})")
+        out += [f"- {did} {state}: {text}" for did, state, text in made]
     notes = data.get("notes") or []
     if notes:
         out.append(f"Notes ({len(notes)})")
-        out += [f"{n}. [{note['at'][:16]}] {note['text']}" for n, note in enumerate(notes, 1)]
+        out += [f"{n}. [{note['at'][:16]}] {note['text']}{_links(note, decisions)}"
+                for n, note in enumerate(notes, 1)]
     return "\n".join(out)
 
 
-def epoch_md(item: Item, existing: str | None = None) -> str:
+def epoch_md(item: Item, existing: str | None = None,
+             decisions: dict[str, Decision] | None = None) -> str:
     """Generated block on top; anything the human wrote below is preserved.
 
     Deliberately does not index PLANS/. That directory is one anyone can drop a file
@@ -832,9 +938,15 @@ def epoch_md(item: Item, existing: str | None = None) -> str:
         lines.append(f"- **outcome** {item.outcome}")
     lines.append(f"- **started** {item.started or '—'}    **ended** {item.ended or '—'}")
 
+    made = [d for d in (decisions or {}).values() if d.epoch == item.id]
+    if made:
+        lines += ["", "## Decisions"]
+        lines += [f"- **{d.id}** {_state(decisions, d.id)}: {' '.join(d.text.split())}"
+                  for d in made]
     if item.notes:
         lines += ["", "## Tried"]
-        lines += [f"- `{n.at.split()[0]}` {n.text}" for n in item.notes]
+        lines += [f"- `{n.at.split()[0]}` {n.text}"
+                  f"{_links({'decision': n.decision}, decisions)}" for n in item.notes]
     lines += ["", EPOCH_MARK_END, ""]
     generated = "\n".join(lines)
 

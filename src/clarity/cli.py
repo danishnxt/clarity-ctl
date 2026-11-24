@@ -19,7 +19,7 @@ import textwrap
 from pathlib import Path
 
 from . import render, search
-from .model import CLOSED, TYPES, parse_id
+from .model import CLOSED, TYPES, parse_decision_id, parse_id
 from .project import Project
 from .store import ARCHIVE, ClarityError
 
@@ -34,8 +34,9 @@ HOW = """How work goes
       adds the idea, branches, makes the worktree, claims it and prints where to work
   $ clarity-ctl note <id> "..."
       when a decision changes: a reversal, an approach rejected, a result that surprised you
-  $ clarity-ctl note <id> "DECISION: ..."
-      a rule that outlives the epoch; AGENTS.md lists every one for later sessions
+  $ clarity-ctl note <id> "..." --decision
+      a rule that outlives the epoch; AGENTS.md lists those that stand for later sessions
+      --replaces D<n> when it reverses one; `close D<n> "<why>"` when one is no longer true
   $ clarity-ctl note <id> "HANDOFF: ..."
       stopping before it is done: what's done, what's left, what to do first
   $ clarity-ctl close <id> "<what changed and why>"
@@ -46,7 +47,8 @@ HOW = """How work goes
 READ = """Read (never writes) — at a terminal tables; piped, plain text, far smaller for lists
   clarity-ctl status        objective, active, next; --all adds closed
   clarity-ctl show <id>     one item: its folder, branch and every note
-  clarity-ctl show <view>   active | next | closed | all | objective | repos
+  clarity-ctl show <view>   active | next | closed | all | objective | repos | decisions
+  clarity-ctl show D<n>     one decision: its notes and what it replaced
   clarity-ctl show closed   every closed item, by id and name
   clarity-ctl search <words>  items by keyword, in names, outcomes, briefs and notes"""
 
@@ -66,7 +68,7 @@ MORE = """More
   clarity-ctl help reference        every command's help on one page
   clarity-ctl --version · https://github.com/danishnxt/clarity-ctl"""
 
-SHOW_NAMES = "active | next | closed | all | objective | repos | <id>"
+SHOW_NAMES = "active | next | closed | all | objective | repos | decisions | <id> | D<n>"
 
 
 def envelope(command: str, data, warnings=None) -> str:
@@ -271,8 +273,12 @@ def build_parser() -> argparse.ArgumentParser:
                    "  all        everything\n"
                    "  objective  what the project is for\n"
                    "  repos      the repos epochs branch\n"
-                   "  <id>       one item: status, folder, branch, repos, notes, plans; "
-                   "lease in --json\n\n"
+                   "  decisions  every decision: those that stand, then the retired\n"
+                   "  <id>       one item: status, folder, branch, repos, decisions it made, "
+                   "notes, plans; lease in --json\n"
+                   "  D<n>       one decision: whether it stands, the notes linked to it from "
+                   "any item, and the decisions it replaced, each with theirs, back three "
+                   "levels; --all goes all the way back\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`, which carries a "
                    "note count per item, not the notes: `show <id> --json` has them.\n\n"
                    "Where stdout is not a terminal it prints plain text: `show closed` is every "
@@ -280,11 +286,15 @@ def build_parser() -> argparse.ArgumentParser:
                    "is the page with every note in full.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
+    p_show.add_argument("--all", action="store_true",
+                        help="for D<n>: every decision it replaced, not the nearest three "
+                             "levels. Ignored for any other view or id")
     _json_flag(p_show)
 
     p_search = _leaf(sub, "search", "find items by keyword — the id of the one that holds a fact",
                      "Keyword search over every item, live and archived: its name, outcome, "
-                     "brief and every note. Prints the best matches, each with the id and the "
+                     "brief and every note, and the text of every decision (a D-id, standing "
+                     "or retired). Prints the best matches, each with the id and the "
                      "line that matched, so `show <id>` reads the right one. Read-only, and "
                      "nothing is indexed, so it is never stale.\n\n"
                      "Each distinct word of the query scores its best match in an item "
@@ -339,8 +349,13 @@ def build_parser() -> argparse.ArgumentParser:
                               "file holding it; shown first to whoever picks the epoch up")
     _repo_arg(p_start)
 
-    p_close = _leaf(sub, "close", "finish it, with its outcome in one line",
+    p_close = _leaf(sub, "close", "finish it, with its outcome in one line — or retire a decision",
                     section=work, description=
+                    "Given a decision, D<n>, it retires it instead: the decision is no longer "
+                    "true. The reason is required. --by D<m> says which decision replaces it, "
+                    "after the fact (D<m> must stand); the reason then defaults to 'replaced by "
+                    "D<m>'. No lease, branch or merge is involved. A retired decision stays "
+                    "readable, and a note linked to it shows what it resolves to now.\n\n"
                     "Takes an idea too: one already done elsewhere or not wanted is closed "
                     "without starting it, so no folder or branch is made.\n\n"
                     "Close only when the whole task is done and merged. The outcome says "
@@ -352,30 +367,51 @@ def build_parser() -> argparse.ArgumentParser:
                     "example:\n"
                     '  $ clarity-ctl close 7 "mmap halved load time; total unchanged, '
                     'the tokenizer is the bottleneck"\n'
-                    '  $ clarity-ctl close 8 --drop "no gain: I/O is 5% of the run"')
+                    '  $ clarity-ctl close 8 --drop "no gain: I/O is 5% of the run"\n'
+                    '  $ clarity-ctl close D7 "the ops boxes have pip now"\n'
+                    '  $ clarity-ctl close D7 --by D12')
     _id_arg(p_close)
     p_close.add_argument("outcome", nargs="?", metavar="<outcome>",
                          help="what changed and why, in one line (asked for only at a "
                               "terminal)")
     p_close.add_argument("--drop", action="store_true",
-                         help="close as dropped rather than done")
+                         help="close as dropped rather than done (not for a decision)")
+    p_close.add_argument("--by", metavar="D<n>",
+                         help="for a decision: the standing decision that replaces it")
 
-    p_note = _leaf(sub, "note", "record a decision, a DECISION: rule or a HANDOFF:",
+    p_note = _leaf(sub, "note", "record a note, a decision (--decision) or a HANDOFF:",
                    "For what the next session can't get from the code or git. Write one "
                    "the moment a decision changes — a reversal, an approach rejected and "
                    "why, a result that surprised you — not at the end: in a long session "
                    "the end never comes. Routine progress is not a note.\n\n"
-                   "A note starting DECISION: is a rule that outlives the epoch; AGENTS.md "
-                   "lists every one. A note starting HANDOFF: is for stopping before the "
+                   "--decision records a rule that outlives the epoch — a constraint, "
+                   "something we won't build and why — as a decision, D<n>, a record of its "
+                   "own and no note. AGENTS.md lists those that stand. It may be made in any "
+                   "epoch or idea, closed or archived included. --replaces D<n> says it "
+                   "reverses a standing one (a comma list, or repeat, to merge several): "
+                   "those are retired and point at it. Without --replaces, the standing "
+                   "decisions that read closest are listed, in case it replaces one: "
+                   "close D<n> --by D<new>.\n\n"
+                   "--on D<n> links a note to a decision it is about (repeat or comma-list "
+                   "for more); show D<n> gathers them, and the note reads (D7 → D12) once "
+                   "D7 is replaced. A note starting HANDOFF: is for stopping before the "
                    "work is done: what's done, what's left, what to do first; show <id> "
                    "puts the latest up front.\n\n"
                    "example:\n"
                    '  $ clarity-ctl note 7 "mmap rejected: load is 5% of the run"\n'
-                   '  $ clarity-ctl note 7 "DECISION: stdlib only, the ops boxes have no pip"\n'
+                   '  $ clarity-ctl note 7 "stdlib only, the ops boxes have no pip" --decision\n'
+                   '  $ clarity-ctl note 9 "pip is allowed again" --decision --replaces D12\n'
+                   '  $ clarity-ctl note 9 "the ops team agreed in standup" --on D12\n'
                    '  $ clarity-ctl note 7 "HANDOFF: lexer ported; parser half done, start at '
                    'parse_expr"', section=work)
     _id_arg(p_note, "the item")
     p_note.add_argument("text", nargs="?", metavar="<text>", help="the note")
+    p_note.add_argument("--decision", action="store_true",
+                        help="record the text as a decision, not a note")
+    p_note.add_argument("--replaces", action="append", metavar="D<n>[,D<m>]",
+                        help="with --decision: the standing decision(s) this reverses")
+    p_note.add_argument("--on", action="append", metavar="D<n>[,D<m>]",
+                        help="link the note to the decision(s) it is about")
 
     p_spawn = _leaf(sub, "spawn", "start a subepoch of an active epoch, for another agent",
                     section=work, description=
@@ -554,6 +590,23 @@ def _split_id_text(value: str | None, text: str | None) -> tuple[int | None, str
     return None, value
 
 
+def _decision_ids(values: list[str] | None, flag: str) -> list[str]:
+    """`--on D7 --on D8,D9` as ["D7", "D8", "D9"], or a refusal naming the flag."""
+    out = []
+    for value in values or []:
+        for part in value.split(","):
+            did = parse_decision_id(part)
+            if did is None:
+                raise ClarityError(f"{flag} takes decision ids like D7, not {part.strip()!r}",
+                                   code=2)
+            out.append(did)
+    return out
+
+
+# Commands that take an epoch's id first: given a decision's, they say so.
+EPOCH_ONLY = ("start", "rename", "claim", "spawn", "refresh", "add-repo", "drop-repo")
+
+
 def _ask(prompt: str) -> str:
     if not sys.stdin.isatty():
         raise ClarityError(f"{prompt} — pass it as an argument when not on a terminal", code=4)
@@ -667,6 +720,10 @@ def run(args) -> int:
         print((reference_text() if args.topic else build_parser().format_help()).rstrip())
         return 0
 
+    if args.command in EPOCH_ONLY and parse_decision_id(args.id):
+        raise ClarityError(f"{parse_decision_id(args.id)} is a decision; {args.command} "
+                           f"takes an epoch id", code=2)
+
     project = Project.find()
     # A worklog from a newer clarity-ctl still reads; every write refuses on its own,
     # and main prints this after a read only, so a refusal does not say it twice.
@@ -697,13 +754,20 @@ def run(args) -> int:
 
     elif args.command == "show":
         name = args.name
-        if parse_id(name) is not None:
+        if parse_decision_id(name):
+            data = project.query("decision", name, full=args.all)
+            emit(args, "show.decision", data, render.decision_text(data))
+        elif name == "decisions":
+            data = project.query("decisions")
+            emit(args, "show.decisions", data, render.decisions_text(data))
+        elif parse_id(name) is not None:
             data = project.query("item", name)
             marks = project.landed_map(only=data["id"]).get(data["id"])
             if marks:
                 data["landed"] = marks  # per repo, as status --json carries it
             page = render.agent_item if plain else render.item_text
-            emit(args, "show.item", data, page(data, marks))
+            emit(args, "show.item", data,
+                 page(data, marks, project.worklog.decision_map()))
         else:
             if name not in Project.SHOW_NAMES:
                 raise ClarityError(
@@ -720,7 +784,8 @@ def run(args) -> int:
 
     elif args.command == "search":
         by_id = {i.id: i for i in project.worklog.all_items()}
-        hits = search.search(list(by_id.values()), args.words, args.limit)
+        hits = search.search(list(by_id.values()), args.words, args.limit,
+                             decisions=project.worklog.decisions)
         data = {"query": search.terms(args.words),
                 "hits": [{"id": h.id, "name": h.name, "status": h.status,
                           "score": round(h.score, 2), "field": h.field,
@@ -793,7 +858,23 @@ def run(args) -> int:
         item, report = project.refresh(args.id, base=args.base, repos=args.repos)
         print(_refresh_text(item, report))
 
+    elif args.command == "close" and parse_decision_id(args.id):
+        if args.drop:
+            raise ClarityError("--drop is for an epoch or idea; a decision is retired "
+                               f'with: clarity-ctl close {args.id} "<why>"', code=2)
+        did = parse_decision_id(args.id)
+        by = None
+        if args.by:
+            by = parse_decision_id(args.by)
+            if by is None:
+                raise ClarityError(f"--by takes a decision id like D12, not {args.by!r}", code=2)
+        decision = project.retire_decision(did, args.outcome, by=by)
+        print(f"{did} retired: {decision.retired['why']}")
+
     elif args.command == "close":
+        if args.by:
+            raise ClarityError("--by is for closing a decision: clarity-ctl close D<n> "
+                               "--by D<m>", code=2)
         target, text = _split_id_text(args.id, args.outcome)
         outcome = text or _ask("outcome, in one line?")
         # a dropped epoch's work is not meant to land, so only done asks
@@ -813,11 +894,40 @@ def run(args) -> int:
               or "nothing to archive — no closed epochs in worklog.yaml")
 
     elif args.command == "note":
+        if parse_decision_id(args.id):
+            did = parse_decision_id(args.id)
+            raise ClarityError(
+                f'{did} is a decision; note takes an epoch id — a note about it: '
+                f'clarity-ctl note <epoch> "..." --on {did}', code=2)
         target, text = _split_id_text(args.id, args.text)
         if not text:
             raise ClarityError('nothing to note: clarity-ctl note <id> "..."', code=4)
-        item = project.note(target, text)
-        print(f"noted on {item.id} ({len(item.notes)} so far)")
+        on = _decision_ids(args.on, "--on")
+        replaces = _decision_ids(args.replaces, "--replaces")
+        if replaces and not args.decision:
+            raise ClarityError("--replaces goes with --decision: the new decision is the "
+                               "one that replaces", code=2)
+        if on and args.decision:
+            raise ClarityError("--on links a note to a decision, and --decision makes one "
+                               "— use one", code=2)
+        if args.decision:
+            decision, retired = project.decide(target, text, replaces)
+            line = f"{decision.id} recorded on #{decision.epoch}"
+            if retired:
+                line += f"; {', '.join(d.id for d in retired)} retired."
+            else:
+                line += "."
+                close = project.similar_decisions(decision)
+                if close:
+                    line += (f"\nDoes {decision.id} replace any of these? "
+                             f"close D<n> --by {decision.id}\n"
+                             + "\n".join(f"  {d.id} {render._line(d.text, 100)}"
+                                         for d in close))
+            print(line)
+        else:
+            item = project.note(target, text, on=on)
+            print(f"noted on {item.id} ({len(item.notes)} so far)"
+                  + (f", linked to {', '.join(on)}" if on else ""))
 
     elif args.command == "claim":
         item, held = project.claim(args.id, steal=args.steal, as_name=args.as_name)
@@ -833,16 +943,34 @@ def run(args) -> int:
 JSON_READS = ("status", "show", "search")
 
 
+# The optional text of these two, by command. Before Python 3.12.7 argparse hands an
+# optional positional its default as soon as the one before it is seen, so the text of
+# `note 7 --decision "..."` or `close D7 --by D12 "..."` comes back as an extra.
+TEXT_SLOT = {"note": "text", "close": "outcome"}
+
+
+def _parse_args(argv: list[str]):
+    parser = build_parser()
+    args, extra = parser.parse_known_args(argv)
+    slot = TEXT_SLOT.get(getattr(args, "command", None))
+    if (extra and slot and getattr(args, slot) is None and len(extra) == 1
+            and not extra[0].startswith("-")):
+        setattr(args, slot, extra.pop())
+    if extra:
+        parser.error("unrecognized arguments: " + " ".join(extra))
+    return args
+
+
 def _parse(argv: list[str]):
     """parse_args, except that a caller who asked for --json gets an envelope for
     a typo too, rather than usage text it cannot parse. Exit 2, as argparse's own.
     Only the reads have --json; a typo anywhere else is argparse's plain usage error."""
     if "--json" not in argv or argv[0] not in JSON_READS:
-        return build_parser().parse_args(argv)
+        return _parse_args(argv)
     caught = io.StringIO()
     try:
         with contextlib.redirect_stderr(caught):
-            return build_parser().parse_args(argv)
+            return _parse_args(argv)
     except SystemExit as stop:
         if stop.code in (0, None):
             raise  # --help asked for, and printed
