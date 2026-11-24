@@ -1,22 +1,10 @@
-**Problem 1: You're still telling your coding agent what to put in handoff files and AGENTS.md?**
+TLDR: Work how you want with your coding agent without having to worry about check points, project organization, handoff files, updating your claude.md manually, your agent creating random unfindable analysis files anywhere and none of your projects organized similarly.
 
-Every session ends the same way: "write a handoff", "add that to CLAUDE.md", "no, the
-other decision". Forget once, and the next session burns tokens rediscovering what you
-already decided: things you already paid tokens for, sitting in the last session's context and cache.
-
-> clarity-ctl makes that project bookkeeping automatic. Your agent records decisions as it
-works, and every new session starts already knowing where things stand. Nothing to
-remember, nothing to dump at the end.
-
-**Problem 2: Running experiments with no clear direction yet?**
-
-Your agent will clobber your project structure with ad hoc files everywhere, until you never want to open the directory yourself.
-
-> clarity-ctl brings order and structure for free: everything is always findable by you **or** your agent. Logs, analyses, graphs, findings, worktrees, everything.
+Works best with: Research projects, multi-repo projects, projects where direction or tasks aren't clearly defined.
 
 ## clarity-ctl
 
-**Thin, light, robust.** One simple CLI, one YAML file, 20 commands. No server, no database, no
+**Thin, light, robust.** One simple CLI, one YAML file, < 20 commands. No server, no database, no
 embeddings, no model calls. Simple.
 
 ## Four concepts, five minutes
@@ -62,11 +50,11 @@ clarity-ctl close 1 "no gain, I/O is not the bottleneck"
 
 ## Already have a repo?
 
-Run `clarity-ctl adopt` inside it instead. Your agent restructures it once, and nothing moves without your approval. It's a one-time setup: the earlier you do it, the better.
+Run `clarity-ctl adopt` inside it instead. Your agent restructures it once, and nothing moves without your approval. It's a one-time setup and every subsequent work session can benefit from clarity's rules, structure and agent guidance.
 
 ## What your agent sees
 
-clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if the file already exists):
+clarity-ctl maintains one marked block in your `AGENTS.md`:
 
 1. **Rules:** written by `init`, telling your agent how to use clarity.
 
@@ -75,41 +63,53 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
 3. Everything outside the block is yours: put whatever you'd normally put in this file.
 
 ```
-**Objective:** Make the parser fast enough for 1GB inputs
+Objective
+---------
+Make the parser fast enough for 1GB inputs
 
-**Active**
+Active
+------
 - #3 memory-map the input file (work in `EPOCHS/003_2026-11-11__memory-map-the-input-file/wt/parser`) — handoff: mmap works; next profile the tokenizer, start with the deque in tokenize.py
 
-**Up next:** #1 flaky test on macOS · #2 parallel chunk parsing
+Up next
+-------
+#1 flaky test on macOS · #2 parallel chunk parsing
 
-**Standing decisions**, newest first
+
+Standing decisions, newest first
+--------------------------------
 - parse in 64KB chunks, never the whole file; memory stays flat (D1, #3)
 
-**Closed**, newest first — `clarity-ctl show <id>` for the outcome and notes
+Closed, newest first — `clarity-ctl show <id>` for the outcome and notes
 #4 ✓ ring buffer for the tokenizer
-
-...
-
-# YOUR AGENTS.MD content #
 
 ```
 
-## Why not just CLAUDE.md?
+## Why not just keep updating CLAUDE.md?
+
+- AGENTS.md is continuous prose and it contains everything. Think of clarity-ctl as being able to 
+  dynamically create a claude.md file on the fly with only the still relevant portions of the work for a
+  particular task so there is less token wastage. NOTES, DECISIONS, HANDOFFS all exist as explicit objects, each
+  with backlinks, overrideablility, IDs, searchability, etc.
+
+  Many tasks require no LLM at all, trying to reuse work as much as possible. Our always on AGENTS.md state block
+  is auto generated with notes/decisions/handoffs without having to incur LLM cost. 
+
+  How? 
+
+  Well you've already done the work! Your latest notes and decisions on a certain task are already logged and retain the most 
+  relevant recent information ready at hand. Simply use them to generate a block for next time!
 
 - **CLAUDE.md is a file someone has to remember to update.** clarity's state changes as
-  a side effect of commands the agent runs anyway.
-- **Decisions are tied to the work they came from**, with an id and a date.
-- **Standing decisions are listed for every session**, so a rule made in March is still
-  in front of the agent in November.
-- **A reversed decision leaves the list.** The new one names what it replaces, so the
-  agent never reads two rules that contradict each other; `show D<n>` has the history.
+  a side effect of commands the agent runs anyway, so you get more from your LLM.
+
 - **The project folder stays organised.** One folder per epoch, plans and results
   inside it, worktrees out of the way, and code in its own repo so pushing code never
   pushes notes.
 
 ## Does it work?
 
-**It works as well as a good CLAUDE.md or better, for fewer tokens, and nobody has to keep it up
+**It works as well as a well maintained CLAUDE.md or better, for fewer tokens, and nobody has to keep it up
 to date.** Against a carefully hand-kept CLAUDE.md, clarity-ctl passed 12/12 runs to its 11/12
 and used 17% fewer tokens. An agent with no memory failed every run (0/3).
 
