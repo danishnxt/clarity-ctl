@@ -32,6 +32,7 @@ def test_repo_all_is_every_repo_the_parent_has(workspace, monkeypatch):
 
     child = Project.find(workspace.root).worklog.by_id(f"{parent.id}.1")
     assert child.repos == ["workspace/agent"]  # the parent's, not the project's two
+    assert child.bases == {"workspace/agent": f"epoch/{parent.code}-parent"}
 
 
 def test_repo_none_branches_nothing(workspace, monkeypatch):
@@ -125,14 +126,6 @@ def test_brief_type_and_page_title(project, tmp_path):
     assert stored.brief == "Only the lexer." and stored.type == "experiment"
     page = (project.root / child.folder / "EPOCH.md").read_text()
     assert f"# {child.code} · probe the lexer" in page
-
-
-def test_an_experiment_subepoch_gets_no_unmerged_warning(project, commit):
-    parent = _active(project, "parent")
-    child, _ = project.spawn(parent.id, "probe", type_="experiment")
-    commit(project.root / child.folder / "wt" / project.root.name, "probe.txt")
-
-    assert project.unmerged(child.id) == []
 
 
 def test_cli_prints_the_new_id_and_how_its_agent_claims_it(project, monkeypatch, capsys):

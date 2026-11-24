@@ -118,3 +118,11 @@ def test_every_command_and_flag_the_product_names_exists():
                         f"clarity-ctl {' '.join(words)}: {name} has no {word}"
             seen += 1
     assert seen > 80
+
+
+def test_the_agent_text_teaches_the_decision_and_handoff_commands(project, repo):
+    text = (repo / "AGENTS.md").read_text()
+    assert '--decision' in text and "--replaces D<n>" in text and "--on D<n>" in text
+    assert 'close D<n> "<why>"' in text and "DECISION:" not in text
+    assert "--handoff" in text and "HANDOFF:" not in text
+    assert "last thing before you stop" in text and "taken up" in text

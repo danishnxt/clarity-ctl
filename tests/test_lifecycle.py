@@ -568,6 +568,9 @@ def test_a_handoff_withholds_the_close_suggestion(project, repo, git, commit):
     for text in (project.status_text(), project.agent_status_text()):
         assert "its work is in its base" in text and nag not in text
 
+    project.note(item.id, "parser finished after all")         # taken up: the suggestion is back
+    assert nag in project.status_text() and nag in project.agent_status_text()
+
 
 def test_a_refused_start_leaves_no_folder_and_no_lease(project, repo, monkeypatch):
     idea = project.add("will fail")

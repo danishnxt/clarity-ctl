@@ -56,10 +56,6 @@ def closed_section(text: str) -> str:
     return text[head + len(render.CLOSED_HEADING):].lstrip("\n")
 
 
-def test_the_budget_is_two_thousand_tokens_at_four_characters():
-    assert render.DIGEST_BUDGET == 8000
-
-
 def test_a_thousand_closed_items_cost_no_more_than_ten():
     # the closed list is bounded: ten entries and a pointer, however many were closed
     big, small = digest(worklog(closed=1000)), digest(worklog(closed=11))

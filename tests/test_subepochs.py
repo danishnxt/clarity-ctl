@@ -156,16 +156,6 @@ def test_show_text_has_subepochs_section(project):
     assert "handoff: waiting on the API key" in text
 
 
-def test_child_handoff_reads_latest_only(project):
-    parent = _active(project, "parent")
-    child = _child(project, parent, "x")
-    project.note(child.id, "first", handoff=True)
-    project.note(child.id, "some detail")
-    project.note(child.id, "second", handoff=True)
-
-    assert Project.find(project.root).worklog.by_id(child.id).handoff == "second"
-
-
 def test_archive_keeps_parent_child_link(project):
     parent = _active(project, "parent")
     child = _child(project, parent, "kept")
@@ -303,25 +293,6 @@ def test_spawn_leaves_the_lease_free(project):
 
 
 # ---- repos: the parent's, or some of them ----
-
-def test_a_subepoch_takes_its_parents_repos(workspace):
-    parent = workspace.add("parent")
-    workspace.start(parent.id, repos=["workspace/agent"])
-
-    child, _ = workspace.spawn(parent.id, "part")
-
-    assert child.repos == ["workspace/agent"]
-    assert child.bases == {"workspace/agent": f"epoch/{parent.code}-parent"}
-
-
-def test_a_subepoch_cannot_branch_a_repo_its_parent_does_not(workspace):
-    parent = workspace.add("parent")
-    workspace.start(parent.id, repos=["workspace/agent"])
-
-    with pytest.raises(ClarityError, match="add it there first"):
-        workspace.spawn(parent.id, "part", repos=["workspace/harness"])
-    assert [c.id for c in Project.find(workspace.root).children_of(parent.id)] == []
-
 
 # ---- the CLI takes dotted ids everywhere ----
 

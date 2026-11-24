@@ -7,26 +7,45 @@ import sys
 
 import pytest
 
+import conftest
 from clarity import Project, cli, render
 
 BOX = set("│─┌┐└┘├┤┬┴┼")
 
 
-@pytest.fixture
-def worked(workspace, ws_root, commit, monkeypatch):
-    """Two closed (one dropped), one active with a handoff and a commit, one idea."""
+@pytest.fixture(scope="module")
+def _world(tmp_path_factory):
+    """Built once for the module: every test that uses it only reads."""
+    root = tmp_path_factory.mktemp("worked") / "ws"
+    for repo in ("workspace/agent", "workspace/harness", "3rd_party/duckdb"):
+        conftest.init_repo(root / repo)
+    Project.create(root, name="ws")
+    workspace = Project.find(root)
+    for name in ("agent", "harness"):
+        workspace.repo_add(str(root / "workspace" / name))
+    workspace = Project.find(root)
     done, _ = workspace.start(workspace.add("ring buffer for the tokenizer").id, repos=["agent"])
     workspace.close(done.id, "1.6x faster on the 1GB input")
     gone, _ = workspace.start(workspace.add("memory-map the input").id, repos=["agent"])
     workspace.close(gone.id, "no gain, I/O is not the bottleneck", dropped=True)
     live, _ = workspace.start(workspace.add("parallel chunk parsing").id, repos=["agent"],
                               brief="cut load time")
-    commit(ws_root / live.folder / "wt" / "agent", "x.txt")
+    (root / live.folder / "wt" / "agent" / "x.txt").write_text("x.txt\n")
+    conftest.run_git(["add", "-A"], root / live.folder / "wt" / "agent")
+    conftest.run_git(["commit", "-qm", "work"], root / live.folder / "wt" / "agent")
     workspace.note(live.id, "first note\nover two lines")
     workspace.note(live.id, "lexer done", handoff=True)
     idea = workspace.add("flaky test on macOS")
-    monkeypatch.chdir(ws_root)
-    return {"done": done.id, "dropped": gone.id, "live": live.id, "idea": idea.id}
+    return root, {"done": done.id, "dropped": gone.id, "live": live.id, "idea": idea.id}
+
+
+@pytest.fixture
+def worked(_world, monkeypatch):
+    """Two closed (one dropped), one active with a handoff and a commit, one idea. Read-only:
+    a test that writes builds its own."""
+    root, ids = _world
+    monkeypatch.chdir(root)
+    return ids
 
 
 def agent(capsys, *argv) -> str:
@@ -132,7 +151,10 @@ def test_the_rules_do_not_mention_a_flag_for_reads():
 
 
 def test_show_closed_piped_includes_archived_items_so_the_blocks_pointer_is_true(
-        worked, workspace, capsys):
+        workspace, ws_root, capsys, monkeypatch):
+    monkeypatch.chdir(ws_root)               # its own project: this one writes (archive)
+    workspace.close(workspace.add("ring buffer for the tokenizer").id, "1.6x faster")
+    workspace.close(workspace.add("memory-map the input").id, "no gain", dropped=True)
     workspace.archive()                      # both closed items leave the live worklog
     assert not [i for i in workspace.worklog.items if i.status in ("done", "dropped")]
     assert "Closed (2), newest first" in agent(capsys, "show", "closed")

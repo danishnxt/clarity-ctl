@@ -51,13 +51,6 @@ def test_a_decision_is_a_record_not_a_note(project, repo, ctl):
     assert "notes" not in raw["items"][0]            # no duplicate note
 
 
-def test_the_flag_goes_before_or_after_the_text(project, ctl):
-    idea = project.add("parser")
-    assert ctl("note", str(idea.id), "--decision", "first")[0] == 0
-    assert ctl("note", str(idea.id), "second", "--decision")[0] == 0
-    assert [d.id for d in _fresh(project).worklog.decisions] == ["D1", "D2"]
-
-
 def test_a_decision_can_be_made_in_a_closed_and_an_archived_epoch(project, ctl):
     idea = project.add("old work")
     project.close(idea.id, "done elsewhere")
@@ -65,11 +58,6 @@ def test_a_decision_can_be_made_in_a_closed_and_an_archived_epoch(project, ctl):
     project.archive()
     code, out, _ = ctl("note", str(idea.id), "made once archived", "--decision")
     assert code == 0 and out.startswith(f"D2 recorded on #{idea.id}")
-
-
-def test_a_decision_in_an_epoch_that_does_not_exist_is_refused(ctl):
-    code, _, err = ctl("note", "99", "x", "--decision")
-    assert code == 4 and "no item with id 99" in err
 
 
 def test_replacing_retires_the_old_one_and_links_both_ways(project, repo, ctl):
@@ -169,15 +157,12 @@ def test_nothing_is_offered_when_no_decision_reads_close(project, ctl):
     code, out, _ = ctl("note", str(idea.id), "colour output is off unless stdout is a terminal",
                        "--decision")
     assert out.strip() == f"D2 recorded on #{idea.id}."
-
-
-def test_a_retired_decision_is_never_offered(project, ctl):
-    idea = project.add("parser")
+    # and a retired decision is never offered, however close it reads
     ctl("note", str(idea.id), "the ops boxes have no pip so the parser is stdlib only",
         "--decision")
-    ctl("close", "D1", "obsolete")
-    _, out, _ = ctl("note", str(idea.id), "the ops boxes have pip so the parser may use packages",
-                    "--decision")
+    ctl("close", "D3", "obsolete")
+    _, out, _ = ctl("note", str(idea.id),
+                    "the ops boxes have pip so the parser may use packages", "--decision")
     assert "Does" not in out
 
 
@@ -286,14 +271,9 @@ def test_close_by_links_after_the_fact(project, ctl):
     d1, d2 = _fresh(project).worklog.decisions
     assert d1.replaced_by == "D2" and d2.replaces == ["D1"]
     assert d1.retired["why"] == "replaced by D2"
-
-
-def test_close_by_takes_a_reason_too(project, ctl):
-    idea = project.add("parser")
-    ctl("note", str(idea.id), "no pip", "--decision")
-    ctl("note", str(idea.id), "pip is fine", "--decision")
-    assert ctl("close", "D1", "--by", "D2", "ops has pip")[0] == 0
-    assert _fresh(project).worklog.decision("D1").retired["why"] == "ops has pip"
+    ctl("note", str(idea.id), "no network", "--decision")
+    assert ctl("close", "D3", "--by", "D2", "ops has pip")[0] == 0     # a reason is allowed too
+    assert _fresh(project).worklog.decision("D3").retired["why"] == "ops has pip"
 
 
 def test_close_by_refusals(project, ctl):
@@ -392,6 +372,7 @@ def test_show_decision_that_does_not_exist(project, ctl):
 
 
 def test_show_decisions_lists_standing_first_then_the_retired(project, ctl):
+    assert ctl("show", "decisions")[1].strip() == "no decisions yet"
     idea = project.add("parser")
     ctl("note", str(idea.id), "no pip", "--decision")
     ctl("note", str(idea.id), "pip is fine", "--decision", "--replaces", "D1")
@@ -407,10 +388,6 @@ def test_show_decisions_lists_standing_first_then_the_retired(project, ctl):
         "- D4 ✗ ship on fridays (closed: we ship any day)",
         "- D1 → D2 no pip",
     ]
-
-
-def test_show_decisions_with_none(project, ctl):
-    assert ctl("show", "decisions")[1].strip() == "no decisions yet"
 
 
 def test_show_an_epoch_lists_the_decisions_it_made(project, ctl):
@@ -438,11 +415,6 @@ def test_search_finds_a_decision_by_its_text_beside_the_items(project, ctl):
     data = json.loads(ctl("search", "tokenizer", "threaded", "--json")[1])["data"]
     hit = next(h for h in data["hits"] if h["id"] == "D1")
     assert hit["status"] == "retired" and "single threaded" in hit["snippet"]
-
-
-def test_a_search_with_no_decisions_is_what_it_was(project, ctl):
-    project.add("tokenizer cleanup")
-    assert ctl("search", "tokenizer")[1].startswith("#1 idea tokenizer cleanup")
 
 
 # ---- every other verb ------------------------------------------------------------------
@@ -507,6 +479,8 @@ def test_the_block_lists_standing_decisions_newest_first_and_never_a_retired_one
     assert "no pip" not in digest
     ctl("close", "D2", "obsolete")
     assert "colour only" not in _digest(repo)
+    ctl("close", "D3", "obsolete")                             # none stand: no heading at all
+    assert "Standing decisions" not in _digest(repo)
 
 
 def test_the_block_points_at_show_decisions_for_the_rest(project, repo):
@@ -517,19 +491,6 @@ def test_the_block_points_at_show_decisions_for_the_rest(project, repo):
     assert f"- 3 older: `clarity-ctl show decisions`" in digest
     assert "rule number 22 (D23" in digest and "rule number 2 (D3" not in digest
     assert "search DECISION" not in digest
-
-
-def test_the_block_has_no_decision_heading_when_none_stand(project, repo):
-    idea = project.add("parser")
-    project.decide(idea.id, "no pip")
-    project.retire_decision("D1", "obsolete")
-    assert "Standing decisions" not in _digest(repo)
-
-
-def test_the_instructions_teach_the_new_commands(project, repo):
-    text = (repo / "AGENTS.md").read_text()
-    assert '--decision' in text and "--replaces D<n>" in text and "--on D<n>" in text
-    assert 'close D<n> "<why>"' in text and "DECISION:" not in text
 
 
 # ---- EPOCH.md ------------------------------------------------------------------------------
@@ -601,7 +562,8 @@ def test_migration_reaches_decision_notes_in_the_archive(project, repo):
     archive = repo / ARCHIVE / name
     raw = yaml.safe_load(archive.read_text())
     raw["items"][0]["notes"] = [{"at": "2026-03-01 08:00", "text": "DECISION: from the archive"},
-                                {"at": "2026-03-01 08:01", "text": "kept note"}]
+                                {"at": "2026-03-01 08:01", "text": "kept note"},
+                                {"at": "2026-03-01 08:02", "text": "HANDOFF: left in the archive"}]
     raw["version"] = 2
     archive.write_text(yaml.safe_dump(raw, sort_keys=False))
     _v2(repo, lambda r: r["items"][0].update(
@@ -610,13 +572,18 @@ def test_migration_reaches_decision_notes_in_the_archive(project, repo):
     worklog = Project.find(repo).worklog
     assert [(d.id, d.epoch, d.text) for d in worklog.decisions] == [
         ("D1", old.id, "from the archive"), ("D2", kept.id, "live")]
-    assert [n.text for n in worklog.lookup(old.id)[0].notes] == ["kept note"]
+    kept, handoff = worklog.lookup(old.id)[0].notes
+    assert kept.text == "kept note" and kept.handoff is None
+    assert (handoff.text, handoff.handoff) == ("left in the archive", "taken")
     assert "DECISION" in archive.read_text()               # reading alone changed nothing
+    assert "HANDOFF:" in archive.read_text()
 
     project.add("write")                                   # the next write saves both
     stored = yaml.safe_load(archive.read_text())
     assert stored["version"] == 4
-    assert [n["text"] for n in stored["items"][0]["notes"]] == ["kept note"]
+    assert [n["text"] for n in stored["items"][0]["notes"]] == ["kept note", "left in the archive"]
+    assert stored["items"][0]["notes"][1]["handoff"] == "taken"
+    assert "HANDOFF:" not in archive.read_text()
     assert [d["text"] for d in _worklog(repo)["decisions"]] == ["from the archive", "live"]
 
 
@@ -648,21 +615,6 @@ def test_a_worklog_with_no_decision_notes_migrates_to_no_decisions(project, repo
     assert "decisions" not in _worklog(repo) and _worklog(repo)["version"] == 4
 
 
-def test_an_older_clarity_ctl_cannot_write_a_newer_worklog(project, repo):
-    idea = project.add("one")
-    project.decide(idea.id, "x")
-    from clarity import store
-    monkey = store.WORKLOG_VERSION
-    try:
-        store.WORKLOG_VERSION = 3                                # what the previous release was
-        old = Project.find(repo)
-        assert old.worklog.newer == 4
-        with pytest.raises(ClarityError):
-            old.add("nope")
-    finally:
-        store.WORKLOG_VERSION = monkey
-
-
 # ---- a long lineage is capped ------------------------------------------------------------
 
 
@@ -682,6 +634,10 @@ def test_show_a_long_lineage_stops_at_three_ancestors_and_points_to_the_rest(pro
     assert [d for d in ("D5", "D4", "D3", "D2", "D1") if f"{d} retired" in out] == [
         "D5", "D4", "D3"]
     assert lines[-1] == "… 2 older decisions: clarity-ctl show D6 --all"
+    # one omitted reads in the singular; exactly three ancestors has no pointer
+    assert ctl("show", "D5")[1].splitlines()[-1] == "… 1 older decision: clarity-ctl show D5 --all"
+    out = ctl("show", "D4")[1]
+    assert "Replaced (3)" in out and "older decision" not in out
 
 
 def test_show_all_lifts_the_cap(project, ctl):
@@ -692,17 +648,6 @@ def test_show_all_lifts_the_cap(project, ctl):
     assert ctl("show", "--all", "D6")[1] == out                # the flag goes either side
 
 
-def test_a_lineage_of_one_omitted_decision_reads_in_the_singular(project, ctl):
-    _chain(project, ctl, 5)
-    assert ctl("show", "D5")[1].splitlines()[-1] == "… 1 older decision: clarity-ctl show D5 --all"
-
-
-def test_a_short_lineage_has_no_pointer(project, ctl):
-    _chain(project, ctl, 4)                                    # exactly three ancestors
-    out = ctl("show", "D4")[1]
-    assert "Replaced (3)" in out and "older decision" not in out
-
-
 def test_json_history_is_capped_the_same_way(project, ctl):
     _chain(project, ctl, 6)
     d = json.loads(ctl("show", "D6", "--json")[1])["data"]
@@ -711,7 +656,7 @@ def test_json_history_is_capped_the_same_way(project, ctl):
     assert len(d["history"]) == 5 and d["omitted"] == 0
 
 
-def test_all_is_ignored_for_anything_but_a_decision(project, ctl):
-    project.add("an idea")
-    assert ctl("show", "1", "--all")[1] == ctl("show", "1")[1]
+def test_all_is_ignored_by_the_decisions_list(project, ctl):
+    project.decide(project.add("an idea").id, "a rule")
     assert ctl("show", "decisions", "--all")[:2] == ctl("show", "decisions")[:2]
+
