@@ -277,7 +277,8 @@ def build_parser() -> argparse.ArgumentParser:
                    "  <id>       one item: status, folder, branch, repos, decisions it made, "
                    "notes, plans; lease in --json\n"
                    "  D<n>       one decision: whether it stands, the notes linked to it from "
-                   "any item, and the decisions it replaced, each with theirs\n\n"
+                   "any item, and the decisions it replaced, each with theirs, back three "
+                   "levels; --all goes all the way back\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`, which carries a "
                    "note count per item, not the notes: `show <id> --json` has them.\n\n"
                    "Where stdout is not a terminal it prints plain text: `show closed` is every "
@@ -285,6 +286,9 @@ def build_parser() -> argparse.ArgumentParser:
                    "is the page with every note in full.",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
+    p_show.add_argument("--all", action="store_true",
+                        help="for D<n>: every decision it replaced, not the nearest three "
+                             "levels. Ignored for any other view or id")
     _json_flag(p_show)
 
     p_search = _leaf(sub, "search", "find items by keyword — the id of the one that holds a fact",
@@ -751,7 +755,7 @@ def run(args) -> int:
     elif args.command == "show":
         name = args.name
         if parse_decision_id(name):
-            data = project.query("decision", name)
+            data = project.query("decision", name, full=args.all)
             emit(args, "show.decision", data, render.decision_text(data))
         elif name == "decisions":
             data = project.query("decisions")

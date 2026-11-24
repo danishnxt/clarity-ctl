@@ -418,6 +418,10 @@ def decision_text(data: dict) -> str:
             pad = "  " * old["depth"]
             out.append(f"{pad}{head(old)}: {' '.join(old['text'].split())}")
             out += notes(old, pad + "  ")
+    if data.get("omitted"):
+        n = data["omitted"]
+        out.append(f"… {n} older decision{'s' if n != 1 else ''}: "
+                   f"clarity-ctl show {data['id']} --all")
     return "\n".join(out)
 
 

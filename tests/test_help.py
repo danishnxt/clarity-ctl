@@ -40,7 +40,7 @@ def test_every_example_in_the_help_parses():
     for example in examples:
         argv = shlex.split(example)[1:]
         try:
-            cli.build_parser().parse_args(argv)
+            cli._parse_args(argv)
         except SystemExit:
             pytest.fail(f"help example does not parse: {example}")
 

@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from clarity import ClarityError, Project, agents, cli, render
+from clarity.project import SIMILAR_MIN, SIMILAR_RATIO
 from clarity.store import ARCHIVE
 
 
@@ -140,6 +141,26 @@ def test_without_replaces_the_closest_standing_decisions_are_offered(project, ct
     assert lines[0] == f"D4 recorded on #{idea.id}."
     assert lines[1] == "Does D4 replace any of these? close D<n> --by D4"
     assert lines[2].startswith("  D1 ") and len(lines) == 3   # the others read as unrelated
+
+
+def test_a_weak_match_does_not_trail_a_strong_one(project, ctl):
+    idea = project.add("parser")
+    for text in ("the ops boxes have no pip so the parser is stdlib only and ships no packages",
+                 "the parser runs nightly on the ops boxes in a sandbox",
+                 "benchmarks run on the nightly queue only",
+                 "colour output is off unless stdout is a terminal",
+                 "releases are cut from main by hand"):
+        ctl("note", str(idea.id), text, "--decision")
+    new = "the ops boxes now have pip, so the parser may use packages"
+    ctl("note", str(idea.id), new, "--decision")
+    # D2 scores about 3.8 against D1's 10.9: over SIMILAR_MIN, under half the best hit
+    from clarity import search
+    scored = {h.id: h.score for h in search.search(
+        [], new, 6, decisions=[d for d in _fresh(project).worklog.decisions if d.id != "D6"])}
+    assert scored["D2"] >= SIMILAR_MIN and scored["D2"] < scored["D1"] * SIMILAR_RATIO
+    fresh = _fresh(project)
+    offered = fresh.similar_decisions(fresh.worklog.decision("D6"))
+    assert [d.id for d in offered] == ["D1"]
 
 
 def test_nothing_is_offered_when_no_decision_reads_close(project, ctl):
@@ -640,3 +661,57 @@ def test_an_older_clarity_ctl_cannot_write_a_version_3_worklog(project, repo):
             old.add("nope")
     finally:
         store.WORKLOG_VERSION = monkey
+
+
+# ---- a long lineage is capped ------------------------------------------------------------
+
+
+def _chain(project, ctl, length):
+    """D1 <- D2 <- ... <- D<length>, each replacing the one before."""
+    idea = project.add("long thinking")
+    ctl("note", str(idea.id), "v1", "--decision")
+    for n in range(2, length + 1):
+        ctl("note", str(idea.id), f"v{n}", "--decision", "--replaces", f"D{n - 1}")
+
+
+def test_show_a_long_lineage_stops_at_three_ancestors_and_points_to_the_rest(project, ctl):
+    _chain(project, ctl, 6)                                    # D6 and five ancestors
+    code, out, _ = ctl("show", "D6")
+    lines = out.splitlines()
+    assert code == 0 and "Replaced (3)" in lines
+    assert [d for d in ("D5", "D4", "D3", "D2", "D1") if f"{d} retired" in out] == [
+        "D5", "D4", "D3"]
+    assert lines[-1] == "… 2 older decisions: clarity-ctl show D6 --all"
+
+
+def test_show_all_lifts_the_cap(project, ctl):
+    _chain(project, ctl, 6)
+    code, out, _ = ctl("show", "D6", "--all")
+    assert code == 0 and "Replaced (5)" in out and "D1 retired" in out
+    assert "older decision" not in out
+    assert ctl("show", "--all", "D6")[1] == out                # the flag goes either side
+
+
+def test_a_lineage_of_one_omitted_decision_reads_in_the_singular(project, ctl):
+    _chain(project, ctl, 5)
+    assert ctl("show", "D5")[1].splitlines()[-1] == "… 1 older decision: clarity-ctl show D5 --all"
+
+
+def test_a_short_lineage_has_no_pointer(project, ctl):
+    _chain(project, ctl, 4)                                    # exactly three ancestors
+    out = ctl("show", "D4")[1]
+    assert "Replaced (3)" in out and "older decision" not in out
+
+
+def test_json_history_is_capped_the_same_way(project, ctl):
+    _chain(project, ctl, 6)
+    d = json.loads(ctl("show", "D6", "--json")[1])["data"]
+    assert [h["id"] for h in d["history"]] == ["D5", "D4", "D3"] and d["omitted"] == 2
+    d = json.loads(ctl("show", "D6", "--all", "--json")[1])["data"]
+    assert len(d["history"]) == 5 and d["omitted"] == 0
+
+
+def test_all_is_ignored_for_anything_but_a_decision(project, ctl):
+    project.add("an idea")
+    assert ctl("show", "1", "--all")[1] == ctl("show", "1")[1]
+    assert ctl("show", "decisions", "--all")[:2] == ctl("show", "decisions")[:2]

@@ -57,6 +57,7 @@ LOCK_FILE = "worklog.lock"
 # may replace: about two shared words of middling rarity, a rare word alone is not
 # enough. Scored as in search.search over the standing decisions.
 SIMILAR_MIN = 3.0
+SIMILAR_RATIO = 0.5  # and at least this share of the best hit's score
 
 GITIGNORE_LINES = [
     "# clarity",
@@ -1199,11 +1200,15 @@ class Project:
     def similar_decisions(self, decision: Decision, limit: int = 3) -> list[Decision]:
         """The standing decisions closest to `decision`'s text by keyword — what it
         might replace. Only those that clear SIMILAR_MIN, so an unrelated one is
-        never offered."""
+        never offered, and that score at least SIMILAR_RATIO of the best hit's, so a
+        weak echo does not trail a clear match."""
         others = [d for d in self.worklog.decisions if d.standing and d.id != decision.id]
         by_id = {d.id: d for d in others}
         hits = search.search([], decision.text, limit, decisions=others)
-        return [by_id[h.id] for h in hits if h.score >= SIMILAR_MIN]
+        if not hits:
+            return []
+        floor = max(SIMILAR_MIN, hits[0].score * SIMILAR_RATIO)
+        return [by_id[h.id] for h in hits if h.score >= floor]
 
     def rename(self, item_id: int | None, name: str) -> Item:
         """Change what an item is called. Its folder and branch keep their old slug.
@@ -1396,29 +1401,38 @@ class Project:
                  if decision_id in (n.decision or [])]
         return sorted(found, key=lambda f: (f["at"], id_key(f["item"])))
 
-    def _decision_view(self, decision_id: str) -> dict:
-        """One decision, its notes, and everything it replaced: `replaces` walked
-        backward, each ancestor once, with the notes linked to it."""
+    # `show D<n>` stops this many levels back unless asked for all of them.
+    HISTORY_DEPTH = 3
+
+    def _decision_view(self, decision_id: str, full: bool = False) -> dict:
+        """One decision, its notes, and what it replaced: `replaces` walked backward,
+        each ancestor once, with the notes linked to it. Only HISTORY_DEPTH levels
+        unless `full`; `omitted` counts the older ones left out."""
         decisions = self.worklog.decision_map()
         d = self.worklog.decision(decision_id, code=4)
         data = self._decision_data(d)
         data["notes"] = self.decision_notes(d.id)
         if not d.standing:
             data["now"] = decision_end(decisions, d.id)
-        history, seen = [], {d.id}
+        history, seen, omitted = [], {d.id}, 0
 
         def walk(parent: Decision, depth: int) -> None:
+            nonlocal omitted
             for did in parent.replaces:
                 if did in seen or did not in decisions:
                     continue
                 seen.add(did)
                 old = decisions[did]
-                history.append({**self._decision_data(old), "depth": depth,
-                                "notes": self.decision_notes(did)})
+                if full or depth <= self.HISTORY_DEPTH:
+                    history.append({**self._decision_data(old), "depth": depth,
+                                    "notes": self.decision_notes(did)})
+                else:
+                    omitted += 1
                 walk(old, depth + 1)
 
         walk(d, 1)
         data["history"] = history
+        data["omitted"] = omitted
         return data
 
     def decisions_view(self) -> dict:
@@ -1428,10 +1442,10 @@ class Project:
         return {"standing": [self._decision_data(d) for d in ordered if d.standing],
                 "retired": [self._decision_data(d) for d in ordered if not d.standing]}
 
-    def query(self, name: str, arg: str | None = None) -> dict:
+    def query(self, name: str, arg: str | None = None, full: bool = False) -> dict:
         views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
         if name == "decision":
-            return self._decision_view(parse_decision_id(arg) or str(arg))
+            return self._decision_view(parse_decision_id(arg) or str(arg), full)
         if name == "decisions":
             return self.decisions_view()
         if name == "item":
