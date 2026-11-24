@@ -126,7 +126,7 @@ def test_the_digest_puts_handoffs_decisions_and_the_closed_list_up_front(project
     landed = project.add("since flag")
     project.start(landed.id)
     project.note(landed.id, "parsing ISO in UTC")
-    project.note(landed.id, "HANDOFF: --since done; --until is next")
+    project.note(landed.id, "--since done; --until is next", handoff=True)
     project.add("gzip input")
 
     text = (repo / "AGENTS.md").read_text()

@@ -44,7 +44,7 @@ def test_a_decision_is_a_record_not_a_note(project, repo, ctl):
     code, out, _ = ctl("note", str(idea.id), "stdlib only, no pip on the ops boxes", "--decision")
     assert (code, out.strip()) == (0, f"D1 recorded on #{idea.id}.")
     raw = _worklog(repo)
-    assert raw["version"] == 3
+    assert raw["version"] == 4
     [d] = raw["decisions"]
     assert d["id"] == "D1" and d["epoch"] == idea.id and d["replaces"] == []
     assert d["replaced_by"] is None and d["retired"] is None and d["at"]
@@ -588,7 +588,7 @@ def test_a_version_2_worklog_turns_decision_notes_into_records(project, repo):
 
     project.add("next write")
     raw = _worklog(repo)
-    assert raw["version"] == 3 and [d["id"] for d in raw["decisions"]] == ["D1", "D2", "D3"]
+    assert raw["version"] == 4 and [d["id"] for d in raw["decisions"]] == ["D1", "D2", "D3"]
     assert "DECISION" not in (repo / "worklog.yaml").read_text()
     assert project.add("again").id and _fresh(project).worklog.next_decision_id() == "D4"
 
@@ -615,7 +615,7 @@ def test_migration_reaches_decision_notes_in_the_archive(project, repo):
 
     project.add("write")                                   # the next write saves both
     stored = yaml.safe_load(archive.read_text())
-    assert stored["version"] == 3
+    assert stored["version"] == 4
     assert [n["text"] for n in stored["items"][0]["notes"]] == ["kept note"]
     assert [d["text"] for d in _worklog(repo)["decisions"]] == ["from the archive", "live"]
 
@@ -645,18 +645,18 @@ def test_a_worklog_with_no_decision_notes_migrates_to_no_decisions(project, repo
     project.add("one")
     _v2(repo, lambda r: None)
     Project.find(repo).add("two")
-    assert "decisions" not in _worklog(repo) and _worklog(repo)["version"] == 3
+    assert "decisions" not in _worklog(repo) and _worklog(repo)["version"] == 4
 
 
-def test_an_older_clarity_ctl_cannot_write_a_version_3_worklog(project, repo):
+def test_an_older_clarity_ctl_cannot_write_a_newer_worklog(project, repo):
     idea = project.add("one")
     project.decide(idea.id, "x")
     from clarity import store
     monkey = store.WORKLOG_VERSION
     try:
-        store.WORKLOG_VERSION = 2                                # what the previous release was
+        store.WORKLOG_VERSION = 3                                # what the previous release was
         old = Project.find(repo)
-        assert old.worklog.newer == 3
+        assert old.worklog.newer == 4
         with pytest.raises(ClarityError):
             old.add("nope")
     finally:

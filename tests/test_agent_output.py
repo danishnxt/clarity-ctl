@@ -23,7 +23,7 @@ def worked(workspace, ws_root, commit, monkeypatch):
                               brief="cut load time")
     commit(ws_root / live.folder / "wt" / "agent", "x.txt")
     workspace.note(live.id, "first note\nover two lines")
-    workspace.note(live.id, "HANDOFF: lexer done")
+    workspace.note(live.id, "lexer done", handoff=True)
     idea = workspace.add("flaky test on macOS")
     monkeypatch.chdir(ws_root)
     return {"done": done.id, "dropped": gone.id, "live": live.id, "idea": idea.id}
@@ -88,7 +88,7 @@ def test_show_item_piped_has_every_note_in_full_numbered(worked, capsys):
     assert any(line.startswith("repo: workspace/agent — base main") for line in lines)
     assert "Notes (2)" in lines
     assert "first note\nover two lines" in out       # as written, not re-wrapped
-    assert any(line.startswith("2. [") and line.endswith("] HANDOFF: lexer done")
+    assert any(line.startswith("2. [") and line.endswith("] (handoff, live) lexer done")
                for line in lines)
 
 
@@ -142,7 +142,7 @@ def test_show_closed_piped_includes_archived_items_so_the_blocks_pointer_is_true
 def test_show_piped_leads_with_the_handoff_and_status_says_who_holds_the_lease(worked, capsys):
     lines = agent(capsys, "show", str(worked["live"])).splitlines()
     at = lines.index("brief: cut load time")
-    assert lines[at + 1] == "handoff: lexer done"
+    assert lines[at + 1].startswith("handoff (live, ") and lines[at + 1].endswith("): lexer done")
     assert any(line.startswith("lease: ") for line in lines)
     assert any(line.startswith("  lease: ") for line in agent(capsys, "status").splitlines())
 

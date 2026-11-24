@@ -117,8 +117,10 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   Rejected: `close <id> --drop "<why>"`. An idea already built or unwanted closes
   the same way, unstarted. An epoch left open reads as unfinished.
 - Part of it left for later, even with the rest merged: don't close it. Keep it active
-  and write a note starting `HANDOFF:` — what's done, what's left, what to do first.
-  Not an idea: an idea reads as optional, a handoff as next.
+  and write `clarity-ctl note <id> "..." --handoff` — what's done, what's left, what to
+  do first. Write it as the last thing before you stop. It stays live, in the block
+  below, until the next write on that epoch: the next session's first note marks it
+  taken up. Not an idea: an idea reads as optional, a handoff as next.
 - Later, not now: `clarity-ctl idea "<a few words, like a title>"`, then the why and
   the evidence in a note on it: the name is what lists show, the note is the detail.
 - Never hand-edit `worklog.yaml` or the generated block in `EPOCH.md`.

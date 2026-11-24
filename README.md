@@ -191,7 +191,7 @@ When one epoch is too big for one agent, its owner spawns a **subepoch** per par
 
 Subepochs are numbered under their parent (7.1, 7.2), branch from 7's branch and merge
 back into it; only 7 merges to main. The part's agent claims it (`claim 7.1 --as
-expr-agent`), works in the folder `spawn` printed and stops with a `HANDOFF:` note. 7's
+expr-agent`), works in the folder `spawn` printed and stops with a `--handoff` note. 7's
 owner reviews (feedback goes in a note on 7.1), merges 7.1 into 7 and closes it;
 `refresh 7.2` brings the merged work into a sibling. `show 7` gathers each subepoch's
 outcome or latest handoff, and 7 can't close while one is active.

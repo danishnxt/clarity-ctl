@@ -530,7 +530,7 @@ def test_status_json_counts_notes_and_marks_only_what_it_lists(workspace, ws_roo
     live, _ = workspace.start(workspace.add("live work").id, repos=["agent"])
     commit(ws_root / live.folder / "wt" / "agent", "x.txt")  # something to land: unmerged
     workspace.note(live.id, "a decision")
-    workspace.note(live.id, "HANDOFF: stopped here")
+    workspace.note(live.id, "stopped here", handoff=True)
     workspace.close(done.id, "shipped")
     monkeypatch.chdir(ws_root)
 
@@ -563,7 +563,7 @@ def test_a_handoff_withholds_the_close_suggestion(project, repo, git, commit):
     nag = f"clarity-ctl close {item.id}"
     assert nag in project.status_text() and nag in project.agent_status_text()
 
-    project.note(item.id, "HANDOFF: the parser is left")
+    project.note(item.id, "the parser is left", handoff=True)
 
     for text in (project.status_text(), project.agent_status_text()):
         assert "its work is in its base" in text and nag not in text

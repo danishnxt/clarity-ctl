@@ -13,6 +13,7 @@ from .model import (
     CLOSED,
     DEFAULT_CONFIG,
     FUTURE,
+    HANDOFF_LIVE,
     IN_FLIGHT,
     NEEDS_FOLDER,
     STATUSES,
@@ -24,6 +25,7 @@ from .model import (
     decision_key,
     decision_prefix,
     decision_tag,
+    handoff_prefix,
     id_key,
     now as model_now,
     parse_decision_id,
@@ -1123,16 +1125,37 @@ class Project:
                 out.append(did)
         return out
 
-    def note(self, item_id: int | None, text: str, on: list[str] | None = None) -> Item:
-        """A note on an epoch or idea; `on` links it to decisions it is about."""
+    def note(self, item_id: int | None, text: str, on: list[str] | None = None,
+             handoff: bool = False) -> Item:
+        """A note on an epoch or idea; `on` links it to decisions it is about.
+
+        `handoff` makes it the epoch's handoff, live until the next write on it: only
+        for work still in flight, and not alongside `on`. Any note — this one too —
+        takes up the handoff that was live before it.
+        """
         if decision_prefix(text):
             raise ClarityError(
                 'a decision is a record of its own, not a note starting DECISION: — use: '
                 'clarity-ctl note <id> "..." --decision', code=2)
+        if handoff_prefix(text):
+            raise ClarityError(
+                'a handoff is a note of its own kind, not one starting HANDOFF: — use: '
+                'clarity-ctl note <id> "..." --handoff', code=2)
+        if handoff and on:
+            raise ClarityError("--on links a note to a decision, and --handoff writes the "
+                               "handoff — use one", code=2)
         with self._write():
             item = self.worklog.by_id(self.resolve_id(item_id))
+            if handoff and item.status not in IN_FLIGHT:
+                raise ClarityError(
+                    f"{'idea' if item.status == 'idea' else 'epoch'} {item.id} is "
+                    f"{item.status} — a handoff is for work still in flight; start it "
+                    f"first, or write a plain note", code=4)
             links = self._decision_ids(on or [])
-            item.notes.append(Note(at=model_now(), text=text, decision=links or None))
+            at = model_now()
+            item.take_handoff(at)
+            item.notes.append(Note(at=at, text=text, decision=links or None,
+                                   handoff=HANDOFF_LIVE if handoff else None))
         return item
 
     def decide(self, item_id: int | None, text: str,
@@ -1164,6 +1187,7 @@ class Project:
             new = Decision(id=self.worklog.next_decision_id(), epoch=item.id, text=text,
                            at=model_now(), replaces=[t.id for t in targets])
             when = model_now()
+            item.take_handoff(when)  # a decision made in it is the next session's work too
             for target in targets:
                 target.replaced_by = new.id
                 target.retired = {"at": when, "why": f"replaced by {new.id}"}
@@ -1348,6 +1372,7 @@ class Project:
                 # out — the work being closed lives on the former
                 item.extra["end_sha"] = (gitops.branch_sha(self.root, item.branch)
                                          or item.extra.get("end_sha"))
+            item.take_handoff(model_now())
             item.status = "dropped" if dropped else "done"
             item.outcome = outcome
             item.ended = today()
@@ -1442,6 +1467,17 @@ class Project:
         return {"standing": [self._decision_data(d) for d in ordered if d.standing],
                 "retired": [self._decision_data(d) for d in ordered if not d.standing]}
 
+    # `show <id>` prints this many of the newest notes unless asked for all of them.
+    NOTES_SHOWN = 10
+
+    @staticmethod
+    def _item_data(item: Item) -> dict:
+        """The item as stored, plus its live handoff as {text, at} (None once taken up)."""
+        data = item.to_dict()
+        live = item.live_handoff
+        data["handoff"] = {"text": live.text, "at": live.at} if live else None
+        return data
+
     def query(self, name: str, arg: str | None = None, full: bool = False) -> dict:
         views = {**self.VIEWS, "current": IN_FLIGHT | FUTURE}
         if name == "decision":
@@ -1450,7 +1486,12 @@ class Project:
             return self.decisions_view()
         if name == "item":
             item, archive_file = self.worklog.lookup(self.resolve_id(arg))
-            data = item.to_dict()
+            data = self._item_data(item)
+            # The newest NOTES_SHOWN, oldest first as stored; `notes_omitted` counts the
+            # older ones left out, so a note's number is notes_omitted + its place here.
+            if not full and len(item.notes) > self.NOTES_SHOWN:
+                data["notes"] = data["notes"][-self.NOTES_SHOWN:]
+            data["notes_omitted"] = len(item.notes) - len(data.get("notes") or [])
             if archive_file:
                 data["archived"] = f"{ARCHIVE}/{archive_file}"
             held = self.leases().get(item.id)
@@ -1481,7 +1522,7 @@ class Project:
                 f"unknown view {name!r}; try: {', '.join(self.SHOW_NAMES)}, or an id",
                 code=2,
             )
-        return {"items": [i.to_dict() for i in self.worklog.with_status(views[name])]}
+        return {"items": [self._item_data(i) for i in self.worklog.with_status(views[name])]}
 
     def git_state(self, item: Item, folder: Path) -> list[dict]:
         """Per repo, what an agent would otherwise shell out to git for: where the
