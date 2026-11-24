@@ -1,11 +1,20 @@
-TLDR: Work how you want with your coding agent without having to worry about check points, project organization, handoff files, updating your claude.md manually, your agent creating random unfindable analysis files anywhere and none of your projects organized similarly.
+# clarity-ctl
 
-Works best with: Research projects, multi-repo projects, projects where direction or tasks aren't clearly defined.
+**Your agent never forgets. Your project never sprawls. Your token bill shrinks.**
 
-## clarity-ctl
+Stop babysitting your agent's memory. clarity-ctl turns every session into structured,
+searchable project state, so the next one starts sharper and burns fewer tokens getting there.
 
-**Thin, light, robust.** One simple CLI, one YAML file, < 20 commands. No server, no database, no
-embeddings, no model calls. Simple.
+No more "write a handoff file", no more hand-editing AGENTS.md, no more analysis or log files
+scattered all over the codebase. Every session starts knowing where things stand, and ends with your project state
+already primed for the next one.
+
+Built for research, multi-repo work and projects where the direction isn't settled yet.
+
+- **One CLI, one YAML file, 19 commands.** No server, no database, no embeddings, no model calls.
+  `clarity-ctl help` lists them all.
+- **Automatic.** The project state updates as a side effect of commands your agent already runs.
+- **Organised.** One folder per task, worktrees out of the way, notes never pushed with your code.
 
 ## Four concepts, five minutes
 
@@ -17,28 +26,25 @@ embeddings, no model calls. Simple.
 | **Decision** | a rule that outlives the epoch, with an id (D7); a later one can replace it | `clarity-ctl note 12 "..." --decision --replaces D3` |
 
 That's the whole model. An idea becomes an epoch with the same id; notes hang off either;
-a decision comes from an epoch and stays listed until something replaces or retires it.
-Everything else is a view of those four.
+a decision stays listed until something replaces or retires it.
 
 ## Setup in one minute
 
-Requires Python 3.10+ and git. Installs from GitHub:
+Requires Python 3.10+ and git:
 
 ```sh
 uv tool install git+https://github.com/danishnxt/clarity-ctl          # latest main
 uv tool upgrade clarity-ctl                                           # pull the newest
 ```
 
-## New project workflow
+## New project
 
 ```sh
-# setup
 mkdir parser && cd parser
 clarity-ctl init --objective "Make the parser fast enough for 1GB inputs"
 git clone git@github.com:you/parser.git workspace/parser
 clarity-ctl repo add workspace/parser
 
-# begin work
 clarity-ctl start "memory-map the input file" --repo all --brief "cut load time"
 # idea 1, folder, branch, worktree, claimed; prints where to work
 
@@ -50,17 +56,14 @@ clarity-ctl close 1 "no gain, I/O is not the bottleneck"
 
 ## Already have a repo?
 
-Run `clarity-ctl adopt` inside it instead. Your agent restructures it once, and nothing moves without your approval. It's a one-time setup and every subsequent work session can benefit from clarity's rules, structure and agent guidance.
+Run `clarity-ctl adopt` inside it. Your agent restructures it once, and nothing moves
+without your approval.
 
 ## What your agent sees
 
-clarity-ctl maintains one marked block in your `AGENTS.md`:
-
-1. **Rules:** written by `init`, telling your agent how to use clarity.
-
-2. **Where things stand:** a current-state summary that gives your agent a jumping-off point back into the project, like a very small CLAUDE.md. clarity regenerates it after every write, from the epochs and notes already recorded, with no model calls.
-
-3. Everything outside the block is yours: put whatever you'd normally put in this file.
+clarity-ctl keeps one marked block in your `AGENTS.md`, regenerated after every write
+with no model calls: the rules for using clarity, then a short summary of where things
+stand. Everything outside the block is yours.
 
 ```
 Objective
@@ -75,56 +78,43 @@ Up next
 -------
 #1 flaky test on macOS · #2 parallel chunk parsing
 
-
 Standing decisions, newest first
 --------------------------------
 - parse in 64KB chunks, never the whole file; memory stays flat (D1, #3)
 
 Closed, newest first — `clarity-ctl show <id>` for the outcome and notes
 #4 ✓ ring buffer for the tokenizer
-
 ```
 
-## Why not just keep updating CLAUDE.md?
+## Why not just keep updating AGENTS.md?
 
-- AGENTS.md is continuous prose and it contains everything. Think of clarity-ctl as being able to 
-  dynamically create a claude.md file on the fly with only the still relevant portions of the work for a
-  particular task so there is less token wastage. NOTES, DECISIONS, HANDOFFS all exist as explicit objects, each
-  with backlinks, overrideablility, IDs, searchability, etc.
-
-  Many tasks require no LLM at all, trying to reuse work as much as possible. Our always on AGENTS.md state block
-  is auto generated with notes/decisions/handoffs without having to incur LLM cost. 
-
-  How? 
-
-  Well you've already done the work! Your latest notes and decisions on a certain task are already logged and retain the most 
-  relevant recent information ready at hand. Simply use them to generate a block for next time!
-
-- **CLAUDE.md is a file someone has to remember to update.** clarity's state changes as
-  a side effect of commands the agent runs anyway, so you get more from your LLM.
-
-- **The project folder stays organised.** One folder per epoch, plans and results
-  inside it, worktrees out of the way, and code in its own repo so pushing code never
-  pushes notes.
+- **Nobody has to remember to update it.** Your agent writes notes as it works; the block
+  builds itself from them.
+- **Only what's still relevant.** A AGENTS.md grows until it holds everything. clarity's
+  block holds what's live; the rest of the history is a strctured `search` away.
+- **Decisions stay in front of the agent.** A rule from March is still listed in November. This is because clarity-ctl does not rely solely on chronological ordering.
+- **No contradictions.** A reversed decision leaves the active list.
+- **Everything is a record.** Notes, decisions and handoffs have ids, links and dates, so
+  they're searchable instead of buried in prose.
 
 ## Does it work?
 
-**It works as well as a well maintained CLAUDE.md or better, for fewer tokens, and nobody has to keep it up
-to date.** Against a carefully hand-kept CLAUDE.md, clarity-ctl passed 12/12 runs to its 11/12
+**As good as a carefully kept AGENTS.md or better, for fewer tokens, with nobody keeping it
+up to date.** Against a carefully hand-kept AGENTS.md, clarity-ctl passed 12/12 runs to its 11/12
 and used 17% fewer tokens. An agent with no memory failed every run (0/3).
 
 That is on a small project: about 24 sessions of history. Real projects run for hundreds, and
-that's where the gap grows. A CLAUDE.md has to fit everything into one file the agent reads in
+that's where the gap grows. A AGENTS.md has to fit everything into one file the agent reads in
 full every session; by the end of this eval it was already 170 lines of its 200-line budget.
 clarity's block stays short, and the rest of the history is a `search` away.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/eval-dark.png">
-  <img alt="Bar chart of mean tokens per run on six tasks, clarity-ctl vs a hand-kept CLAUDE.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One CLAUDE.md run on H2 failed the hidden tests." src="docs/eval-light.png">
+  <img alt="Bar chart of mean tokens per run on six tasks, clarity-ctl vs a hand-kept AGENTS.md, with each run as a dot. clarity-ctl is lower on four of six: H1 at epoch 16 108k vs 149k, X1 161k vs 185k, H2 93k vs 116k, H1 at epoch 24 120k vs 151k; higher on D1 155k vs 141k and P1 261k vs 244k. One AGENTS.md run on H2 failed the hidden tests." src="docs/eval-light.png">
 </picture>
 
 How it was measured: a synthetic billing library built over 24 scripted sessions by fresh
-Claude Code (Sonnet) sessions. Decisions, reversals and handoffs were said in those sessions and
+AGENTS Code (Sonnet) sessions. Decisions, reversals and handoffs were said in those sessions and
 never written into the code. Each memory arm was kept up to date by the same agent after every
 session, without seeing the tasks. Each batch's task prompts and test specs were committed before
 that batch's history was built or remembered; tasks are graded by hidden tests, including tests that fail the fix you'd
@@ -133,17 +123,6 @@ has 1–3 runs.
 Everything is in [clarity-eval](https://github.com/danishnxt/clarity-eval#readme), with
 transcripts, hidden tests and the commands to rerun it. It is also a submodule here at `eval/meterbill`,
 pinned to the eval commit these numbers come from (`git submodule update --init` to fetch it).
-
-## Commands
-
-    read      status · show · search · help
-    on an id  start · close · note · spawn · refresh · claim · rename · add-repo · drop-repo
-    capture   idea
-    tidy      archive
-    set up    init · adopt · objective · repo add|remove
-
-`clarity-ctl <command> --help` has each one's flags and an example; `clarity-ctl help reference`
-prints them all on one page. Commands take the epoch's id: clarity never guesses which one you mean.
 
 ## Reference
 
