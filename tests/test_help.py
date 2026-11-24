@@ -48,7 +48,7 @@ def test_every_example_in_the_help_parses():
 def test_the_top_help_leads_with_how_work_goes_and_states_the_contract():
     text = cli.build_parser().format_help()
     assert text.index("How work goes") < text.index("All commands") < text.index("Contract")
-    for needed in ("--decision", "HANDOFF:", "--json", "Exit codes", "help reference"):
+    for needed in ("--decision", "--handoff", "--json", "Exit codes", "help reference"):
         assert needed in text
     assert "─" not in text  # plain text: no box lines for an agent to read past
 
@@ -118,3 +118,11 @@ def test_every_command_and_flag_the_product_names_exists():
                         f"clarity-ctl {' '.join(words)}: {name} has no {word}"
             seen += 1
     assert seen > 80
+
+
+def test_the_agent_text_teaches_the_decision_and_handoff_commands(project, repo):
+    text = (repo / "AGENTS.md").read_text()
+    assert '--decision' in text and "--replaces D<n>" in text and "--on D<n>" in text
+    assert 'close D<n> "<why>"' in text and "DECISION:" not in text
+    assert "--handoff" in text and "HANDOFF:" not in text
+    assert "last thing before you stop" in text and "taken up" in text

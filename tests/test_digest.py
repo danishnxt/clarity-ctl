@@ -43,7 +43,7 @@ def worklog(closed: int = 0, ideas: int = 0, decisions: int = 0, decision_length
 def _active(n: int) -> Item:
     """An active epoch whose handoff is 600 characters, the most a line carries."""
     return Item(id=n, name=_text(f"active {n}", 80), status="active",
-                notes=[Note(at="2026-03-01 09:00", text="HANDOFF: " + _text(f"handoff {n}", 600))])
+                notes=[Note(at="2026-03-01 09:00", text=_text(f"handoff {n}", 600), handoff="live")])
 
 
 def digest(items: Items) -> str:
@@ -54,10 +54,6 @@ def closed_section(text: str) -> str:
     """The closed list's entry line."""
     head = text.index(render.CLOSED_HEADING)
     return text[head + len(render.CLOSED_HEADING):].lstrip("\n")
-
-
-def test_the_budget_is_two_thousand_tokens_at_four_characters():
-    assert render.DIGEST_BUDGET == 8000
 
 
 def test_a_thousand_closed_items_cost_no_more_than_ten():

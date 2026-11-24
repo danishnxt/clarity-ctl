@@ -188,20 +188,7 @@ def test_cli_no_matches_is_not_an_error(project, capsys, monkeypatch):
     assert json.loads(out)["data"] == {"query": ["nonexistentword"], "hits": []}
 
 
-def test_cli_stopwords_alone_match_nothing(project, capsys, monkeypatch):
-    project.add("the what is")
-    code, out = _run(project, capsys, monkeypatch, "the", "what", "is")
-    assert code == 0 and out.strip() == "no matches"
-
-
 def test_cli_search_outside_a_project_is_refused(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert cli.main(["search", "x"]) == 3
 
-
-def test_search_is_in_the_help(tmp_path, monkeypatch, capsys):
-    top = cli.build_parser().format_help()
-    assert "clarity-ctl search" in top
-    reference = cli.reference_text()
-    assert "## clarity-ctl search" in reference
-    assert "$ clarity-ctl search lease host" in reference

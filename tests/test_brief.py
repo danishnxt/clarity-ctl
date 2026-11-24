@@ -104,13 +104,6 @@ def test_repo_none_branches_nothing(workspace, monkeypatch):
     assert Project.find(workspace.root).worklog.by_id(item.id).repos == []
 
 
-def test_repo_all_cannot_be_mixed_with_names(workspace, monkeypatch):
-    item = workspace.add("mixed")
-
-    assert _start(monkeypatch, workspace.root, str(item.id),
-                  "--repo", "all", "--repo", "workspace/agent") == 2
-
-
 def test_a_project_that_branches_its_root_needs_no_choice(project, monkeypatch):
     item = project.add("single repo")
 

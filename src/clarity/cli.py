@@ -37,8 +37,9 @@ HOW = """How work goes
   $ clarity-ctl note <id> "..." --decision
       a rule that outlives the epoch; AGENTS.md lists those that stand for later sessions
       --replaces D<n> when it reverses one; `close D<n> "<why>"` when one is no longer true
-  $ clarity-ctl note <id> "HANDOFF: ..."
-      stopping before it is done: what's done, what's left, what to do first
+  $ clarity-ctl note <id> "..." --handoff
+      the last thing before stopping short of done: what's done, what's left, what to do
+      first. Live until the next write on <id>, which takes it up; only live ones show
   $ clarity-ctl close <id> "<what changed and why>"
       only once all of it is merged; --drop "<why>" when it didn't work
   $ clarity-ctl idea "<a few words>"
@@ -279,16 +280,19 @@ def build_parser() -> argparse.ArgumentParser:
                    "  D<n>       one decision: whether it stands, the notes linked to it from "
                    "any item, and the decisions it replaced, each with theirs, back three "
                    "levels; --all goes all the way back\n\n"
+                   "A live handoff is shown at the top of an item's page; the notes list holds "
+                   "the ten newest, with a line saying how many older ones --all adds.\n\n"
                    "What `status` prints, as data, is `clarity-ctl status --json`, which carries a "
                    "note count per item, not the notes: `show <id> --json` has them.\n\n"
                    "Where stdout is not a terminal it prints plain text: `show closed` is every "
                    "closed item as `#id ✓ name` (✗ dropped), newest first; `show <id>` "
-                   "is the page with every note in full.",
+                   "is the page with the ten newest notes (--all for every one).",
                    section=look)
     p_show.add_argument("name", metavar="<view|id>", help=SHOW_NAMES)
     p_show.add_argument("--all", action="store_true",
-                        help="for D<n>: every decision it replaced, not the nearest three "
-                             "levels. Ignored for any other view or id")
+                        help="for an id: every note, not the ten newest; for D<n>: every "
+                             "decision it replaced, not the nearest three levels. Ignored "
+                             "for any other view")
     _json_flag(p_show)
 
     p_search = _leaf(sub, "search", "find items by keyword — the id of the one that holds a fact",
@@ -360,7 +364,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "without starting it, so no folder or branch is made.\n\n"
                     "Close only when the whole task is done and merged. The outcome says "
                     "what changed and why — for a bug, what was wrong. Part of it left for "
-                    "later: don't close; keep it active and write a HANDOFF: note.\n\n"
+                    "later: don't close; keep it active and write a handoff: note <id> "
+                    "\"...\" --handoff.\n\n"
                     "Keeps the branch and records its SHA, and releases the lease. Never "
                     "merges: merge first. --drop closes it as dropped, the outcome saying "
                     "why it didn't work. start <id> picks a closed epoch back up.\n\n"
@@ -379,7 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_close.add_argument("--by", metavar="D<n>",
                          help="for a decision: the standing decision that replaces it")
 
-    p_note = _leaf(sub, "note", "record a note, a decision (--decision) or a HANDOFF:",
+    p_note = _leaf(sub, "note", "record a note, a decision (--decision) or a handoff (--handoff)",
                    "For what the next session can't get from the code or git. Write one "
                    "the moment a decision changes — a reversal, an approach rejected and "
                    "why, a result that surprised you — not at the end: in a long session "
@@ -394,16 +399,21 @@ def build_parser() -> argparse.ArgumentParser:
                    "close D<n> --by D<new>.\n\n"
                    "--on D<n> links a note to a decision it is about (repeat or comma-list "
                    "for more); show D<n> gathers them, and the note reads (D7 → D12) once "
-                   "D7 is replaced. A note starting HANDOFF: is for stopping before the "
-                   "work is done: what's done, what's left, what to do first; show <id> "
-                   "puts the latest up front.\n\n"
+                   "D7 is replaced.\n\n"
+                   "--handoff is for stopping before the work is done: what's done, what's "
+                   "left, what to do first. Write it as the last thing you do. It stays "
+                   "live, shown at the top of show <id> and in AGENTS.md, until the next "
+                   "write on that epoch — the next session's first note, a decision or "
+                   "the close — which marks it taken up and drops it from both; it stays "
+                   "in the notes. A new handoff takes up the one before. Only for an "
+                   "epoch in flight, and not with --decision or --on.\n\n"
                    "example:\n"
                    '  $ clarity-ctl note 7 "mmap rejected: load is 5% of the run"\n'
                    '  $ clarity-ctl note 7 "stdlib only, the ops boxes have no pip" --decision\n'
                    '  $ clarity-ctl note 9 "pip is allowed again" --decision --replaces D12\n'
                    '  $ clarity-ctl note 9 "the ops team agreed in standup" --on D12\n'
-                   '  $ clarity-ctl note 7 "HANDOFF: lexer ported; parser half done, start at '
-                   'parse_expr"', section=work)
+                   '  $ clarity-ctl note 7 "lexer ported; parser half done, start at '
+                   'parse_expr" --handoff', section=work)
     _id_arg(p_note, "the item")
     p_note.add_argument("text", nargs="?", metavar="<text>", help="the note")
     p_note.add_argument("--decision", action="store_true",
@@ -412,6 +422,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="with --decision: the standing decision(s) this reverses")
     p_note.add_argument("--on", action="append", metavar="D<n>[,D<m>]",
                         help="link the note to the decision(s) it is about")
+    p_note.add_argument("--handoff", action="store_true",
+                        help="write the text as this epoch's handoff: live until the next "
+                             "write on it")
 
     p_spawn = _leaf(sub, "spawn", "start a subepoch of an active epoch, for another agent",
                     section=work, description=
@@ -422,7 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
                     "EPOCHS/subepochs/<7's folder>/, and 7 cannot close while it is "
                     "active.\n\n"
                     "The lease is left free for the agent doing the part: it claims with "
-                    "claim <id> --as <name>, and writes a HANDOFF: note when it stops. "
+                    "claim <id> --as <name>, and writes a --handoff note when it stops. "
                     "Whoever owns 7 reviews, merges, and closes it.\n\n"
                     "Quick work that needs no branch of its own is a note on 7, not a "
                     "subepoch.")
@@ -761,7 +774,7 @@ def run(args) -> int:
             data = project.query("decisions")
             emit(args, "show.decisions", data, render.decisions_text(data))
         elif parse_id(name) is not None:
-            data = project.query("item", name)
+            data = project.query("item", name, full=args.all)
             marks = project.landed_map(only=data["id"]).get(data["id"])
             if marks:
                 data["landed"] = marks  # per repo, as status --json carries it
@@ -904,6 +917,12 @@ def run(args) -> int:
             raise ClarityError('nothing to note: clarity-ctl note <id> "..."', code=4)
         on = _decision_ids(args.on, "--on")
         replaces = _decision_ids(args.replaces, "--replaces")
+        if args.handoff:
+            for flag, given in (("--decision", args.decision), ("--on", on),
+                                ("--replaces", replaces)):
+                if given:
+                    raise ClarityError(f"--handoff writes the epoch's handoff and cannot go "
+                                       f"with {flag} — use one", code=2)
         if replaces and not args.decision:
             raise ClarityError("--replaces goes with --decision: the new decision is the "
                                "one that replaces", code=2)
@@ -925,9 +944,11 @@ def run(args) -> int:
                                          for d in close))
             print(line)
         else:
-            item = project.note(target, text, on=on)
-            print(f"noted on {item.id} ({len(item.notes)} so far)"
-                  + (f", linked to {', '.join(on)}" if on else ""))
+            item = project.note(target, text, on=on, handoff=args.handoff)
+            print(f"{'handoff noted' if args.handoff else 'noted'} on {item.id} "
+                  f"({len(item.notes)} so far)"
+                  + (f", linked to {', '.join(on)}" if on else "")
+                  + ("; live until the next write on it" if args.handoff else ""))
 
     elif args.command == "claim":
         item, held = project.claim(args.id, steal=args.steal, as_name=args.as_name)

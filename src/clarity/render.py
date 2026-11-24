@@ -26,7 +26,7 @@ from datetime import datetime
 from .model import (
     CLOSED,
     FUTURE,
-    HANDOFF,
+    HANDOFF_LIVE,
     IN_FLIGHT,
     Decision,
     Item,
@@ -174,7 +174,7 @@ def _cell(item: Item, leases: dict | None, stale: dict | None,
         paras.append((f"⚠ {quiet} — clarity-ctl note {item.id} \"...\"", "yellow", False))
     if item.status in IN_FLIGHT and marks and set(marks.values()) == {"merged"}:
         # only this one: unmerged is every epoch in flight, so saying it is noise
-        # a HANDOFF note says work is left, so closing is not the next step
+        # a live handoff says work is left, so closing is not the next step
         close = "" if item.handoff else f" — clarity-ctl close {item.id} \"...\""
         paras.append((f"✓ its work is in its base{close}", "green", False))
     for trail in (stale or {}).get(item.id, []):
@@ -374,6 +374,23 @@ def _links(note: dict, decisions: dict | None) -> str:
     return " (" + ", ".join(decision_tag(decisions, d) for d in ids) + ")"
 
 
+def _handoff_mark(note) -> str | None:
+    """How a handoff note is labelled in a list of notes: `handoff, live`, or
+    `handoff, taken up <date>`. None for any other note. Takes a Note or its dict."""
+    get = note.get if isinstance(note, dict) else lambda k: getattr(note, k, None)
+    if not get("handoff"):
+        return None
+    if get("handoff") == HANDOFF_LIVE:
+        return "handoff, live"
+    return f"handoff, taken up {(get('taken_at') or '')[:10]}".rstrip()
+
+
+def _older(omitted: int, item_id) -> str:
+    """The line before a capped list of notes: how many are left out, and the way to them."""
+    noun = "note" if omitted == 1 else "notes"
+    return f"… {omitted} older {noun}: clarity-ctl show {item_id} --all"
+
+
 def _state(decisions: dict[str, Decision], decision_id: str) -> str:
     """`standing`, `retired → D12` (the decision it resolves to now), or `retired`."""
     d = decisions[decision_id]
@@ -494,6 +511,11 @@ def item_text(data: dict, marks: dict | None = None,
     if data.get("outcome"):
         out += [""] + para(data["outcome"], 2)
 
+    live = data.get("handoff")
+    if live:
+        out += section(f"Handoff (live, {live['at'][:10]})")
+        out += para(live["text"], 2)
+
     if data.get("brief"):
         out += section("Brief")
         out += para(data["brief"], 2)
@@ -550,11 +572,16 @@ def item_text(data: dict, marks: dict | None = None,
             out += para(text, 4)
 
     notes = data.get("notes") or []
+    omitted = data.get("notes_omitted") or 0
     if notes:
-        out += section(f"Notes ({len(notes)})")
-        for n, note in enumerate(notes, 1):
+        out += section(f"Notes ({len(notes) + omitted})")
+        if omitted:
+            out += ["  " + paint(_older(omitted, data["id"]), "dim")]
+        for n, note in enumerate(notes, omitted + 1):
+            mark = _handoff_mark(note)
             out += ["", "  " + paint(f"{n}.", "bold") + " "
-                    + paint(f"{_ago(note['at'])} · {note['at'][:16]}", "dim")]
+                    + paint(f"{_ago(note['at'])} · {note['at'][:16]}"
+                            + (f" · {mark}" if mark else ""), "dim")]
             for k, point in enumerate(note_points(note["text"] + _links(note, decisions))):
                 if k:
                     out.append("")
@@ -692,7 +719,9 @@ def state_digest(objectives: Objectives, items: list[Item],
 
     active = sorted((i for i in items if i.status in IN_FLIGHT), key=lambda i: id_key(i.id))
     for i in active:
-        latest = i.notes[-1].text if i.notes else None
+        # a handoff note is never "the last note": taken up, it is history, not news
+        plain = [n for n in i.notes if not n.handoff]
+        latest = plain[-1].text if plain else None
         if i.handoff:
             what = f"handoff: {_line(i.handoff, DIGEST_HANDOFF)}"
         elif latest:
@@ -858,10 +887,10 @@ def agent_item(data: dict, marks: dict | None = None, decisions: dict | None = N
     out.append(" · ".join(facts))
     if data.get("brief"):
         out.append(f"brief: {data['brief']}")
-    latest = next((n["text"][len(HANDOFF):].strip() for n in reversed(data.get("notes") or [])
-                   if n["text"].startswith(HANDOFF)), None)
-    if latest:
-        out.append(f"handoff: {latest}")  # as the human page does: up front, not at note 9
+    live = data.get("handoff")
+    if live:
+        # as the human page does: up front, not at note 9
+        out.append(f"handoff (live, {live['at'][:10]}): {live['text']}")
     if data.get("outcome"):
         out.append(f"outcome: {data['outcome']}")
     held = _lease(data.get("lease"))
@@ -902,10 +931,15 @@ def agent_item(data: dict, marks: dict | None = None, decisions: dict | None = N
         out.append(f"Decisions ({len(made)})")
         out += [f"- {did} {state}: {text}" for did, state, text in made]
     notes = data.get("notes") or []
+    omitted = data.get("notes_omitted") or 0
     if notes:
-        out.append(f"Notes ({len(notes)})")
-        out += [f"{n}. [{note['at'][:16]}] {note['text']}{_links(note, decisions)}"
-                for n, note in enumerate(notes, 1)]
+        out.append(f"Notes ({len(notes) + omitted})")
+        if omitted:
+            out.append(_older(omitted, data["id"]))
+        out += [f"{n}. [{note['at'][:16]}] "
+                f"{f'({_handoff_mark(note)}) ' if _handoff_mark(note) else ''}"
+                f"{note['text']}{_links(note, decisions)}"
+                for n, note in enumerate(notes, omitted + 1)]
     return "\n".join(out)
 
 
@@ -938,6 +972,9 @@ def epoch_md(item: Item, existing: str | None = None,
         lines.append(f"- **outcome** {item.outcome}")
     lines.append(f"- **started** {item.started or '—'}    **ended** {item.ended or '—'}")
 
+    live = item.live_handoff
+    if live:
+        lines += ["", f"## Handoff (live, {live.at[:10]})", live.text]
     made = [d for d in (decisions or {}).values() if d.epoch == item.id]
     if made:
         lines += ["", "## Decisions"]
@@ -945,7 +982,8 @@ def epoch_md(item: Item, existing: str | None = None,
                   for d in made]
     if item.notes:
         lines += ["", "## Tried"]
-        lines += [f"- `{n.at.split()[0]}` {n.text}"
+        lines += [f"- `{n.at.split()[0]}` "
+                  f"{f'({_handoff_mark(n)}) ' if _handoff_mark(n) else ''}{n.text}"
                   f"{_links({'decision': n.decision}, decisions)}" for n in item.notes]
     lines += ["", EPOCH_MARK_END, ""]
     generated = "\n".join(lines)

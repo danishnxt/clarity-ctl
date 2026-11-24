@@ -50,10 +50,32 @@ class Note:
     # read out of the text. The link never changes: what a retired decision resolves to
     # is looked up when the note is shown.
     decision: list[str] | None = None
+    # Set only on a handoff: "live" until the next write on the item, then "taken", with
+    # `taken_at` the moment of that write. Reading never changes it. See Item.take_handoff.
+    handoff: str | None = None
+    taken_at: str | None = None
+
+    def to_dict(self) -> dict:
+        out: dict = {"at": self.at, "text": self.text}
+        if self.decision:
+            out["decision"] = list(self.decision)
+        if self.handoff:
+            out["handoff"] = self.handoff
+        if self.taken_at:
+            out["taken_at"] = self.taken_at
+        return out
 
 
-# The tag that makes a note a handoff. Plain text, so it survives in every view.
+# What a handoff used to be: a note starting with this. A handoff is a flag on a note now
+# (`note --handoff`); the prefix survives only to refuse it and to migrate old notes.
 HANDOFF = "HANDOFF:"
+HANDOFF_LIVE = "live"
+HANDOFF_TAKEN = "taken"
+
+
+def handoff_prefix(text: str) -> bool:
+    """Whether `text` starts the way a handoff note used to: HANDOFF:, any case."""
+    return text.strip().upper().startswith(HANDOFF)
 # What a decision used to be: a note starting with this. Decisions are records of their
 # own now (see Decision); the prefix survives only to refuse it and to migrate old notes.
 DECISION = "DECISION:"
@@ -228,9 +250,7 @@ class Item:
             if value is not None:
                 out[key] = value
         if self.notes:
-            out["notes"] = [{"at": n.at, "text": n.text,
-                             **({"decision": list(n.decision)} if n.decision else {})}
-                            for n in self.notes]
+            out["notes"] = [n.to_dict() for n in self.notes]
         out.update(self.extra)
         return out
 
@@ -242,13 +262,27 @@ class Item:
         return self.started is None and self.branch is None
 
     @property
-    def handoff(self) -> str | None:
-        """The latest note an agent wrote as its handoff: a note starting `HANDOFF:`.
-        What is finished, what is stuck, what the next agent should do first."""
+    def live_handoff(self) -> Note | None:
+        """The note holding this item's handoff while it is still live — written and not
+        yet taken up. At most one: writing a new handoff takes the one before."""
         for note in reversed(self.notes):
-            if note.text.startswith(HANDOFF):
-                return note.text[len(HANDOFF):].strip()
+            if note.handoff == HANDOFF_LIVE:
+                return note
         return None
+
+    @property
+    def handoff(self) -> str | None:
+        """The live handoff's text: what is finished, what is stuck, what the next
+        session should do first. None once the next session has taken it up."""
+        note = self.live_handoff
+        return note.text if note else None
+
+    def take_handoff(self, at: str) -> None:
+        """Mark the live handoff taken up as of `at`. Called by every write on the item
+        that is the next session's work — a note, a decision, a close — never by a read."""
+        note = self.live_handoff
+        if note:
+            note.handoff, note.taken_at = HANDOFF_TAKEN, at
 
     @property
     def slug(self) -> str:

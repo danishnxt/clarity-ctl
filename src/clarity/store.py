@@ -14,11 +14,15 @@ import yaml
 from .model import (
     DEFAULT_CONFIG,
     STATUSES,
+    HANDOFF_LIVE,
+    HANDOFF_TAKEN,
+    IN_FLIGHT,
     Decision,
     Item,
     Objectives,
     decision_key,
     decision_prefix,
+    handoff_prefix,
     id_key,
     parse_id,
     today,
@@ -124,8 +128,10 @@ def load_yaml(path: Path) -> dict:
 # clarity-ctl would misread the file — a renamed field or status, not an added
 # field, which older code already carries through untouched in `extra`. Version 3
 # moved decisions out of the notes into their own list: an older one would show the
-# list as nothing and the notes as gone.
-WORKLOG_VERSION = 3
+# list as nothing and the notes as gone. Version 4 made a handoff a flag on its note
+# (`handoff: live|taken`) in place of a `HANDOFF:` prefix in its text: an older one
+# would show the flag as nothing and treat every handoff as a plain note.
+WORKLOG_VERSION = 4
 
 
 def _pull_decisions(raw_items: list, found: list, taken: set | None = None) -> bool:
@@ -154,14 +160,39 @@ def _pull_decisions(raw_items: list, found: list, taken: set | None = None) -> b
     return changed
 
 
+def _migrate_handoffs(raw_items: list) -> bool:
+    """Turn every `HANDOFF:` note in these raw items into a handoff note: the prefix
+    goes, the flag comes. Per item, the latest one is live only if the item is in
+    flight and no note was written after it; any other is taken, at the next note's
+    time if there is one, else the day the item ended, else its own. True if any changed.
+    Idempotent: a note without the prefix is left alone."""
+    changed = False
+    for item in raw_items:
+        notes = item.get("notes") or []
+        marked = [k for k, n in enumerate(notes) if handoff_prefix(str(n.get("text") or ""))]
+        for k in marked:
+            note = notes[k]
+            text = str(note.get("text") or "").strip()
+            note["text"] = text[len("HANDOFF:"):].strip()
+            last = k == marked[-1]
+            if last and k == len(notes) - 1 and item.get("status") in IN_FLIGHT:
+                note["handoff"] = HANDOFF_LIVE
+            else:
+                note["handoff"] = HANDOFF_TAKEN
+                later = notes[k + 1].get("at") if k + 1 < len(notes) else None
+                note["taken_at"] = str(later or item.get("ended") or note.get("at") or "")
+            changed = True
+    return changed
+
+
 def _migrate(raw: dict, archive_docs: list | None = None, taken: set | None = None) -> dict:
     """An older worklog, brought up to WORKLOG_VERSION in memory. Saved on the next write.
 
     One step per version, in order, so a worklog several versions behind takes
     every step it missed. No version at all is version 1: it was always written.
 
-    `archive_docs` are the archive files as read ([(path, doc)]); the step to version
-    3 takes decision notes out of them in memory too, and Worklog.save writes them back.
+    `archive_docs` are the archive files as read ([(path, doc)]); the steps to versions
+    3 and 4 change them in memory too, and Worklog.save writes them back.
     """
     version = raw.get("version") or 1
     if version < 2:
@@ -198,6 +229,15 @@ def _migrate(raw: dict, archive_docs: list | None = None, taken: set | None = No
             *({"id": f"D{n}", "epoch": epoch, "text": text, "at": at, "replaces": [],
                "replaced_by": None, "retired": None}
               for n, (at, epoch, text) in enumerate(found, 1))]
+    if version < 4:
+        # archived items are all closed, so every handoff in them is taken; a live copy
+        # wins over an archived one, as when the worklog is loaded
+        items = raw.get("items") or []
+        _migrate_handoffs(items)
+        live = {parse_id(i.get("id")) for i in items}
+        for _, doc in archive_docs or []:
+            _migrate_handoffs([i for i in doc.get("items") or []
+                               if parse_id(i.get("id")) not in live])
     raw["version"] = WORKLOG_VERSION
     return raw
 
@@ -254,8 +294,8 @@ class Worklog:
         self.newer = newer
         self.archived = archived or {}
         self.decisions = decisions or []
-        # Archive files whose decision notes were taken out in memory by the migration
-        # to version 3, and which notes: save writes them back, after the worklog.
+        # Archive files the migration changed in memory — decision notes taken out (and
+        # which notes), handoff notes flagged: save writes them back, after the worklog.
         self.stale_archives: list[Path] = []
         self.migrated_notes: set = set()
 
@@ -268,6 +308,7 @@ class Worklog:
         newer = version if version > WORKLOG_VERSION else None
         docs = _archive_docs(path.parent)
         taken: set = set()
+        behind = not newer and version < WORKLOG_VERSION
         if not newer:
             raw = _migrate(raw, docs, taken)
         items = [Item.from_dict(d) for d in (raw.get("items") or [])]
@@ -289,7 +330,7 @@ class Worklog:
                       repos=list(raw.get("repos") or []),
                       state_repo=bool(raw.get("state_repo")), newer=newer, archived=archived,
                       decisions=[Decision.from_dict(d) for d in raw.get("decisions") or []])
-        if taken:
+        if taken or behind:
             worklog.migrated_notes = taken
             worklog.stale_archives = [p for p, d in docs
                                       if any(parse_id(i.get("id")) not in live
@@ -327,10 +368,11 @@ class Worklog:
         """Take the decision notes the migration turned into records out of the archive
         files too, after the worklog holding the records is safely written: a crash
         between the two leaves each decision twice, never none. The files are read
-        again, not written from memory, so an item archived since is kept."""
+        again, not written from memory, so an item archived since is kept. Handoff
+        notes there get their flag the same way."""
         for path in self.stale_archives:
             doc = load_yaml(path)
-            changed = False
+            changed = _migrate_handoffs(doc.get("items") or [])
             for item in doc.get("items") or []:
                 epoch = parse_id(item.get("id"))
                 notes = item.get("notes") or []

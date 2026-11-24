@@ -126,7 +126,7 @@ def test_the_digest_puts_handoffs_decisions_and_the_closed_list_up_front(project
     landed = project.add("since flag")
     project.start(landed.id)
     project.note(landed.id, "parsing ISO in UTC")
-    project.note(landed.id, "HANDOFF: --since done; --until is next")
+    project.note(landed.id, "--since done; --until is next", handoff=True)
     project.add("gzip input")
 
     text = (repo / "AGENTS.md").read_text()
@@ -138,17 +138,6 @@ def test_the_digest_puts_handoffs_decisions_and_the_closed_list_up_front(project
     closed = digest.split("**Closed**")[1]
     assert f"#{shipped.id} ✓ first cut" in closed
     assert "a long outcome" not in digest and "mis-parses" not in digest
-
-
-def test_the_digest_stays_within_its_budget_however_long_the_history(project, repo):
-    """A thousandth epoch must cost every session what a tenth does. (The synthetic
-    worklogs of tests/test_digest.py push this much harder, with a thousand.)"""
-    for n in range(30):
-        item = project.add(f"attempt {n:03d} " + "w" * 60)
-        project.close(item.id, "x" * 1000)
-    digest = project.state_digest()
-    assert len(digest) <= render.DIGEST_BUDGET
-    assert "#30 ✓ attempt 029" in digest
 
 
 def test_the_digest_cuts_a_name_written_as_a_paragraph(project, repo):

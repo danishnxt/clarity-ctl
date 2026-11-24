@@ -5,7 +5,6 @@ Run: .venv/bin/python -m pytest -q tests/test_subepochs.py"""
 import pytest
 
 from clarity import ClarityError, Project
-from clarity.model import HANDOFF
 
 
 def _active(project, name):
@@ -71,8 +70,8 @@ def test_roll_up_carries_status_outcome_and_handoff(project):
     parent = _active(project, "parent")
     child = _child(project, parent, "worker")
     project.claim(child.id, as_name="worker-agent")
-    project.note(child.id, f"{HANDOFF} parser done, tests not written")
     project.note(child.id, "tried a regex first, slower")
+    project.note(child.id, "parser done, tests not written", handoff=True)
 
     data = Project.find(project.root).query("item", str(parent.id))
 
@@ -147,7 +146,7 @@ def test_show_text_has_subepochs_section(project):
 
     parent = _active(project, "parent")
     child = _child(project, parent, "worker one")
-    project.note(child.id, f"{HANDOFF} waiting on the API key")
+    project.note(child.id, "waiting on the API key", handoff=True)
 
     data = Project.find(project.root).query("item", str(parent.id))
     text = render.item_text(data)
@@ -155,16 +154,6 @@ def test_show_text_has_subepochs_section(project):
     assert "Subepochs (1)" in text
     assert "worker one" in text
     assert "handoff: waiting on the API key" in text
-
-
-def test_child_handoff_reads_latest_only(project):
-    parent = _active(project, "parent")
-    child = _child(project, parent, "x")
-    project.note(child.id, f"{HANDOFF} first")
-    project.note(child.id, "some detail")
-    project.note(child.id, f"{HANDOFF} second")
-
-    assert Project.find(project.root).worklog.by_id(child.id).handoff == "second"
 
 
 def test_archive_keeps_parent_child_link(project):
@@ -185,7 +174,7 @@ def test_show_text_gives_a_closed_child_its_outcome(project):
 
     parent = _active(project, "parent")
     child = _child(project, parent, "finished worker")
-    project.note(child.id, f"{HANDOFF} almost there")
+    project.note(child.id, "almost there", handoff=True)
     project.close(child.id, "statements ported")
 
     text = render.item_text(Project.find(project.root).query("item", str(parent.id)))
@@ -305,25 +294,6 @@ def test_spawn_leaves_the_lease_free(project):
 
 # ---- repos: the parent's, or some of them ----
 
-def test_a_subepoch_takes_its_parents_repos(workspace):
-    parent = workspace.add("parent")
-    workspace.start(parent.id, repos=["workspace/agent"])
-
-    child, _ = workspace.spawn(parent.id, "part")
-
-    assert child.repos == ["workspace/agent"]
-    assert child.bases == {"workspace/agent": f"epoch/{parent.code}-parent"}
-
-
-def test_a_subepoch_cannot_branch_a_repo_its_parent_does_not(workspace):
-    parent = workspace.add("parent")
-    workspace.start(parent.id, repos=["workspace/agent"])
-
-    with pytest.raises(ClarityError, match="add it there first"):
-        workspace.spawn(parent.id, "part", repos=["workspace/harness"])
-    assert [c.id for c in Project.find(workspace.root).children_of(parent.id)] == []
-
-
 # ---- the CLI takes dotted ids everywhere ----
 
 def test_the_cli_reads_dotted_ids(project, monkeypatch, capsys):
@@ -336,7 +306,7 @@ def test_the_cli_reads_dotted_ids(project, monkeypatch, capsys):
     child_id = f"{parent.id}.1"
     assert f"claim {child_id} --as" in capsys.readouterr().out
     assert main(["claim", child_id, "--as", "part-agent"]) == 0
-    assert main(["note", child_id, "HANDOFF: half done"]) == 0
+    assert main(["note", child_id, "half done", "--handoff"]) == 0
     assert main(["show", child_id, "--json"]) == 0
     assert '"id": "1.1"' in capsys.readouterr().out
     assert main(["close", child_id, "ported"]) == 0

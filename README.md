@@ -19,16 +19,18 @@ Your agent will clobber your project structure with ad hoc files everywhere, unt
 **Thin, light, robust.** One simple CLI, one YAML file, 20 commands. No server, no database, no
 embeddings, no model calls. Simple.
 
-## Three concepts, five minutes
+## Four concepts, five minutes
 
 | | What it is | You / your agent type |
 |---|---|---|
 | **Idea** | something to do later | `clarity-ctl idea "flaky test on macOS"` |
 | **Epoch** | an idea being worked on: its own id, folder, branch and worktree | `clarity-ctl start 12` · `clarity-ctl close 12 "..."` |
-| **Note** | a decision or a result, written the moment it happens | `clarity-ctl note 12 "..." --decision` |
+| **Note** | a result, a finding, an approach rejected, written the moment it happens | `clarity-ctl note 12 "..."` |
+| **Decision** | a rule that outlives the epoch, with an id (D7); a later one can replace it | `clarity-ctl note 12 "..." --decision --replaces D3` |
 
-That's the whole model. An idea becomes an epoch with the same id; notes hang off either.
-Everything else is a view of those three.
+That's the whole model. An idea becomes an epoch with the same id; notes hang off either;
+a decision comes from an epoch and stays listed until something replaces or retires it.
+Everything else is a view of those four.
 
 ## Setup in one minute
 
@@ -81,7 +83,7 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
 **Up next:** #1 flaky test on macOS · #2 parallel chunk parsing
 
 **Standing decisions**, newest first
-- parse in 64KB chunks, never the whole file; memory stays flat (#3)
+- parse in 64KB chunks, never the whole file; memory stays flat (D1, #3)
 
 **Closed**, newest first — `clarity-ctl show <id>` for the outcome and notes
 #4 ✓ ring buffer for the tokenizer
@@ -99,6 +101,8 @@ clarity-ctl maintains one marked block in your `AGENTS.md` (added at the end if 
 - **Decisions are tied to the work they came from**, with an id and a date.
 - **Standing decisions are listed for every session**, so a rule made in March is still
   in front of the agent in November.
+- **A reversed decision leaves the list.** The new one names what it replaces, so the
+  agent never reads two rules that contradict each other; `show D<n>` has the history.
 - **The project folder stays organised.** One folder per epoch, plans and results
   inside it, worktrees out of the way, and code in its own repo so pushing code never
   pushes notes.
@@ -149,7 +153,10 @@ prints them all on one page. Commands take the epoch's id: clarity never guesses
 epochs (`--limit N` for more, `--order oldest` to read them as a story). Closed rows
 show a **landed** mark read live from git, squash merges included, so the history shows
 what stuck and what didn't, each with its reason. `show <id>` prints one item as a page:
-outcome, folder, branch, repos and every note, latest handoff first.
+outcome, folder, branch, repos, its decisions, a live handoff on top, and the latest 10
+notes (`--all` for every one). `show decisions` lists the standing and retired decisions;
+`show D<n>` gives one with the decisions it replaced (3 back, `--all` for the rest) and
+the notes linked to each.
 
 At a terminal the reads print tables. Anywhere else, which is how an agent's shell runs
 them, they print plain text with no boxes or colour, about a seventh the size for lists:
@@ -164,7 +171,12 @@ Closing never merges and never deletes a branch: merge first if the work should 
 When the closed list gets long, `archive` moves it out of `worklog.yaml`; folders stay,
 ids are never reused, and `show <id>` still reads archived epochs.
 
-Notes are never edited; a later note that corrects an earlier one should say so. Glance
+Notes are never edited; a later note that corrects an earlier one should say so. A note
+about a decision links to it with `--on D<n>`. A decision that stops being true is
+retired: a new one with `--replaces D<n>`, or `close D<n> "why"`, or `close D<n> --by D<m>`
+when the replacement already exists. Stopping before the work is done, the agent's last
+write is `note <id> "..." --handoff`: it shows in the state block until the next session's
+first note on that epoch takes it up. Glance
 at `show <id>` before you close, since a fast agent can forget to write notes. A claim is
 a **lease**, a warning of who is working on an epoch, not a lock.
 
@@ -173,7 +185,9 @@ a **lease**, a warning of who is working on an epoch, not a lock.
 `status`, `show` and `search` take `--json` and answer
 `{ok, command, data, warnings, version}`; a failure has `ok: false` with `error` and
 `code` in place of `data`. Every other command prints text, with errors on stderr.
-`status --json` lists each item with a `note_count`; `show <id> --json` has the notes.
+`status --json` lists each item with a `note_count`; `show <id> --json` has the latest 10
+notes and `notes_omitted` (`--all` for every one); `show D<n> --json` and
+`show decisions --json` have the decisions.
 Exit codes: `0` ok · `1` error · `2` validation failed · `3` not a clarity project · `4` refused.
 
 ### Multi-repo projects
@@ -191,10 +205,10 @@ When one epoch is too big for one agent, its owner spawns a **subepoch** per par
 
 Subepochs are numbered under their parent (7.1, 7.2), branch from 7's branch and merge
 back into it; only 7 merges to main. The part's agent claims it (`claim 7.1 --as
-expr-agent`), works in the folder `spawn` printed and stops with a `HANDOFF:` note. 7's
+expr-agent`), works in the folder `spawn` printed and stops with a `--handoff` note. 7's
 owner reviews (feedback goes in a note on 7.1), merges 7.1 into 7 and closes it;
 `refresh 7.2` brings the merged work into a sibling. `show 7` gathers each subepoch's
-outcome or latest handoff, and 7 can't close while one is active.
+outcome or live handoff, and 7 can't close while one is active.
 
 ### Existing projects
 
