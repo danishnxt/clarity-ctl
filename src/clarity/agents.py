@@ -109,7 +109,9 @@ _BODY = """- Where things stand is at the end of this block, current as of the l
   that surprised you: `clarity-ctl note <id> "..."`. Not at the end: the notes are what
   the next session has instead of this conversation.
 - A decision that outlives the epoch — a rule, a constraint, something we won't build
-  and why: a note starting `DECISION:`. Every one is listed below for later sessions.
+  and why: `clarity-ctl note <id> "<decision>" --decision`, with `--replaces D<n>` when
+  it reverses a standing one. Those that stand are listed below for later sessions. A
+  note about one: `--on D<n>`. One no longer true: `clarity-ctl close D<n> "<why>"`.
 - The whole task done and merged: `clarity-ctl close <id> "<outcome>"`, which
   also releases it. The outcome says what changed and why — for a bug, what was wrong.
   Rejected: `close <id> --drop "<why>"`. An idea already built or unwanted closes

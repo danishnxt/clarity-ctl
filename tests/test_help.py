@@ -48,7 +48,7 @@ def test_every_example_in_the_help_parses():
 def test_the_top_help_leads_with_how_work_goes_and_states_the_contract():
     text = cli.build_parser().format_help()
     assert text.index("How work goes") < text.index("All commands") < text.index("Contract")
-    for needed in ("DECISION:", "HANDOFF:", "--json", "Exit codes", "help reference"):
+    for needed in ("--decision", "HANDOFF:", "--json", "Exit codes", "help reference"):
         assert needed in text
     assert "─" not in text  # plain text: no box lines for an agent to read past
 

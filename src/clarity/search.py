@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from .model import Item, id_key
+from .model import Decision, Item, decision_key, id_key
 
 STOPWORDS = frozenset(
     "the a an of to in on for and or is was it what which how why when does did do be "
@@ -36,8 +36,8 @@ _WORD = re.compile(r"[a-z0-9_]+", re.ASCII | re.IGNORECASE)
 
 @dataclass
 class Hit:
-    id: int | str
-    name: str
+    id: int | str   # 7, "7.1" for a subepoch, or "D12" for a decision
+    name: str        # a decision has no name: its text stands in
     status: str
     score: float
     field: str      # "outcome", "brief", "note 3", or "name" when only the name matched
@@ -84,6 +84,11 @@ def _fields(item: Item) -> list[tuple[str, str]]:
     return out
 
 
+def _decision_fields(decision: Decision) -> list[tuple[str, str]]:
+    """A decision's searchable text: it has no name, only its text."""
+    return [("name", ""), ("text", decision.text)]
+
+
 def _clip(text: str, matched: set[str]) -> str:
     """About SNIPPET characters of `text` around its first word in `matched`, with an
     ellipsis wherever it is cut."""
@@ -102,8 +107,11 @@ def _clip(text: str, matched: set[str]) -> str:
     return ("…" if start > 0 else "") + text[start:end].strip() + ("…" if end < len(text) else "")
 
 
-def search(items: list[Item], query: str | list[str], limit: int = 5) -> list[Hit]:
+def search(items: list[Item], query: str | list[str], limit: int = 5,
+           decisions: list[Decision] | None = None) -> list[Hit]:
     """The `limit` items that best match `query`, best first; 0 for all of them.
+    `decisions` are searched alongside the items, by their text, and come back as
+    D-ids; on a tie an item comes first, and the newer of two decisions.
 
     Per distinct query term, find its best match among the words of the item's name,
     outcome, brief and notes (see `match`; on a tie the rarer word). Weight it by
@@ -113,13 +121,19 @@ def search(items: list[Item], query: str | list[str], limit: int = 5) -> list[Hi
     Ties go to the higher id, which is the newer item.
     """
     query_terms = terms(query)
-    if not query_terms or not items:
+    decisions = decisions or []
+    if not query_terms or not (items or decisions):
         return []
 
-    docs = [(item, [(label, text, set(tokens(text))) for label, text in _fields(item)])
+    # (id, name, status, tie-break key, fields) per document
+    docs = [(item.id, item.name, item.status, id_key(item.id),
+             [(label, text, set(tokens(text))) for label, text in _fields(item)])
             for item in items]
+    docs += [(d.id, d.text, "standing" if d.standing else "retired", (0, decision_key(d.id)),
+              [(label, text, set(tokens(text))) for label, text in _decision_fields(d)])
+             for d in decisions]
     df: dict[str, int] = {}
-    for _, fields in docs:
+    for *_, fields in docs:
         for word in set().union(*(words for _, _, words in fields)):
             df[word] = df.get(word, 0) + 1
     n = len(docs)
@@ -135,8 +149,9 @@ def search(items: list[Item], query: str | list[str], limit: int = 5) -> list[Hi
         m, neg_df = max(found)
         return m * math.log(1 + n / max(1, -neg_df))
 
-    scored: list[tuple[float, Item, list]] = []
-    for item, fields in docs:
+    scored: list[tuple[float, tuple, list]] = []
+    for doc in docs:
+        fields = doc[4]
         name_words = fields[0][2]
         score = 0.0
         all_words = set().union(*(words for _, _, words in fields))
@@ -146,11 +161,12 @@ def search(items: list[Item], query: str | list[str], limit: int = 5) -> list[Hi
                 part *= NAME_BONUS
             score += part
         if score > 0:
-            scored.append((score, item, fields))
+            scored.append((score, doc, fields))
 
-    scored.sort(key=lambda s: (-s[0], tuple(-x for x in id_key(s[1].id))))
+    scored.sort(key=lambda s: (-s[0], tuple(-x for x in s[1][3])))
     hits = []
-    for score, item, fields in (scored if limit <= 0 else scored[:limit]):
+    for score, (doc_id, doc_name, doc_status, _, _), fields in (
+            scored if limit <= 0 else scored[:limit]):
         # the snippet: the one field, other than the name, that scores highest
         label, text, top = "name", "", 0.0
         for lab, txt, words in fields[1:]:
@@ -161,6 +177,6 @@ def search(items: list[Item], query: str | list[str], limit: int = 5) -> list[Hi
         if top:
             hit_words = {w for t in query_terms for w in matches[t]}
             snippet = _clip(text, hit_words)
-        hits.append(Hit(id=item.id, name=item.name, status=item.status,
+        hits.append(Hit(id=doc_id, name=doc_name, status=doc_status,
                         score=score, field=label, snippet=snippet))
     return hits

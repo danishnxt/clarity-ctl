@@ -7,7 +7,7 @@ Worklogs here are built from model.Item, no files and no git.
 import re
 
 from clarity import render
-from clarity.model import Item, Note, Objectives
+from clarity.model import Decision, Item, Note, Objectives
 
 
 def _text(tag: str, length: int) -> str:
@@ -15,18 +15,25 @@ def _text(tag: str, length: int) -> str:
     return (f"{tag} " + "lorem ipsum dolor sit amet " * 40)[:length].rstrip().ljust(length, "x")
 
 
+class Items(list):
+    """The items of a synthetic worklog, with the decisions made in them."""
+    decisions: list[Decision]
+
+
 def worklog(closed: int = 0, ideas: int = 0, decisions: int = 0, decision_length: int = 700,
-            name_length: int = 80, outcome_length: int = 300) -> list[Item]:
+            name_length: int = 80, outcome_length: int = 300) -> Items:
     """`closed` finished items (ids 1..closed, closed in that order), then `ideas`
-    ideas, with DECISION: notes on the first `decisions` of the finished ones."""
-    items = []
+    ideas. The decisions D1..D`decisions` are made in the first of the finished ones;
+    they are the list's `decisions`."""
+    items = Items()
+    items.decisions = []
     for n in range(1, closed + 1):
         item = Item(id=n, name=_text(f"epoch {n}", name_length), status="done",
                     outcome=_text(f"outcome {n}", outcome_length), created="2026-01-01",
                     ended="2026-02-01", closed_seq=n)
         if n <= decisions:
-            item.notes.append(Note(at=f"2026-02-01 10:{n % 60:02d}",
-                                   text=f"DECISION: {_text(f'decision {n}', decision_length)}"))
+            items.decisions.append(Decision(id=f"D{n}", epoch=n, at=f"2026-02-01 10:{n % 60:02d}",
+                                            text=_text(f"decision {n}", decision_length)))
         items.append(item)
     for n in range(closed + 1, closed + ideas + 1):
         items.append(Item(id=n, name=_text(f"idea {n}", name_length), status="idea"))
@@ -39,8 +46,8 @@ def _active(n: int) -> Item:
                 notes=[Note(at="2026-03-01 09:00", text="HANDOFF: " + _text(f"handoff {n}", 600))])
 
 
-def digest(items: list[Item]) -> str:
-    return render.state_digest(Objectives(), items)
+def digest(items: Items) -> str:
+    return render.state_digest(Objectives(), items, items.decisions)
 
 
 def closed_section(text: str) -> str:
@@ -73,7 +80,7 @@ def test_the_closed_list_never_costs_a_decision():
     # 20 decisions of 240 characters and a thousand closed items: both fit
     text = digest(worklog(closed=1000, decisions=20))
     assert text.count("\n- ") >= 20 and "decision 20 " in text
-    assert "older: `clarity-ctl search DECISION`" not in text
+    assert "older: `clarity-ctl show decisions`" not in text
     assert closed_section(text).endswith("990 older: `clarity-ctl show closed`")
 
 
@@ -85,7 +92,7 @@ def test_the_oldest_decisions_go_when_the_closed_list_has_no_room_at_all():
         items.append(_active(n))
     text = digest(items)
     assert len(text) <= render.DIGEST_BUDGET
-    older = re.search(r"- (\d+) older: `clarity-ctl search DECISION`", text)
+    older = re.search(r"- (\d+) older: `clarity-ctl show decisions`", text)
     assert older and 20 < int(older.group(1)) <= 40   # cut below the 20 that are usually shown
     assert "decision 40 " in text and "decision 1 " not in text   # the newest are kept
     assert render.CLOSED_HEADING in text              # a list was still possible

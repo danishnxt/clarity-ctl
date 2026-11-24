@@ -11,7 +11,18 @@ from pathlib import Path
 
 import yaml
 
-from .model import DEFAULT_CONFIG, STATUSES, Item, Objectives, id_key, parse_id, today
+from .model import (
+    DEFAULT_CONFIG,
+    STATUSES,
+    Decision,
+    Item,
+    Objectives,
+    decision_key,
+    decision_prefix,
+    id_key,
+    parse_id,
+    today,
+)
 
 WORKLOG = "worklog.yaml"
 ARCHIVE = "ARCHIVE"
@@ -111,15 +122,46 @@ def load_yaml(path: Path) -> dict:
 
 # The shape of worklog.yaml this code reads and writes. Bump it when an older
 # clarity-ctl would misread the file — a renamed field or status, not an added
-# field, which older code already carries through untouched in `extra`.
-WORKLOG_VERSION = 2
+# field, which older code already carries through untouched in `extra`. Version 3
+# moved decisions out of the notes into their own list: an older one would show the
+# list as nothing and the notes as gone.
+WORKLOG_VERSION = 3
 
 
-def _migrate(raw: dict) -> dict:
+def _pull_decisions(raw_items: list, found: list, taken: set | None = None) -> bool:
+    """Take every `DECISION:` note out of these raw items, into `found` as
+    (at, epoch, text). True if any was taken. `taken` collects (epoch, at,
+    raw text) of each, to strip the same notes from a file read again later."""
+    changed = False
+    for item in raw_items:
+        epoch = parse_id(item.get("id"))
+        keep, taken_here = [], False
+        for note in item.get("notes") or []:
+            text = str(note.get("text") or "")
+            body = text.strip()[len("DECISION:"):].strip() if decision_prefix(text) else ""
+            if body and epoch is not None:
+                found.append((str(note.get("at") or ""), epoch, body))
+                if taken is not None:
+                    taken.add((epoch, str(note.get("at") or ""), text))
+                changed = taken_here = True
+            else:
+                keep.append(note)
+        if taken_here:
+            if keep:
+                item["notes"] = keep
+            else:
+                item.pop("notes")
+    return changed
+
+
+def _migrate(raw: dict, archive_docs: list | None = None, taken: set | None = None) -> dict:
     """An older worklog, brought up to WORKLOG_VERSION in memory. Saved on the next write.
 
     One step per version, in order, so a worklog several versions behind takes
     every step it missed. No version at all is version 1: it was always written.
+
+    `archive_docs` are the archive files as read ([(path, doc)]); the step to version
+    3 takes decision notes out of them in memory too, and Worklog.save writes them back.
     """
     version = raw.get("version") or 1
     if version < 2:
@@ -138,21 +180,45 @@ def _migrate(raw: dict) -> dict:
             if reason:
                 item.setdefault("notes", []).append(
                     {"at": item.get("started") or today(), "text": f"was blocked: {reason}"})
+    if version < 3:
+        # A decision was a note starting DECISION:. It becomes a record of its own,
+        # numbered in the order the notes were written, and the note goes: no
+        # duplicate. Nothing is inferred about which one replaced which.
+        found: list = []
+        items = raw.get("items") or []
+        _pull_decisions(items, found, taken)
+        live = {parse_id(i.get("id")) for i in items}
+        for _, doc in archive_docs or []:
+            # a live copy wins over an archived one, as when the worklog is loaded
+            _pull_decisions([i for i in doc.get("items") or []
+                             if parse_id(i.get("id")) not in live], found, taken)
+        found.sort(key=lambda f: f[0])  # stable: the same minute keeps item order
+        raw["decisions"] = [
+            *(raw.get("decisions") or []),
+            *({"id": f"D{n}", "epoch": epoch, "text": text, "at": at, "replaces": [],
+               "replaced_by": None, "retired": None}
+              for n, (at, epoch, text) in enumerate(found, 1))]
     raw["version"] = WORKLOG_VERSION
     return raw
 
 
-def load_archive(root: Path) -> list[tuple[Item, str]]:
-    """Every item `archive` moved out of worklog.yaml, with the file it sits in.
-
-    Read-only: nothing here is saved back, and a write to an archived item is refused.
-    """
+def _archive_docs(root: Path) -> list[tuple[Path, dict]]:
     folder = root / ARCHIVE
     if not folder.is_dir():
         return []
+    return [(path, load_yaml(path)) for path in sorted(folder.glob("*.yaml"))]
+
+
+def load_archive(root: Path, docs: list[tuple[Path, dict]] | None = None
+                 ) -> list[tuple[Item, str]]:
+    """Every item `archive` moved out of worklog.yaml, with the file it sits in.
+
+    Read-only: nothing here is saved back, and a write to an archived item is refused.
+    `docs` are the files already read, when the caller has migrated them in memory.
+    """
     found = []
-    for path in sorted(folder.glob("*.yaml")):
-        for raw in load_yaml(path).get("items") or []:
+    for path, doc in _archive_docs(root) if docs is None else docs:
+        for raw in doc.get("items") or []:
             found.append((Item.from_dict(raw), path.name))
     return found
 
@@ -173,11 +239,12 @@ class Worklog:
     this version's idea of the file over one it does not fully understand.
     """
 
-    OWN = ("version", "objectives", "repos", "state_repo", "items")
+    OWN = ("version", "objectives", "repos", "state_repo", "items", "decisions")
 
     def __init__(self, path: Path, objectives: Objectives, items: list[Item], extra: dict,
                  repos: list[str] | None = None, state_repo: bool = False,
-                 newer: int | None = None, archived: dict | None = None):
+                 newer: int | None = None, archived: dict | None = None,
+                 decisions: list[Decision] | None = None):
         self.path = path
         self.objectives = objectives
         self.repos = repos or []
@@ -186,6 +253,11 @@ class Worklog:
         self.extra = extra
         self.newer = newer
         self.archived = archived or {}
+        self.decisions = decisions or []
+        # Archive files whose decision notes were taken out in memory by the migration
+        # to version 3, and which notes: save writes them back, after the worklog.
+        self.stale_archives: list[Path] = []
+        self.migrated_notes: set = set()
 
     @classmethod
     def load(cls, path: Path) -> "Worklog":
@@ -194,8 +266,10 @@ class Worklog:
         if not isinstance(version, int):
             raise ClarityError(f"{path.name}: version {version!r} is not a number", code=2)
         newer = version if version > WORKLOG_VERSION else None
+        docs = _archive_docs(path.parent)
+        taken: set = set()
         if not newer:
-            raw = _migrate(raw)
+            raw = _migrate(raw, docs, taken)
         items = [Item.from_dict(d) for d in (raw.get("items") or [])]
         if not newer:
             # A status this code does not know would match no view and the item
@@ -209,11 +283,18 @@ class Worklog:
         # A live copy wins: a crash between writing an archive file and saving the
         # worklog leaves the item in both, and the worklog is the one that is current.
         live = {i.id for i in items}
-        archived = {i.id: (i, name) for i, name in load_archive(path.parent)
+        archived = {i.id: (i, name) for i, name in load_archive(path.parent, docs)
                     if i.id not in live}
-        return cls(path, Objectives.from_dict(raw.get("objectives")), items, extra,
-                   repos=list(raw.get("repos") or []),
-                   state_repo=bool(raw.get("state_repo")), newer=newer, archived=archived)
+        worklog = cls(path, Objectives.from_dict(raw.get("objectives")), items, extra,
+                      repos=list(raw.get("repos") or []),
+                      state_repo=bool(raw.get("state_repo")), newer=newer, archived=archived,
+                      decisions=[Decision.from_dict(d) for d in raw.get("decisions") or []])
+        if taken:
+            worklog.migrated_notes = taken
+            worklog.stale_archives = [p for p, d in docs
+                                      if any(parse_id(i.get("id")) not in live
+                                             for i in d.get("items") or [])]
+        return worklog
 
     @classmethod
     def empty(cls, path: Path) -> "Worklog":
@@ -236,8 +317,50 @@ class Worklog:
         if self.state_repo:
             data["state_repo"] = True
         data["items"] = [i.to_dict() for i in self.items]
+        if self.decisions:
+            data["decisions"] = [d.to_dict() for d in self.decisions]
         data.update(self.extra)
         write_atomic(self.path, _dump(data))
+        self._strip_migrated_archives()
+
+    def _strip_migrated_archives(self) -> None:
+        """Take the decision notes the migration turned into records out of the archive
+        files too, after the worklog holding the records is safely written: a crash
+        between the two leaves each decision twice, never none. The files are read
+        again, not written from memory, so an item archived since is kept."""
+        for path in self.stale_archives:
+            doc = load_yaml(path)
+            changed = False
+            for item in doc.get("items") or []:
+                epoch = parse_id(item.get("id"))
+                notes = item.get("notes") or []
+                kept = [n for n in notes
+                        if (epoch, str(n.get("at") or ""), str(n.get("text") or ""))
+                        not in self.migrated_notes]
+                if len(kept) != len(notes):
+                    changed = True
+                    item["notes"] = kept
+                    if not kept:
+                        item.pop("notes")
+            if changed or doc.get("version") != WORKLOG_VERSION:
+                doc["version"] = WORKLOG_VERSION
+                write_atomic(path, _dump(doc))
+        self.stale_archives = []
+        self.migrated_notes = set()
+
+    def next_decision_id(self) -> str:
+        return f"D{max((decision_key(d.id) for d in self.decisions), default=0) + 1}"
+
+    def decision_map(self) -> dict[str, Decision]:
+        return {d.id: d for d in self.decisions}
+
+    def decision(self, decision_id: str, code: int = 2) -> Decision:
+        """A decision by its stored id. Not found is the caller's mistake (2) when it
+        named it in a write, and a plain miss (4) for a read, as for an item."""
+        for d in self.decisions:
+            if d.id == decision_id:
+                return d
+        raise ClarityError(f"no decision {decision_id}", code=code)
 
     def by_id(self, item_id: int | str) -> Item:
         """A live item, for a write. An archived one is refused, not returned: changing
